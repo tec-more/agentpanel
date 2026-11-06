@@ -1,0 +1,59 @@
+{
+    "name": "sales",
+    "display_name": "销售管理",
+    "version": "1.0.0",
+    "description": "销售管理模块，包含订单管理、销售统计等功能",
+    "author": "hepan",
+    "route_prefix": "/v1/sales",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "sales",
+        "order"
+    ],
+    "schemas": [
+        "sales_schema",
+        "order_schema"
+    ],
+    "dependencies": [
+        "customer",
+        "product"
+    ],
+    "is_installed": true,
+    "is_enabled": true,
+    "menus": [
+        {
+            "name": "销售管理",
+            "path": "/sales",
+            "icon": "ShoppingCart",
+            "component": "sales/Index",
+            "sort": 5,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "sales:list",
+            "children": [
+                {
+                    "name": "订单管理",
+                    "path": "/sales/order",
+                    "icon": "Document",
+                    "component": "order/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "sales:order:list"
+                },
+                {
+                    "name": "销售统计",
+                    "path": "/sales/stats",
+                    "icon": "TrendCharts",
+                    "component": "sales/stats/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "sales:stats:list"
+                }
+            ]
+        }
+    ]
+}

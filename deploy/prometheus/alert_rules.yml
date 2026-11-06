@@ -1,0 +1,61 @@
+# aipaneladmin 灰度监控告警规则（溯源 docs/ops/grayscale-monitoring-checklist.md）
+# 级别定义：P0 立即响应/30min 未定位回退灰度；P1 当日响应/阻断晋级；P2 日报跟踪/连续 3 日升级 P1
+groups:
+  - name: aipanel
+    rules:
+      # ---- P0：服务可用性 ----
+      - alert: AipanelDown
+        expr: up{job="aipanel"} == 0
+        for: 1m
+        labels:
+          severity: P0
+        annotations:
+          summary: "aipanel 实例下线或 /metrics 不可达"
+          runbook: "检查容器状态与 uvicorn 进程；30min 未定位回退灰度阶段"
+
+      # ---- P1：BUG-T15-014 保底强制收尾（M-4，出现即协作路径失效）----
+      - alert: ForceFinalizeTriggered
+        expr: increase(force_finalize_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: P1
+        annotations:
+          summary: "保底强制收尾触发（_force_finalize）"
+          runbook: "协作唤醒路径失效，必查：网关/代理层取消传播、SSE 心跳帧是否被缓冲；关联 BUG-T15-014"
+
+      # ---- P2：节点结算超时/失败（M-7，DB 间歇性挂起信号）----
+      - alert: NodeSettleFailure
+        expr: increase(node_settle_failure_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+        annotations:
+          summary: "节点结算超时/失败"
+          runbook: "检查 DB 连接池与慢查询；关联 BUG-T15-013"
+
+      # ---- P2：并发拒绝率（M-3，泄漏与真实需求判别）----
+      # 单实例维度 1h > 5 次；J-1 僵尸巡检（scripts/ops/zombie_scan.py）为泄漏最终兜底
+      - alert: QuotaConcurrencyRejectFrequent
+        expr: increase(quota_reject_total{item="concurrency"}[1h]) > 5
+        for: 0m
+        labels:
+          severity: P2
+        annotations:
+          summary: "并发槽拒绝率异常（1h > 5 次）"
+          runbook: "先跑 scripts/ops/zombie_scan.py 排除槽泄漏（BUG-T15-012 类）；无泄漏则评估套餐并发配置"
+
+      # ---- P2：执行失败率（综合健康度）----
+      - alert: Http5xxRate
+        expr: sum(rate(http_requests_total{status_code=~"5.."}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: P2
+        annotations:
+          summary: "5xx 错误率持续升高"
+          runbook: "查 error.log 最新 Traceback；关联本轮修复文件 execution_service.py"
+
+# 以下监控项由巡检脚本落盘报告承载（非 Prometheus 指标，见 scripts/ops/）：
+#   M-1 僵尸执行巡检    → zombie_scan.py（5min，P0，退出码 2）
+#   M-9 配额对账        → quota_reconcile.py（每日 02:00，P1，退出码 1）
+#   M-5 取消审计占比    → audit_report.py（每日 09:00，趋势项，环比 >20pp 告警）
+#   M-10 Trace seq 抽检 → trace_check.py（每日 03:00，P2，退出码 0/1）

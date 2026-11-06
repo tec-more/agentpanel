@@ -1,0 +1,108 @@
+{
+    "name": "customer",
+    "display_name": "客户模块",
+    "version": "1.0.0",
+    "description": "客户模块，提供客户管理、会员系统、订单管理等功能",
+    "author": "hepan",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/customer",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "customer",
+        "membership",
+        "customer_membership",
+        "payment_transaction",
+        "identity_link",
+        "customer_organization"
+    ],
+    "schemas": [
+        "customer_schema",
+        "membership"
+    ],
+    "menus": [
+        {
+            "name": "客户管理",
+            "path": "/customer",
+            "icon": "User",
+            "component": "",
+            "redirect": "/customer/list",
+            "sort": 2,
+            "children": [
+                {
+                    "name": "客户列表",
+                    "path": "/customer/list",
+                    "icon": "User",
+                    "component": "customer/list/index",
+                    "sort": 1
+                },
+                {
+                    "name": "会员等级配置",
+                    "path": "/customer/membership-levels",
+                    "icon": "Setting",
+                    "component": "customer/membership-levels/index",
+                    "sort": 2
+                },
+                {
+                    "name": "支付记录",
+                    "path": "/customer/payments",
+                    "icon": "Money",
+                    "component": "customer/payments/index",
+                    "sort": 3
+                },
+                {
+                    "name": "客户组织",
+                    "path": "/customer/organizations",
+                    "icon": "OfficeBuilding",
+                    "component": "customer/organizations/Index",
+                    "sort": 4,
+                    "permission_code": "grant:manage"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "客户查看",
+            "code": "customer:view",
+            "module": "customer",
+            "description": "查看客户信息"
+        },
+        {
+            "name": "客户编辑",
+            "code": "customer:edit",
+            "module": "customer",
+            "description": "编辑客户信息"
+        },
+        {
+            "name": "客户删除",
+            "code": "customer:delete",
+            "module": "customer",
+            "description": "删除客户"
+        },
+        {
+            "name": "会员等级管理",
+            "code": "customer:membership_level",
+            "module": "customer",
+            "description": "管理会员等级配置"
+        }
+    ],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {
+        "membership": {
+            "default_free_hours": 0,
+            "max_fibonacci_level": 20
+        },
+        "payment": {
+            "order_expire_minutes": 15,
+            "auto_check_interval": 300
+        }
+    }
+}

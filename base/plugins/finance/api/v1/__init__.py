@@ -1,0 +1,67 @@
+from fastapi import APIRouter
+
+from .account_router import account_router
+from .journal_router import journal_router
+from .report_router import report_router
+from .opening_balance_router import opening_balance_router
+from .general_ledger_router import general_ledger_router
+from .period_close_router import period_close_router
+from .receivable_router import receivable_router
+from .receipt_router import receipt_router
+from .payable_router import payable_router
+from .payment_router import payment_router
+from .receivable_settlement_router import receivable_settlement_router
+from .payable_settlement_router import payable_settlement_router
+from .aging_analysis_router import aging_analysis_router
+from .asset_router import asset_router
+from .depreciation_router import depreciation_router
+from .bank_account_router import bank_account_router
+from .cash_flow_router import cash_flow_router
+from .bill_router import bill_router
+from .cash_plan_router import cash_plan_router
+from .inventory_cost_router import inventory_cost_router, cost_transfer_router, cost_variance_router
+from .expense_router import expense_router
+from .expense_report_router import expense_report_router
+from .expense_analysis_router import expense_analysis_router
+from .tax_router import tax_router
+from .tax_declaration_router import tax_declaration_router
+from .tax_summary_router import tax_summary_router
+from .integration_account_mapping_router import integration_account_mapping_router
+from .integration_log_router import integration_log_router
+from .integration_config_router import integration_config_router
+
+finance_api_router = APIRouter()
+
+finance_api_router.include_router(account_router)
+finance_api_router.include_router(journal_router)
+finance_api_router.include_router(report_router)
+finance_api_router.include_router(opening_balance_router)
+finance_api_router.include_router(general_ledger_router)
+finance_api_router.include_router(period_close_router)
+finance_api_router.include_router(receivable_router)
+finance_api_router.include_router(receipt_router)
+finance_api_router.include_router(payable_router)
+finance_api_router.include_router(payment_router)
+finance_api_router.include_router(receivable_settlement_router)
+finance_api_router.include_router(payable_settlement_router)
+finance_api_router.include_router(aging_analysis_router)
+finance_api_router.include_router(asset_router)
+finance_api_router.include_router(depreciation_router)
+finance_api_router.include_router(bank_account_router)
+finance_api_router.include_router(cash_flow_router)
+finance_api_router.include_router(bill_router)
+finance_api_router.include_router(cash_plan_router)
+finance_api_router.include_router(inventory_cost_router)
+finance_api_router.include_router(cost_transfer_router)
+finance_api_router.include_router(cost_variance_router)
+finance_api_router.include_router(expense_router)
+finance_api_router.include_router(expense_report_router)
+finance_api_router.include_router(expense_analysis_router)
+finance_api_router.include_router(tax_router)
+finance_api_router.include_router(tax_declaration_router)
+finance_api_router.include_router(tax_summary_router)
+finance_api_router.include_router(integration_account_mapping_router)
+finance_api_router.include_router(integration_log_router)
+finance_api_router.include_router(integration_config_router)
+
+__all__ = ["finance_api_router"]

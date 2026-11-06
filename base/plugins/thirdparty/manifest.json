@@ -1,0 +1,71 @@
+{
+    "name": "thirdparty",
+    "display_name": "第三方平台对接",
+    "version": "1.0.0",
+    "description": "对接第三方平台（如Dify、Coze等）的配置管理和API转发服务",
+    "author": "system",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/thirdparty",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "platform",
+        "agent"
+    ],
+    "schemas": [
+        "platform",
+        "agent"
+    ],
+    "menus": [
+        {
+            "name": "第三方平台",
+            "path": "/thirdparty",
+            "icon": "CloudServer",
+            "component": "",
+            "redirect": "/thirdparty/platforms",
+            "sort": 4,
+            "children": [
+                {
+                    "name": "平台管理",
+                    "path": "/thirdparty/platforms",
+                    "icon": "Setting",
+                    "component": "thirdparty/platforms/index",
+                    "sort": 1
+                },
+                {
+                    "name": "三方智能体管理",
+                    "path": "/thirdparty/agents",
+                    "icon": "Bot",
+                    "component": "thirdparty/agents/index",
+                    "sort": 2
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "第三方平台查看",
+            "code": "thirdparty:view",
+            "module": "thirdparty",
+            "description": "查看第三方平台配置"
+        },
+        {
+            "name": "第三方平台管理",
+            "code": "thirdparty:manage",
+            "module": "thirdparty",
+            "description": "管理第三方平台和智能体配置"
+        }
+    ],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {
+        "timeout": 30,
+        "max_retries": 3
+    }
+}

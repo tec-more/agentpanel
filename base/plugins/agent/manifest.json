@@ -1,0 +1,90 @@
+{
+    "name": "agent",
+    "display_name": "Agent Development Base",
+    "version": "1.0.0",
+    "description": "Agent development base with skill and memory capabilities",
+    "author": "hepan",
+    "website": "",
+    "route_prefix": "/v1/agent",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "agent",
+        "skill",
+        "skill_category",
+        "tool",
+        "tool_tag",
+        "memory",
+        "workflow",
+        "workflow_version",
+        "trace_event",
+        "dialog_flow",
+        "rag"
+    ],
+    "schemas": [
+        "agent",
+        "skill",
+        "skill_category",
+        "tool",
+        "tool_tag",
+        "memory",
+        "workflow",
+        "dialog_flow",
+        "rag"
+    ],
+    "dependencies": [],
+    "is_installed": false,
+    "is_enabled": false,
+    "menus": [
+        {
+            "name": "智能体管理",
+            "path": "/agent",
+            "icon": "icon-agent",
+            "component": "agent/index",
+            "sort": 10,
+            "children": [
+                {
+                    "name": "智能体",
+                    "path": "/agent/list",
+                    "component": "agent/agents"
+                },
+                {
+                    "name": "工作流",
+                    "path": "/agent/workflows",
+                    "component": "agent/workflows"
+                },
+                {
+                    "name": "对话流",
+                    "path": "/agent/dialog-flows",
+                    "component": "agent/dialog-flows"
+                },
+                {
+                    "name": "技能管理",
+                    "path": "/agent/skills",
+                    "component": "agent/skills"
+                },
+                {
+                    "name": "工具管理",
+                    "path": "/agent/tools",
+                    "component": "agent/tools"
+                },
+                {
+                    "name": "记忆管理",
+                    "path": "/agent/memory",
+                    "component": "agent/memory"
+                },
+                {
+                    "name": "RAG知识库",
+                    "path": "/agent/rag",
+                    "component": "agent/rag"
+                },
+                {
+                    "name": "执行记录",
+                    "path": "/agent/executions",
+                    "component": "agent/executions"
+                }
+            ]
+        }
+    ]
+}

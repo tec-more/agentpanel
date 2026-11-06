@@ -1,0 +1,83 @@
+{
+    "name": "llm",
+    "display_name": "大模型管理",
+    "version": "1.0.0",
+    "description": "大模型API管理和转发服务，支持OpenAI、百度、阿里、腾讯等主流厂商",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/llm",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "provider",
+        "model",
+        "api_key",
+        "usage"
+    ],
+    "schemas": [
+        "provider",
+        "model",
+        "api_key",
+        "chat"
+    ],
+    "menus": [
+        {
+            "name": "大模型管理",
+            "path": "/llm",
+            "icon": "ChatDotRound",
+            "component": "",
+            "redirect": "/llm/models",
+            "sort": 3,
+            "children": [
+                {
+                    "name": "模型管理",
+                    "path": "/llm/models",
+                    "icon": "Management",
+                    "component": "llm/models/index",
+                    "sort": 1
+                },
+                {
+                    "name": "API密钥",
+                    "path": "/llm/api-keys",
+                    "icon": "Key",
+                    "component": "llm/api-keys/index",
+                    "sort": 2
+                },
+                {
+                    "name": "使用记录",
+                    "path": "/llm/usage",
+                    "icon": "DataAnalysis",
+                    "component": "llm/usage/index",
+                    "sort": 3
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "大模型查看",
+            "code": "llm:view",
+            "module": "llm",
+            "description": "查看大模型配置和使用情况"
+        },
+        {
+            "name": "大模型管理",
+            "code": "llm:manage",
+            "module": "llm",
+            "description": "管理大模型厂商、模型和API密钥"
+        }
+    ],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {
+        "default_model": "gpt-4",
+        "streaming_timeout": 30,
+        "max_concurrent_requests": 100
+    }
+}

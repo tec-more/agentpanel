@@ -1,0 +1,54 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: aipanel-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD required}"]
+    volumes:
+      - F:/redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # 不暴露宿主机端口：仅编排内网可达
+
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+    image: aipanel-app:latest
+    container_name: aipanel-app
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      DEPLOY_ENV: docker
+      STRICT_STARTUP: "true"
+      UVICORN_WORKERS: "1"     # H-1 硬约束：禁止调大
+      UVICORN_PORT: "9998"
+    volumes:
+      # 生产配置以卷挂载下发（仓库内仅存模板，真实配置不入库）
+      - ./config.conf:/app/config.conf
+      - ../../storage:/app/storage
+      - ../../logs:/app/logs
+    expose:
+      - "9998"                 # 仅编排内网暴露，外部统一走 nginx
+
+  nginx:
+    # 多阶段构建（deploy/nginx/Dockerfile）：node 编译 web-user → 镜像内自带 dist，无需本地产物
+    build:
+      context: ../..
+      dockerfile: deploy/nginx/Dockerfile
+    image: aipanel-nginx:latest
+    container_name: aipanel-nginx
+    restart: always
+    depends_on:
+      - app
+      - dsh
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "9080:80"              # 管理后台（/panel → web/dist，经后端 app_wrapper）

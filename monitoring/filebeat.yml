@@ -1,0 +1,18 @@
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/aipaneladmin/app.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.message_key: message
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "aipaneladmin-%{+yyyy.MM.dd}"
+
+setup.kibana:
+  host: "kibana:5601"
+
+setup.template.name: "aipaneladmin"
+setup.template.pattern: "aipaneladmin-*"

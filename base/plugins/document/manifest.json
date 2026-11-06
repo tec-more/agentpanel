@@ -1,0 +1,133 @@
+{
+    "name": "document",
+    "display_name": "文档管理",
+    "version": "1.0.0",
+    "description": "通用文档管理模块，提供文档上传、版本控制、分类目录、在线预览、业务关联等功能",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/document",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "document_models"
+    ],
+    "schemas": [
+        "document_schema"
+    ],
+    "menus": [
+        {
+            "name": "文档管理",
+            "path": "/document",
+            "icon": "Document",
+            "component": "document/Index",
+            "sort": 11,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "document:list",
+            "children": [
+                {
+                    "name": "文档列表",
+                    "path": "/document/list",
+                    "icon": "List",
+                    "component": "document/list/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "document:list:list"
+                },
+                {
+                    "name": "分类目录",
+                    "path": "/document/category",
+                    "icon": "Folder",
+                    "component": "document/category/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "document:category:list"
+                },
+                {
+                    "name": "回收站",
+                    "path": "/document/trash",
+                    "icon": "Trash",
+                    "component": "document/trash/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "document:trash:list"
+                },
+                {
+                    "name": "文档设置",
+                    "path": "/document/settings",
+                    "icon": "Settings",
+                    "component": "document/settings/Index",
+                    "sort": 4,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "document:settings:list"
+                },
+                {
+                    "name": "版本管理",
+                    "path": "/document/version/:id",
+                    "icon": "Version",
+                    "component": "document/version/Index",
+                    "sort": 5,
+                    "is_hidden": true,
+                    "menu_type": "menu",
+                    "permission_code": "document:version"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "文档查看",
+            "code": "document:view",
+            "module": "document",
+            "description": "查看文档详情"
+        },
+        {
+            "name": "文档上传",
+            "code": "document:upload",
+            "module": "document",
+            "description": "上传新文档"
+        },
+        {
+            "name": "文档编辑",
+            "code": "document:edit",
+            "module": "document",
+            "description": "编辑文档信息"
+        },
+        {
+            "name": "文档删除",
+            "code": "document:delete",
+            "module": "document",
+            "description": "删除文档（移入回收站）"
+        },
+        {
+            "name": "文档下载",
+            "code": "document:download",
+            "module": "document",
+            "description": "下载文档文件"
+        },
+        {
+            "name": "版本管理",
+            "code": "document:version",
+            "module": "document",
+            "description": "管理文档版本"
+        },
+        {
+            "name": "分类管理",
+            "code": "document:category:manage",
+            "module": "document",
+            "description": "管理文档分类目录"
+        },
+        {
+            "name": "回收站管理",
+            "code": "document:trash:manage",
+            "module": "document",
+            "description": "管理回收站中的文档"
+        }
+    ]
+}

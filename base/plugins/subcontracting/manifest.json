@@ -1,0 +1,71 @@
+{
+    "name": "subcontracting",
+    "display_name": "委外管理",
+    "version": "1.0.0",
+    "description": "委外管理模块，包含委外工单、委外发料、委外收货、委外结算、委外在途库存管理",
+    "author": "hepan",
+    "route_prefix": "/v1/subcontracting",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "subcontracting_order",
+        "subcontracting_issue",
+        "subcontracting_receipt",
+        "subcontracting_settlement",
+        "supplier_material_price"
+    ],
+    "schemas": [
+        "subcontracting_schema"
+    ],
+    "dependencies": [
+        "product",
+        "inventory",
+        "purchase",
+        "mes",
+        "mrp2",
+        "finance"
+    ],
+    "is_installed": false,
+    "is_enabled": false,
+    "menus": [
+        {
+            "name": "委外管理",
+            "icon": "Share",
+            "path": "/panel/subcontracting",
+            "order": 60,
+            "children": [
+                {
+                    "name": "委外工单",
+                    "icon": "Document",
+                    "path": "/panel/subcontracting/order",
+                    "order": 1
+                },
+                {
+                    "name": "委外发料",
+                    "icon": "Upload",
+                    "path": "/panel/subcontracting/issue",
+                    "order": 2
+                },
+                {
+                    "name": "委外收货",
+                    "icon": "Download",
+                    "path": "/panel/subcontracting/receipt",
+                    "order": 3
+                },
+                {
+                    "name": "委外结算",
+                    "icon": "Money",
+                    "path": "/panel/subcontracting/settlement",
+                    "order": 4
+                },
+                {
+                    "name": "委外在途库存",
+                    "icon": "Van",
+                    "path": "/panel/subcontracting/transit",
+                    "order": 5
+                }
+            ]
+        }
+    ]
+}

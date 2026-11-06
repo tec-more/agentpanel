@@ -1,0 +1,22 @@
+# Redis 独立编排（上线硬约束 H-2：分布式并发槽 + TTL 兜底）
+# 用法：REDIS_PASSWORD=xxx docker compose -f deploy/redis/docker-compose.yml up -d
+# 已选用 deploy/app/docker-compose.yml 一体化编排时，无需单独启动本文件
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: aipanel-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    # AOF 持久化：进程重启后并发槽/预占键可恢复；--requirepass 强制鉴权
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD required}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  redis_data:

@@ -1,0 +1,179 @@
+{
+    "name": "inventory",
+    "display_name": "库存管理系统",
+    "version": "2.0.0",
+    "description": "库存管理系统模块（Odoo风格），包含仓库管理、库位管理、调拨类型管理、调拨单管理、移动明细管理、库存数量管理、库存预留管理、批次管理、包裹管理",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/inventory",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "inventory_models"
+    ],
+    "schemas": [
+        "inventory_schema"
+    ],
+    "menus": [
+        {
+            "name": "库存管理",
+            "path": "/inventory",
+            "icon": "Package",
+            "component": "inventory/Index",
+            "sort": 9,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "inventory:list",
+            "children": [
+                {
+                    "name": "基础设置",
+                    "path": "/inventory/settings",
+                    "icon": "Settings",
+                    "component": "inventory/settings/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "inventory:settings:list",
+                    "children": [
+                        {
+                            "name": "仓库管理",
+                            "path": "/inventory/settings/warehouse",
+                            "icon": "Warehouse",
+                            "component": "inventory/settings/warehouse/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:warehouse:list"
+                        },
+                        {
+                            "name": "库位管理",
+                            "path": "/inventory/settings/location",
+                            "icon": "MapPin",
+                            "component": "inventory/settings/location/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:location:list"
+                        },
+                        {
+                            "name": "调拨类型",
+                            "path": "/inventory/settings/picking-type",
+                            "icon": "Tags",
+                            "component": "inventory/settings/picking-type/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:picking-type:list"
+                        },
+                        {
+                            "name": "批次管理",
+                            "path": "/inventory/settings/lot",
+                            "icon": "Layers",
+                            "component": "inventory/settings/lot/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:lot:list"
+                        },
+                        {
+                            "name": "包裹管理",
+                            "path": "/inventory/settings/package",
+                            "icon": "Gift",
+                            "component": "inventory/settings/package/Index",
+                            "sort": 5,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:package:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "调拨管理",
+                    "path": "/inventory/picking",
+                    "icon": "ArrowRightLeft",
+                    "component": "inventory/picking/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "inventory:picking:list",
+                    "children": [
+                        {
+                            "name": "入库调拨",
+                            "path": "/inventory/picking/incoming",
+                            "icon": "LogIn",
+                            "component": "inventory/picking/incoming/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:picking:incoming:list"
+                        },
+                        {
+                            "name": "出库调拨",
+                            "path": "/inventory/picking/outgoing",
+                            "icon": "LogOut",
+                            "component": "inventory/picking/outgoing/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:picking:outgoing:list"
+                        },
+                        {
+                            "name": "内部调拨",
+                            "path": "/inventory/picking/internal",
+                            "icon": "Repeat",
+                            "component": "inventory/picking/internal/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:picking:internal:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "库存查询",
+                    "path": "/inventory/quant",
+                    "icon": "ClipboardList",
+                    "component": "inventory/quant/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "inventory:quant:list",
+                    "children": [
+                        {
+                            "name": "库存列表",
+                            "path": "/inventory/quant/list",
+                            "icon": "List",
+                            "component": "inventory/quant/list/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:quant:list:query"
+                        },
+                        {
+                            "name": "库存汇总",
+                            "path": "/inventory/quant/summary",
+                            "icon": "PieChart",
+                            "component": "inventory/quant/summary/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:quant:summary"
+                        },
+                        {
+                            "name": "预留查询",
+                            "path": "/inventory/quant/reservation",
+                            "icon": "Bookmark",
+                            "component": "inventory/quant/reservation/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "inventory:reservation:list"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

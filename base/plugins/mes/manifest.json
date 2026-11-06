@@ -1,0 +1,131 @@
+{
+    "name": "mes",
+    "display_name": "制造管理",
+    "version": "1.0.0",
+    "description": "MES制造执行系统模块，包含生产计划、执行管理和基础数据管理",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/mes",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "base_data",
+        "production",
+        "production_report",
+        "material_flow",
+        "trace",
+        "barcode",
+        "shift",
+        "exception",
+        "tooling",
+        "energy",
+        "operation_log"
+    ],
+    "schemas": [
+        "mes_schema",
+        "production_report_schema",
+        "material_flow_schema",
+        "trace_schema",
+        "barcode_schema",
+        "shift_schema",
+        "exception_schema",
+        "tooling_schema",
+        "energy_schema"
+    ],
+    "menus": [
+        {
+            "name": "制造管理",
+            "path": "/mes",
+            "icon": "Factory",
+            "component": "mes/Index",
+            "sort": 8,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "mes:list",
+            "children": [
+                {
+                    "name": "基础数据",
+                    "path": "/mes/base",
+                    "icon": "Database",
+                    "component": "mes/base/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:base:list"
+                },
+                {
+                    "name": "生产计划",
+                    "path": "/mes/plan",
+                    "icon": "Calendar",
+                    "component": "mes/plan/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:plan:list"
+                },
+                {
+                    "name": "生产执行",
+                    "path": "/mes/exec",
+                    "icon": "ListChecks",
+                    "component": "mes/exec/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:exec:list"
+                },
+                {
+                    "name": "生产报工",
+                    "path": "/mes/report",
+                    "icon": "EditPen",
+                    "component": "mes/report/Index",
+                    "sort": 4,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:report:list"
+                },
+                {
+                    "name": "物料流转",
+                    "path": "/mes/material",
+                    "icon": "Box",
+                    "component": "mes/material/Index",
+                    "sort": 5,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:material:list"
+                },
+                {
+                    "name": "生产看板",
+                    "path": "/mes/dashboard",
+                    "icon": "Monitor",
+                    "component": "mes/dashboard/Index",
+                    "sort": 6,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:dashboard:list"
+                },
+                {
+                    "name": "生产追溯",
+                    "path": "/mes/trace",
+                    "icon": "Search",
+                    "component": "mes/trace/Index",
+                    "sort": 7,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:trace:list"
+                },
+                {
+                    "name": "异常管理",
+                    "path": "/mes/exception",
+                    "icon": "Warning",
+                    "component": "mes/exception/Index",
+                    "sort": 8,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mes:exception:list"
+                }
+            ]
+        }
+    ]
+}

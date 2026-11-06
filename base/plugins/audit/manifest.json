@@ -1,0 +1,166 @@
+{
+    "name": "audit",
+    "display_name": "全链路审计模块",
+    "version": "2.0.0",
+    "description": "提供完整的全链路审计功能，包括输入层、决策层、执行层、输出层、系统层审计，支持全链路追踪、决策可解释、合规留痕、风险审计",
+    "author": "hepan",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/audit",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "audit_log"
+    ],
+    "schemas": [
+        "audit_log"
+    ],
+    "menus": [
+        {
+            "name": "审计管理",
+            "path": "/audit",
+            "icon": "Document",
+            "component": "",
+            "redirect": "/audit/logs",
+            "sort": 895,
+            "children": [
+                {
+                    "name": "全链路追踪",
+                    "path": "/audit/trace",
+                    "icon": "Link",
+                    "component": "audit/trace",
+                    "sort": 1
+                },
+                {
+                    "name": "审计日志",
+                    "path": "/audit/logs",
+                    "icon": "List",
+                    "component": "audit/logs",
+                    "sort": 2
+                },
+                {
+                    "name": "数据变更",
+                    "path": "/audit/data-changes",
+                    "icon": "Edit",
+                    "component": "audit/data-changes",
+                    "sort": 3
+                },
+                {
+                    "name": "登录审计",
+                    "path": "/audit/login-logs",
+                    "icon": "User",
+                    "component": "audit/login-logs",
+                    "sort": 4
+                },
+                {
+                    "name": "风险审计",
+                    "path": "/audit/risks",
+                    "icon": "Warning",
+                    "component": "audit/risks",
+                    "sort": 5
+                },
+                {
+                    "name": "审计报告",
+                    "path": "/audit/reports",
+                    "icon": "Document",
+                    "component": "audit/reports",
+                    "sort": 6
+                },
+                {
+                    "name": "审计配置",
+                    "path": "/audit/config",
+                    "icon": "Setting",
+                    "component": "audit/config",
+                    "sort": 7
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "查看全链路追踪",
+            "code": "audit:trace:view",
+            "module": "audit",
+            "description": "查看完整的审计链路信息"
+        },
+        {
+            "name": "审计日志查看",
+            "code": "audit:log:view",
+            "module": "audit",
+            "description": "查看审计日志"
+        },
+        {
+            "name": "审计日志审核",
+            "code": "audit:log:review",
+            "module": "audit",
+            "description": "审核审计日志"
+        },
+        {
+            "name": "数据变更查看",
+            "code": "audit:data_change:view",
+            "module": "audit",
+            "description": "查看数据变更记录"
+        },
+        {
+            "name": "登录审计查看",
+            "code": "audit:login:view",
+            "module": "audit",
+            "description": "查看登录审计记录"
+        },
+        {
+            "name": "风险审计查看",
+            "code": "audit:risk:view",
+            "module": "audit",
+            "description": "查看风险审计记录"
+        },
+        {
+            "name": "风险审计处理",
+            "code": "audit:risk:handle",
+            "module": "audit",
+            "description": "处理风险审计记录"
+        },
+        {
+            "name": "审计报告查看",
+            "code": "audit:report:view",
+            "module": "audit",
+            "description": "查看审计报告"
+        },
+        {
+            "name": "审计报告生成",
+            "code": "audit:report:generate",
+            "module": "audit",
+            "description": "生成审计报告"
+        },
+        {
+            "name": "审计配置管理",
+            "code": "audit:config:manage",
+            "module": "audit",
+            "description": "管理审计配置"
+        }
+    ],
+    "config": {
+        "enabled": true,
+        "log_retention_days": 90,
+        "sensitive_fields": [
+            "password",
+            "token",
+            "secret",
+            "credit_card",
+            "ssn",
+            "phone",
+            "email"
+        ],
+        "trace_enabled": true,
+        "risk_alert_enabled": true,
+        "compliance_check_enabled": true,
+        "auto_report_enabled": false,
+        "auto_report_schedule": "weekly"
+    },
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    }
+}

@@ -1,0 +1,74 @@
+{
+    "name": "product",
+    "display_name": "产品模块",
+    "version": "1.0.0",
+    "description": "产品模块，提供产品的管理功能",
+    "author": "hepan",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/product",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "product",
+        "attribute"
+    ],
+    "schemas": [
+        "product_schema"
+    ],
+    "menus": [
+        {
+            "name": "产品管理",
+            "path": "/product",
+            "icon": "Box",
+            "component": "",
+            "sort": 3,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "product:list",
+            "children": [
+                {
+                    "name": "产品信息",
+                    "path": "/product",
+                    "icon": "Box",
+                    "component": "product/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "product:list"
+                },
+                {
+                    "name": "产品分类",
+                    "path": "/product/category",
+                    "icon": "Folder",
+                    "component": "product/Category",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "product:category:list"
+                },
+                {
+                    "name": "产品属性",
+                    "path": "/product/attribute",
+                    "icon": "Settings",
+                    "component": "product/Attribute",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "product:attribute:list"
+                },
+                {
+                    "name": "产品变体",
+                    "path": "/product/variant",
+                    "icon": "Boxes",
+                    "component": "product/Variant",
+                    "sort": 4,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "product:variant:list"
+                }
+            ]
+        }
+    ]
+}

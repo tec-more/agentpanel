@@ -1,0 +1,17 @@
+{
+    "name": "alipay",
+    "display_name": "支付宝支付",
+    "version": "1.0.0",
+    "description": "支付宝支付插件，提供支付宝支付相关功能",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/alipay",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [],
+    "schemas": [
+        "alipay_schema"
+    ]
+}

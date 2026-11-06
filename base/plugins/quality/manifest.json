@@ -1,0 +1,53 @@
+{
+    "name": "quality",
+    "display_name": "质量管理",
+    "version": "1.0.0",
+    "description": "质量管理模块，包含检验管理、检验标准管理等功能",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/quality",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "quality"
+    ],
+    "schemas": [
+        "quality_schema"
+    ],
+    "menus": [
+        {
+            "name": "质量管理",
+            "path": "/quality",
+            "icon": "ShieldCheck",
+            "component": "quality/Index",
+            "sort": 9,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "quality:list",
+            "children": [
+                {
+                    "name": "检验管理",
+                    "path": "/quality/inspection",
+                    "icon": "FileCheck",
+                    "component": "quality/inspection/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "quality:inspection:list"
+                },
+                {
+                    "name": "检验标准",
+                    "path": "/quality/standard",
+                    "icon": "BookOpen",
+                    "component": "quality/standard/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "quality:standard:list"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,120 @@
+{
+    "name": "mail",
+    "display_name": "消息模块",
+    "version": "1.0.0",
+    "description": "消息模块，仿 Odoo mail 机制，提供记录消息（Chatter）、关注者、通知功能，支持与现有业务模块集成",
+    "author": "hepan",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/mail",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "message",
+        "message_subtype",
+        "follower",
+        "notification",
+        "model_mapping"
+    ],
+    "menus": [
+        {
+            "name": "消息中心",
+            "path": "/mail",
+            "icon": "Bell",
+            "component": "",
+            "redirect": "/mail/inbox",
+            "sort": 890,
+            "children": [
+                {
+                    "name": "收件箱",
+                    "path": "/mail/inbox",
+                    "icon": "Message",
+                    "component": "mail/Inbox",
+                    "sort": 1,
+                    "permission_code": "mail:notification:view"
+                },
+                {
+                    "name": "消息子类型",
+                    "path": "/mail/subtypes",
+                    "icon": "Collection",
+                    "component": "mail/Subtype",
+                    "sort": 2,
+                    "permission_code": "mail:subtype:view"
+                },
+                {
+                    "name": "事件映射",
+                    "path": "/mail/mappings",
+                    "icon": "Connection",
+                    "component": "mail/Mapping",
+                    "sort": 3,
+                    "permission_code": "mail:mapping:view"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "消息查看",
+            "code": "mail:message:view",
+            "module": "mail",
+            "description": "查看业务记录的消息线程"
+        },
+        {
+            "name": "消息发布",
+            "code": "mail:message:post",
+            "module": "mail",
+            "description": "在业务记录上发布评论/消息"
+        },
+        {
+            "name": "消息管理",
+            "code": "mail:message:manage",
+            "module": "mail",
+            "description": "编辑/删除任意消息"
+        },
+        {
+            "name": "关注管理",
+            "code": "mail:follower:manage",
+            "module": "mail",
+            "description": "关注/取消关注业务记录"
+        },
+        {
+            "name": "通知查看",
+            "code": "mail:notification:view",
+            "module": "mail",
+            "description": "查看自己的收件箱和未读数"
+        },
+        {
+            "name": "子类型查看",
+            "code": "mail:subtype:view",
+            "module": "mail",
+            "description": "查看消息子类型"
+        },
+        {
+            "name": "子类型管理",
+            "code": "mail:subtype:manage",
+            "module": "mail",
+            "description": "创建/编辑消息子类型"
+        },
+        {
+            "name": "事件映射查看",
+            "code": "mail:mapping:view",
+            "module": "mail",
+            "description": "查看模型事件→消息映射"
+        },
+        {
+            "name": "事件映射管理",
+            "code": "mail:mapping:manage",
+            "module": "mail",
+            "description": "配置模型事件→消息映射"
+        }
+    ],
+    "dependencies": [],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {}
+}

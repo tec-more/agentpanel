@@ -1,0 +1,13 @@
+[tool.aerich]
+tortoise_orm = "base.common.setting.TORTOISE_ORM"
+location = "./migrations"
+src_folder = "./."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore:PydanticDeprecatedSince20"
+]

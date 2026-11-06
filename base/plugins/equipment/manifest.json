@@ -1,0 +1,63 @@
+{
+    "name": "equipment",
+    "display_name": "设备管理",
+    "version": "1.0.0",
+    "description": "设备管理模块，包含设备台账、维护保养、故障管理等功能",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/equipment",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "equipment"
+    ],
+    "schemas": [
+        "equipment_schema"
+    ],
+    "menus": [
+        {
+            "name": "设备管理",
+            "path": "/equipment",
+            "icon": "Settings",
+            "component": "equipment/Index",
+            "sort": 10,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "equipment:list",
+            "children": [
+                {
+                    "name": "设备台账",
+                    "path": "/equipment/list",
+                    "icon": "Box",
+                    "component": "equipment/list/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "equipment:list:list"
+                },
+                {
+                    "name": "维护保养",
+                    "path": "/equipment/maintenance",
+                    "icon": "Wrench",
+                    "component": "equipment/maintenance/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "equipment:maintenance:list"
+                },
+                {
+                    "name": "故障管理",
+                    "path": "/equipment/fault",
+                    "icon": "AlertTriangle",
+                    "component": "equipment/fault/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "equipment:fault:list"
+                }
+            ]
+        }
+    ]
+}

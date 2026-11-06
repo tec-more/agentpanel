@@ -1,0 +1,19 @@
+
+services:
+  opengauss:
+    image: opengauss/opengauss-server:latest
+    container_name: opengauss
+    restart: always
+    # 端口映射，宿主机5432映射容器5432
+    ports:
+      - "15432:5432"
+    # 持久化数据卷，删除容器数据不丢失
+    volumes:
+      - F:/opengauss_data:/var/lib/opengauss
+    environment:
+      # 数据库超级用户密码（必须设置，不能空）
+      GS_PASSWORD: Admin@123456
+      # 数据库编码
+      LANG: en_US.UTF-8
+    # 权限配置
+    privileged: true

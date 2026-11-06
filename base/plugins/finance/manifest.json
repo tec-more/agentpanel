@@ -1,0 +1,518 @@
+{
+    "name": "finance",
+    "display_name": "财务管理",
+    "version": "1.0.0",
+    "description": "财务管理模块，包含总账、应收应付、资产、存货、资金、报表、费用报销、税务等功能",
+    "author": "hepan",
+    "route_prefix": "/v1/finance",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "account",
+        "journal",
+        "general_ledger",
+        "trial_balance",
+        "receivable",
+        "payable",
+        "asset",
+        "inventory_cost",
+        "bank",
+        "bill",
+        "expense",
+        "tax",
+        "integration_account_mapping",
+        "integration_log",
+        "integration_config"
+    ],
+    "schemas": [
+        "finance_schema"
+    ],
+    "dependencies": [
+        "sales",
+        "purchase",
+        "inventory"
+    ],
+    "is_installed": false,
+    "is_enabled": false,
+    "menus": [
+        {
+            "name": "财务管理",
+            "path": "/finance",
+            "icon": "Money",
+            "component": "finance/Index",
+            "sort": 1,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "finance:list",
+            "children": [
+                {
+                    "name": "总账管理",
+                    "path": "/finance/general-ledger",
+                    "icon": "BookOpen",
+                    "component": "finance/general-ledger/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:general-ledger:list",
+                    "children": [
+                        {
+                            "name": "会计科目",
+                            "path": "/finance/account",
+                            "icon": "BookMark",
+                            "component": "finance/account/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:account:list"
+                        },
+                        {
+                            "name": "期初余额",
+                            "path": "/finance/opening-balance",
+                            "icon": "Wallet",
+                            "component": "finance/opening-balance/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:opening-balance:list"
+                        },
+                        {
+                            "name": "凭证管理",
+                            "path": "/finance/journal",
+                            "icon": "FileText",
+                            "component": "finance/journal/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:journal:list"
+                        },
+                        {
+                            "name": "日记账",
+                            "path": "/finance/daily",
+                            "icon": "Calendar",
+                            "component": "finance/daily/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:daily:list"
+                        },
+                        {
+                            "name": "总账查询",
+                            "path": "/finance/general-ledger-query",
+                            "icon": "Columns",
+                            "component": "finance/general-ledger-query/Index",
+                            "sort": 5,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:general-ledger-query:list"
+                        },
+                        {
+                            "name": "期末结转",
+                            "path": "/finance/period-close",
+                            "icon": "RefreshCw",
+                            "component": "finance/period-close/Index",
+                            "sort": 6,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:period-close:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "应收应付",
+                    "path": "/finance/receivable-payable",
+                    "icon": "CreditCard",
+                    "component": "finance/receivable-payable/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:receivable-payable:list",
+                    "children": [
+                        {
+                            "name": "应收单",
+                            "path": "/finance/receivable",
+                            "icon": "TrendingUp",
+                            "component": "finance/receivable/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:receivable:list"
+                        },
+                        {
+                            "name": "收款单",
+                            "path": "/finance/receipt",
+                            "icon": "Wallet",
+                            "component": "finance/receipt/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:receipt:list"
+                        },
+                        {
+                            "name": "应收核销",
+                            "path": "/finance/receivable-settlement",
+                            "icon": "CheckCircle",
+                            "component": "finance/receivable-settlement/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:receivable-settlement:list"
+                        },
+                        {
+                            "name": "应付单",
+                            "path": "/finance/payable",
+                            "icon": "TrendingDown",
+                            "component": "finance/payable/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:payable:list"
+                        },
+                        {
+                            "name": "付款单",
+                            "path": "/finance/payment",
+                            "icon": "Banknote",
+                            "component": "finance/payment/Index",
+                            "sort": 5,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:payment:list"
+                        },
+                        {
+                            "name": "应付核销",
+                            "path": "/finance/payable-settlement",
+                            "icon": "CheckCircle",
+                            "component": "finance/payable-settlement/Index",
+                            "sort": 6,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:payable-settlement:list"
+                        },
+                        {
+                            "name": "账龄分析",
+                            "path": "/finance/aging-analysis",
+                            "icon": "BarChart3",
+                            "component": "finance/aging-analysis/Index",
+                            "sort": 7,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:aging-analysis:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "资产管理",
+                    "path": "/finance/asset",
+                    "icon": "Building2",
+                    "component": "finance/asset/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:asset:list",
+                    "children": [
+                        {
+                            "name": "固定资产",
+                            "path": "/finance/assets",
+                            "icon": "Building",
+                            "component": "finance/assets/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:assets:list"
+                        },
+                        {
+                            "name": "资产卡片",
+                            "path": "/finance/asset-card",
+                            "icon": "CreditCard",
+                            "component": "finance/asset-card/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:asset-card:list"
+                        },
+                        {
+                            "name": "折旧计提",
+                            "path": "/finance/depreciation",
+                            "icon": "Calculator",
+                            "component": "finance/depreciation/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:depreciation:list"
+                        },
+                        {
+                            "name": "资产变动",
+                            "path": "/finance/asset-change",
+                            "icon": "RefreshCw",
+                            "component": "finance/asset-change/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:asset-change:list"
+                        },
+                        {
+                            "name": "资产清理",
+                            "path": "/finance/asset-disposal",
+                            "icon": "Trash2",
+                            "component": "finance/asset-disposal/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:asset-disposal:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "存货成本",
+                    "path": "/finance/inventory-cost",
+                    "icon": "Package",
+                    "component": "finance/inventory-cost/Index",
+                    "sort": 4,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:inventory-cost:list",
+                    "children": [
+                        {
+                            "name": "成本计价",
+                            "path": "/finance/cost-valuation",
+                            "icon": "FileSpreadsheet",
+                            "component": "finance/cost-valuation/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:cost-valuation:list"
+                        },
+                        {
+                            "name": "成本结转",
+                            "path": "/finance/cost-transfer",
+                            "icon": "ArrowRightLeft",
+                            "component": "finance/cost-transfer/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:cost-transfer:list"
+                        },
+                        {
+                            "name": "成本差异",
+                            "path": "/finance/cost-variance",
+                            "icon": "BarChart3",
+                            "component": "finance/cost-variance/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:cost-variance:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "资金票据",
+                    "path": "/finance/cash-bill",
+                    "icon": "Bank",
+                    "component": "finance/cash-bill/Index",
+                    "sort": 5,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:cash-bill:list",
+                    "children": [
+                        {
+                            "name": "银行账户",
+                            "path": "/finance/bank-account",
+                            "icon": "Landmark",
+                            "component": "finance/bank-account/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:bank-account:list"
+                        },
+                        {
+                            "name": "资金流水",
+                            "path": "/finance/cash-flow",
+                            "icon": "Activity",
+                            "component": "finance/cash-flow/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:cash-flow:list"
+                        },
+                        {
+                            "name": "票据管理",
+                            "path": "/finance/bill",
+                            "icon": "FileText",
+                            "component": "finance/bill/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:bill:list"
+                        },
+                        {
+                            "name": "资金计划",
+                            "path": "/finance/cash-plan",
+                            "icon": "CalendarCheck",
+                            "component": "finance/cash-plan/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:cash-plan:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "财务报表",
+                    "path": "/finance/report",
+                    "icon": "PieChart",
+                    "component": "finance/report/Index",
+                    "sort": 6,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:report:list",
+                    "children": [
+                        {
+                            "name": "科目余额表",
+                            "path": "/finance/report/trial-balance",
+                            "icon": "Table",
+                            "component": "finance/report/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:report:trial-balance"
+                        },
+                        {
+                            "name": "利润表",
+                            "path": "/finance/report/profit-loss",
+                            "icon": "TrendingUp",
+                            "component": "finance/report/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:report:profit-loss"
+                        },
+                        {
+                            "name": "资产负债表",
+                            "path": "/finance/report/balance-sheet",
+                            "icon": "Layout",
+                            "component": "finance/report/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:report:balance-sheet"
+                        },
+                        {
+                            "name": "现金流量表",
+                            "path": "/finance/report/cash-flow",
+                            "icon": "Activity",
+                            "component": "finance/report/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:report:cash-flow"
+                        }
+                    ]
+                },
+                {
+                    "name": "费用报销",
+                    "path": "/finance/expense",
+                    "icon": "Receipt",
+                    "component": "finance/expense/Index",
+                    "sort": 7,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:expense:list",
+                    "children": [
+                        {
+                            "name": "费用申请",
+                            "path": "/finance/expense-apply",
+                            "icon": "FileEdit",
+                            "component": "finance/expense-apply/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:expense-apply:list"
+                        },
+                        {
+                            "name": "费用审批",
+                            "path": "/finance/expense-approval",
+                            "icon": "CheckSquare",
+                            "component": "finance/expense-approval/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:expense-approval:list"
+                        },
+                        {
+                            "name": "报销单",
+                            "path": "/finance/expense-report",
+                            "icon": "FileText",
+                            "component": "finance/expense-report/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:expense-report:list"
+                        },
+                        {
+                            "name": "费用分析",
+                            "path": "/finance/expense-analysis",
+                            "icon": "BarChart3",
+                            "component": "finance/expense-analysis/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:expense-analysis:list"
+                        }
+                    ]
+                },
+                {
+                    "name": "税务发票",
+                    "path": "/finance/tax",
+                    "icon": "FileCheck",
+                    "component": "finance/tax/Index",
+                    "sort": 8,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "finance:tax:list",
+                    "children": [
+                        {
+                            "name": "销项发票",
+                            "path": "/finance/tax-out",
+                            "icon": "Send",
+                            "component": "finance/tax-out/Index",
+                            "sort": 1,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:tax-out:list"
+                        },
+                        {
+                            "name": "进项发票",
+                            "path": "/finance/tax-in",
+                            "icon": "Inbox",
+                            "component": "finance/tax-in/Index",
+                            "sort": 2,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:tax-in:list"
+                        },
+                        {
+                            "name": "税务申报",
+                            "path": "/finance/tax-declaration",
+                            "icon": "FileCheck",
+                            "component": "finance/tax-declaration/Index",
+                            "sort": 3,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:tax-declaration:list"
+                        },
+                        {
+                            "name": "税额汇总",
+                            "path": "/finance/tax-summary",
+                            "icon": "Table",
+                            "component": "finance/tax-summary/Index",
+                            "sort": 4,
+                            "is_hidden": false,
+                            "menu_type": "menu",
+                            "permission_code": "finance:tax-summary:list"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

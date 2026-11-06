@@ -1,0 +1,17 @@
+{
+    "name": "wechat_pay",
+    "display_name": "微信支付",
+    "version": "1.0.0",
+    "description": "微信支付插件，提供微信支付相关功能",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/wechat_pay",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [],
+    "schemas": [
+        "wechat_pay_schema"
+    ]
+}

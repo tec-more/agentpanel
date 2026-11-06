@@ -1,0 +1,22 @@
+{
+    "name": "qixiang_pay",
+    "display_name": "七相支付",
+    "version": "1.0.0",
+    "description": "七相聚合支付接口集成（支持微信支付、支付宝）",
+    "author": "hepan",
+    "route_prefix": "/v1/qixiang",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [],
+    "schemas": [
+        "qixiang_schema"
+    ],
+    "dependencies": [
+        "customer",
+        "sales"
+    ],
+    "is_installed": false,
+    "is_enabled": false,
+    "menus": []
+}

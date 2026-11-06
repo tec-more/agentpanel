@@ -1,0 +1,256 @@
+{
+    "name": "crm",
+    "display_name": "CRM模块",
+    "version": "1.0.0",
+    "description": "CRM模块，提供线索管理、商机管理、活动管理、联系人管理、跟进任务管理、统计分析等功能",
+    "author": "hepan",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/crm",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "lead",
+        "opportunity",
+        "opportunity_stage",
+        "stage_change_log",
+        "activity",
+        "contact",
+        "follow_up_task",
+        "lead_source",
+        "crm_config"
+    ],
+    "schemas": [
+        "lead_schema",
+        "opportunity_schema",
+        "activity_schema",
+        "contact_schema",
+        "task_schema",
+        "stats_schema",
+        "config_schema"
+    ],
+    "menus": [
+        {
+            "name": "CRM管理",
+            "path": "/crm",
+            "icon": "Suitcase",
+            "component": "",
+            "redirect": "/crm/leads",
+            "sort": 3,
+            "children": [
+                {
+                    "name": "线索管理",
+                    "path": "/crm/leads",
+                    "icon": "Phone",
+                    "component": "crm/leads/index",
+                    "sort": 1,
+                    "permission_code": "crm:lead:view"
+                },
+                {
+                    "name": "商机管理",
+                    "path": "/crm/opportunities",
+                    "icon": "TrendCharts",
+                    "component": "crm/opportunities/index",
+                    "sort": 2,
+                    "permission_code": "crm:opportunity:view"
+                },
+                {
+                    "name": "活动管理",
+                    "path": "/crm/activities",
+                    "icon": "ChatDotRound",
+                    "component": "crm/activities/index",
+                    "sort": 3,
+                    "permission_code": "crm:activity:view"
+                },
+                {
+                    "name": "联系人管理",
+                    "path": "/crm/contacts",
+                    "icon": "User",
+                    "component": "crm/contacts/index",
+                    "sort": 4,
+                    "permission_code": "crm:contact:view"
+                },
+                {
+                    "name": "跟进任务",
+                    "path": "/crm/tasks",
+                    "icon": "List",
+                    "component": "crm/tasks/index",
+                    "sort": 5,
+                    "permission_code": "crm:task:view"
+                },
+                {
+                    "name": "统计分析",
+                    "path": "/crm/stats",
+                    "icon": "DataAnalysis",
+                    "component": "crm/stats/index",
+                    "sort": 6,
+                    "permission_code": "crm:stats:view"
+                },
+                {
+                    "name": "系统配置",
+                    "path": "/crm/config",
+                    "icon": "Setting",
+                    "component": "crm/config/index",
+                    "sort": 7,
+                    "permission_code": "crm:config:view"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "线索创建",
+            "code": "crm:lead:create",
+            "module": "crm",
+            "description": "创建线索"
+        },
+        {
+            "name": "线索查看",
+            "code": "crm:lead:view",
+            "module": "crm",
+            "description": "查看线索"
+        },
+        {
+            "name": "线索编辑",
+            "code": "crm:lead:edit",
+            "module": "crm",
+            "description": "编辑线索"
+        },
+        {
+            "name": "线索删除",
+            "code": "crm:lead:delete",
+            "module": "crm",
+            "description": "删除线索"
+        },
+        {
+            "name": "线索转化",
+            "code": "crm:lead:convert",
+            "module": "crm",
+            "description": "转化线索为客户"
+        },
+        {
+            "name": "线索分配",
+            "code": "crm:lead:assign",
+            "module": "crm",
+            "description": "分配线索给销售人员"
+        },
+        {
+            "name": "商机创建",
+            "code": "crm:opportunity:create",
+            "module": "crm",
+            "description": "创建商机"
+        },
+        {
+            "name": "商机查看",
+            "code": "crm:opportunity:view",
+            "module": "crm",
+            "description": "查看商机"
+        },
+        {
+            "name": "商机编辑",
+            "code": "crm:opportunity:edit",
+            "module": "crm",
+            "description": "编辑商机"
+        },
+        {
+            "name": "商机删除",
+            "code": "crm:opportunity:delete",
+            "module": "crm",
+            "description": "删除商机"
+        },
+        {
+            "name": "活动创建",
+            "code": "crm:activity:create",
+            "module": "crm",
+            "description": "创建活动记录"
+        },
+        {
+            "name": "活动查看",
+            "code": "crm:activity:view",
+            "module": "crm",
+            "description": "查看活动记录"
+        },
+        {
+            "name": "活动删除",
+            "code": "crm:activity:delete",
+            "module": "crm",
+            "description": "删除活动记录"
+        },
+        {
+            "name": "联系人创建",
+            "code": "crm:contact:create",
+            "module": "crm",
+            "description": "创建联系人"
+        },
+        {
+            "name": "联系人查看",
+            "code": "crm:contact:view",
+            "module": "crm",
+            "description": "查看联系人"
+        },
+        {
+            "name": "联系人编辑",
+            "code": "crm:contact:edit",
+            "module": "crm",
+            "description": "编辑联系人"
+        },
+        {
+            "name": "联系人删除",
+            "code": "crm:contact:delete",
+            "module": "crm",
+            "description": "删除联系人"
+        },
+        {
+            "name": "跟进任务创建",
+            "code": "crm:task:create",
+            "module": "crm",
+            "description": "创建跟进任务"
+        },
+        {
+            "name": "跟进任务查看",
+            "code": "crm:task:view",
+            "module": "crm",
+            "description": "查看跟进任务"
+        },
+        {
+            "name": "跟进任务编辑",
+            "code": "crm:task:edit",
+            "module": "crm",
+            "description": "编辑跟进任务"
+        },
+        {
+            "name": "统计分析查看",
+            "code": "crm:stats:view",
+            "module": "crm",
+            "description": "查看CRM统计分析"
+        },
+        {
+            "name": "系统配置查看",
+            "code": "crm:config:view",
+            "module": "crm",
+            "description": "查看CRM系统配置"
+        },
+        {
+            "name": "系统配置管理",
+            "code": "crm:config:manage",
+            "module": "crm",
+            "description": "管理CRM系统配置"
+        }
+    ],
+    "dependencies": [
+        "customer",
+        "sales",
+        "product"
+    ],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {
+        "auto_recycle_days": 30,
+        "stale_warning_days": 14
+    }
+}

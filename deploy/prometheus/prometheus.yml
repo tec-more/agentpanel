@@ -1,0 +1,23 @@
+# Prometheus 抓取配置（aipaneladmin 灰度监控）
+# 配合 deploy/prometheus/alert_rules.yml 使用；Alertmanager 接入按企业既有通道配置
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alert_rules.yml
+
+# alertmanager 接入示例（按实际 Alertmanager 地址调整）：
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: aipanel
+    metrics_path: /metrics
+    static_configs:
+      # docker-compose 编排内网经 nginx 或直接 app:9998；裸机部署改宿主机 IP
+      - targets: ["app:9998"]
+        labels:
+          service: aipaneladmin

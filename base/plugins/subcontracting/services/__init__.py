@@ -1,0 +1,5 @@
+﻿from base.plugins.subcontracting.services.subcontracting_order_service import SubcontractingOrderService
+from base.plugins.subcontracting.services.subcontracting_issue_service import SubcontractingIssueService
+from base.plugins.subcontracting.services.subcontracting_receipt_service import SubcontractingReceiptService
+from base.plugins.subcontracting.services.subcontracting_settlement_service import SubcontractingSettlementService
+from base.plugins.subcontracting.services.subcontracting_transit_service import SubcontractingTransitService

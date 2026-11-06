@@ -1,0 +1,85 @@
+{
+    "name": "mrp2",
+    "display_name": "MRPII计划",
+    "version": "1.0.0",
+    "description": "MRPII制造资源计划模块，包含销售预测、主生产计划、物料需求计划、能力需求计划和计划执行监控",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/mrp2",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "mrp_models"
+    ],
+    "schemas": [
+        "mrp_schema",
+        "mps_plan_line_schema",
+        "planned_order_schema"
+    ],
+    "menus": [
+        {
+            "name": "MRPII计划",
+            "path": "/mrp2",
+            "icon": "TrendingUp",
+            "component": "mrp2/Index",
+            "sort": 9,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "mrp2:list",
+            "children": [
+                {
+                    "name": "销售预测",
+                    "path": "/mrp2/forecast",
+                    "icon": "BarChart3",
+                    "component": "mrp2/forecast/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mrp2:forecast:list"
+                },
+                {
+                    "name": "主生产计划",
+                    "path": "/mrp2/mps",
+                    "icon": "CalendarCheck",
+                    "component": "mrp2/mps/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mrp2:mps:list"
+                },
+                {
+                    "name": "物料需求计划",
+                    "path": "/mrp2/mrp",
+                    "icon": "Package",
+                    "component": "mrp2/mrp/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mrp2:mrp:list"
+                },
+                {
+                    "name": "能力需求计划",
+                    "path": "/mrp2/crp",
+                    "icon": "Activity",
+                    "component": "mrp2/crp/Index",
+                    "sort": 4,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mrp2:crp:list"
+                },
+                {
+                    "name": "计划执行监控",
+                    "path": "/mrp2/monitor",
+                    "icon": "Monitor",
+                    "component": "mrp2/monitor/Index",
+                    "sort": 5,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "mrp2:monitor:list"
+                }
+            ]
+        }
+    ]
+}

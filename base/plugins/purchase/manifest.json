@@ -1,0 +1,68 @@
+{
+    "name": "purchase",
+    "display_name": "采购管理",
+    "version": "1.0.0",
+    "description": "采购管理模块，包含供应商管理、采购订单管理、采购入库等功能",
+    "author": "hepan",
+    "route_prefix": "/v1/purchase",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "supplier",
+        "purchase"
+    ],
+    "schemas": [
+        "purchase_schema"
+    ],
+    "dependencies": [
+        "product",
+        "inventory"
+    ],
+    "is_installed": false,
+    "is_enabled": false,
+    "menus": [
+        {
+            "name": "采购管理",
+            "path": "/purchase",
+            "icon": "Package",
+            "component": "purchase/Index",
+            "sort": 6,
+            "is_hidden": false,
+            "menu_type": "menu",
+            "permission_code": "purchase:list",
+            "children": [
+                {
+                    "name": "供应商管理",
+                    "path": "/purchase/supplier",
+                    "icon": "User",
+                    "component": "purchase/supplier/Index",
+                    "sort": 1,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "purchase:supplier:list"
+                },
+                {
+                    "name": "采购订单",
+                    "path": "/purchase/order",
+                    "icon": "Document",
+                    "component": "purchase/order/Index",
+                    "sort": 2,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "purchase:order:list"
+                },
+                {
+                    "name": "采购入库",
+                    "path": "/purchase/receipt",
+                    "icon": "Inbox",
+                    "component": "purchase/receipt/Index",
+                    "sort": 3,
+                    "is_hidden": false,
+                    "menu_type": "menu",
+                    "permission_code": "purchase:receipt:list"
+                }
+            ]
+        }
+    ]
+}

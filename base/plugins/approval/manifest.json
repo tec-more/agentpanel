@@ -1,0 +1,86 @@
+{
+    "name": "approval",
+    "display_name": "审批模块",
+    "version": "1.0.0",
+    "description": "审批模块，提供通用审批流程配置、多级审批引擎、全局审批拦截等功能，支持与现有业务模块集成",
+    "author": "hepan",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/approval",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "approval_flow",
+        "approval_instance",
+        "approval_task",
+        "approval_record"
+    ],
+    "schemas": [
+        "flow_schema",
+        "instance_schema",
+        "task_schema"
+    ],
+    "menus": [
+        {
+            "name": "审批管理",
+            "path": "/approval",
+            "icon": "Stamp",
+            "component": "",
+            "redirect": "/approval/center",
+            "sort": 20,
+            "children": [
+                {
+                    "name": "审批中心",
+                    "path": "/approval/center",
+                    "icon": "Bell",
+                    "component": "approval/Index",
+                    "sort": 1,
+                    "permission_code": "approval:center:view"
+                },
+                {
+                    "name": "流程规则",
+                    "path": "/approval/flow-rules",
+                    "icon": "SetUp",
+                    "component": "approval/FlowRule",
+                    "sort": 2,
+                    "permission_code": "approval:flowrule:view"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {
+            "name": "审批中心查看",
+            "code": "approval:center:view",
+            "module": "approval",
+            "description": "查看我的待办/已办审批"
+        },
+        {
+            "name": "审批流程规则查看",
+            "code": "approval:flowrule:view",
+            "module": "approval",
+            "description": "查看审批流程规则配置"
+        },
+        {
+            "name": "审批流程规则管理",
+            "code": "approval:flowrule:manage",
+            "module": "approval",
+            "description": "创建/编辑/启用审批流程规则"
+        },
+        {
+            "name": "审批操作",
+            "code": "approval:task:handle",
+            "module": "approval",
+            "description": "通过/拒绝/转审审批任务"
+        }
+    ],
+    "dependencies": [],
+    "hooks": {
+        "on_enable": "on_enable",
+        "on_disable": "on_disable",
+        "on_startup": "on_startup",
+        "on_shutdown": "on_shutdown"
+    },
+    "config": {}
+}

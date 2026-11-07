@@ -33,20 +33,23 @@
 
 ## P1 共享包抽取（`packages/agentpanel_common`）
 
-| ID | 任务 | 验收 |
-|---|---|---|
-| T1.1 | 建包骨架：`pyproject.toml`、版本、`agentpanel_common` 命名空间 | `pip install -e packages/agentpanel_common` 成功 |
-| T1.2 | 迁 `platform/*`：log、exceptions、response、cache、health、masking、security（去 `config.conf`/`plugin_manager` 依赖，构造参数注入） | 单测通过；无 `plugin_manager` import |
-| T1.3 | 迁 `upstream/*`（client/config/egress），L2 改为 re-export | L2 LLM 插件与网关导入同一实现；单测通过 |
-| T1.4 | 迁 `models/harness.py`、`model_price.py`、`service_credential.py`、quota 三模型 | L2 原路径保留 shim；`Tortoise.describe_model()` 与 T0.3 契约一致 |
-| T1.5 | 迁 `domain/*`（run/event/policy/policy_rule/approval/audit/pricing）与 `quota_backend` 接口 | 域单测通过；L2 侧行为不变（回归脚本全绿） |
-| T1.6 | 抽 `credential_resolver`（只读解析/解密），L2 保留 CRUD/掩码读 | 解析结果与现状一致；无明文日志 |
-| T1.7 | `env.py`：环境变量配置模型（§5.2/5.3/5.4），含必填/默认/校验 | 缺失必填项启动失败的单测 |
-| T1.8 | `db.py`：Tortoise 配置工厂（仅建连接，不迁移、不建表） | 以 env 连接当前库成功；不含 aerich/migrations |
-| T1.9 | 契约测试：模型对比 `contracts/db_schema.json`；共享包版本变更需升版校验 | CI 脚本可失败演示（改列不升版 → 失败） |
-| T1.10 | L2 兼容层收口：`base/*` 改为 import 共享包，不改对外路由 | 三进程启动、health、G1 全绿 |
+> P1 范围为 Spec §12 已冻结版本：**只做搬运 + 兼容 + manifest 三拆 + 配置契约 + 三入口验证**；
+> `domain/*`、`credential_resolver`、`pyproject.toml/wheel` 推迟到 P2/P3/P5（Spec §12.2、§12.8）。
 
-**阶段出口**：共享包可独立构建 wheel；L2 功能等价；模型单一来源生效。
+| ID | 阶段 | 任务（精确文件见 Spec §12） | 验收（每阶段完成即报告） |
+|---|---|---|---|
+| ✅ T1.1 | 契约与共享包 | 建 `packages/__init__.py`、`packages/agentpanel_common/{__init__,config,log,db}.py`、`masking.py`、`upstream/*`、`gateway/{constants,contracts}.py`、`models/{base,quota,binding,reservation,harness,model_price,service_credential}.py`；共享包内禁止 import `base` | 导入成功；`grep -R "from base\|import base" packages/agentpanel_common` 为空；`ConfigError` 缺失/类型错单测通过 |
+| ✅ T1.2 | 兼容层与 import 修正 | 6 组 `base/*` shim（Spec §12.3）；`base/common/setting.py::get_model_list()` 改指共享模型路径；`base/common/log.py` 改为调用共享 `setup_logging()` | 原 167 处 import 无需改；`HarnessRun.__module__` 为 `packages.agentpanel_common.models.harness`；`describe_model()` 表名不变 |
+| ✅ T1.3 | manifest 拆分 | 三份 manifest（Spec §12.4）；`base/common/gateway/config.py` 拆出 `gateway_config()`（共享 loader，读 `services/l3-gateway/manifest.json` + env）与 `issuance_config()`（L2 manifest `config.gateway_issuance`）；`orchestration_config.py` 改共享 loader；`gateway_lease_service.py` 签发字段改 `issuance_config()` | `grep plugin_manager` 在网关/编排配置路径为空；两入口配置文件互不读取 |
+| ✅ T1.4 | L2 启动验证 | `.venv\Scripts\python.exe run.py` → 9998 | `GET /health/health` → `status=healthy`；原有路由/插件加载正常 |
+| ✅ T1.5 | 网关启动验证 | 注入 `DB_*`/`REDIS_*` 后 `-m base.common.gateway.server` → 9999 | `GET /health` → `status=ok`、`deployment=standalone`、`fail_closed=true`；负向缺 `DB_PASSWORD` 退出码 2 |
+| ✅ T1.6 | 编排启动验证 | 注入 `DB_*`/`REDIS_*`/`ORCHESTRATION_SERVICE_SECRET` 后 `-m base.plugins.harness.server` → 9100 | `GET /health/health`、`/health/orchestration` healthy；只读写拒绝自检通过 |
+| ✅ T1.7 | 业务链路回归 | L2→L3 代理读写、租约→网关→记账、编排预占/结算（L2 内部 API） | 代理读返回 L3 数据（L3 停 → 503）；`usage_record` 唯一且 `gw:` 幂等键；`quota_reservation.counter_mode=redis` |
+| ✅ T1.8 | 差异清单报告 | `reports/ops/l3-split-p1-report.md` | 搬走/留下/import 变更面/health 证据/耦合点 C1–C4/回滚方式齐全 |
+
+**阶段出口**：三入口均可独立启动且 `/health` 正常；L2 代理与网关记账、编排预占结算链路全部通过；模型单一来源生效；无 `plugin_manager` 在 L3 配置路径残留。
+
+**P1 不包含（顺延）**：`domain/*` 下沉、`credential_resolver` 抽取（阻塞项 C1）、`pyproject.toml`/editable/wheel 打包、`services/l3-*` 物理目录迁移、Docker。
 
 ---
 

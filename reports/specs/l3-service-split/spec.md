@@ -599,3 +599,145 @@ L2 业务后端 :9998（宿主进程）
   └─ 唯一迁移执行方（aerich + migrations/*.sql）
 共享：PostgreSQL（host.docker.internal:15432）、Redis（agentredis:6379，Docker 网络别名）
 ```
+
+---
+
+## 12. P1 实施规格（共享包 + manifest 拆分 + 配置契约）
+
+> 状态：已按用户确认方向冻结，作为 P1 编码与验收的唯一依据。
+> 原则：只搬运 + 兼容，不改业务语义；不删除、不重写任何路由/额度/租约算法。
+
+### 12.1 共享包路径与导入方式
+
+- 目录：`packages/agentpanel_common/`；新增 `packages/__init__.py` 使其成为仓库根下的可导入命名空间。
+- 导入名：`packages.agentpanel_common.*`（仓库根在 `sys.path`，`python run.py` 与 `python -m base...` 均成立）。
+- 共享包内**禁止**出现 `from base` / `import base`；L2 通过 `base/*` 同路径 shim 反向兼容。
+- 不引入 `pyproject.toml`/editable install（P1 用仓库根路径导入；P5 容器化时再打包 wheel）。
+
+### 12.2 搬运清单（唯一来源迁入共享包）
+
+| 共享包路径 | 来源 | 约束 |
+|---|---|---|
+| `masking.py` | `base/common/masking.py` | 原样搬运，零外部依赖 |
+| `upstream/__init__.py`、`client.py`、`config.py`、`egress.py` | `base/common/upstream/*` | 仅依赖 httpx；内部 import 改指共享包 |
+| `gateway/constants.py` | `base/common/gateway/constants.py` | 原样搬运 |
+| `gateway/contracts.py` | 新增 | 错误类型映射 + 幂等/缓存键前缀（§12.6） |
+| `models/base.py` | `base/common/model.py` | 去掉 `base.common.setting` 依赖；`DATETIME_FORMAT` 固定 `%Y-%m-%d %H:%M:%S` |
+| `models/quota.py`、`binding.py`、`reservation.py` | `base/common/quota/models/*` | 类名/表名/字段/索引完全不变 |
+| `models/harness.py`、`model_price.py`、`service_credential.py` | `base/plugins/harness/models/*` | 类名/表名/字段/索引完全不变 |
+| `config.py` | 新增 | 配置契约 + INI/ENV 解析（§12.4） |
+| `log.py` | `base/common/log.py` 的纯日志逻辑 | 参数化 `app_name/debug/log_dir/elk_enabled`，不读 `settings` |
+| `db.py` | 新增 | `build_tortoise_orm()`、共享模型清单、`init_db()/close_db()`；**不迁移、不建表** |
+
+**留在 L2、不迁**：`base/common/setting.py`、`base/common/plugin_manager.py`、`base/common/database.py`（迁移执行方）、`base/common/cache.py`、`base/common/health.py`、`base/common/exceptions.py`、`base/common/quota/services/*`、`base/common/gateway/*` 其余运行代码（P2/P3 再迁 `services/`）。
+
+### 12.3 兼容层（同路径 re-export，禁止再定义表/逻辑）
+
+以下文件改为薄 shim（`from packages.agentpanel_common.X import *` 或显式导出）：
+
+1. `base/common/masking.py`
+2. `base/common/upstream/__init__.py`、`client.py`、`config.py`、`egress.py`
+3. `base/common/gateway/constants.py`
+4. `base/common/model.py`
+5. `base/common/quota/models/quota.py`、`binding.py`、`reservation.py`
+6. `base/plugins/harness/models/harness.py`、`model_price.py`、`service_credential.py`
+
+**import 变更面**：现有 155 个引用文件无需改动；唯一必须改的是模型注册清单：
+`base/common/setting.py::get_model_list()` 中把
+`base.common.quota.models.quota|binding|reservation`、
+`base.plugins.harness.models.harness|model_price|service_credential`
+替换为对应 `packages.agentpanel_common.models.*`。`core` 与其它插件模型扫描逻辑保持不变。
+`aerich`/迁移目录若有模型路径引用一并核对（`pyproject.toml`、`migrations/`）。
+
+### 12.4 manifest 三拆
+
+| 文件 | 归属 | 内容 |
+|---|---|---|
+| `base/plugins/harness/manifest.json` | L2 | 插件元数据 + `routes/models/schemas/permissions`；`config` 仅保留 `hold_ttl_seconds`、`fail_closed`、`lock_runtime_version`、`session_format*`、`model_credential`、`runtime`、`egress`、`approval`，新增 `gateway_issuance`（租约签发：`lease_ttl_seconds`、`renew_ttl_seconds`、`max_lease_ttl_seconds`、`tenant_lease_ttl_seconds`、`max_rpm`、`public_base_url`）。**删除 `config.gateway` 与 `config.orchestration`。** |
+| `services/l3-gateway/manifest.json` | L3 网关 | 服务元数据 + `config.gateway`：数据面全部键（`deployment=standalone`、`enabled`、`host/port`、`public_base_url`、`lease_cache_ttl_seconds`、`fail_closed`、`provider_domain_allowlist`、`allow_loopback`、`strip_request_fields`、上游超时/重试/连接池/TLS、`lease_budget_tokens` 及限额键、`reconciliation`）。不含租约签发 TTL、策略、凭据、管理台配置。 |
+| `services/l3-orchestration/manifest.json` | L3 编排 | 服务元数据 + `config.orchestration`：`enabled/deployment/host/port/public_base_url/mode/write_enabled/l2_internal_base_url/internal_timeout_seconds/internal_allowed_ips/allow_remote_bind/policy_in_l3/reconcile_in_l3/auth_timestamp_window_seconds/l2_service_id/l2_service_secret_env`。 |
+
+读取方式：
+- `base/common/plugin_manager.get_manifest("harness")` **只服务 L2**；
+- 新增 `packages/agentpanel_common/config.py::load_manifest(path)`（简单 JSON 读取 + 进程内缓存），L3 两个入口各自读自己的 manifest；
+- L3 配置 = 自己的 manifest 默认值 ← 环境变量覆盖（§12.5），不再经过 `plugin_manager`；
+- L2 租约签发改读 `base/common/gateway/config.py::issuance_config()`（来自 L2 manifest `config.gateway_issuance`）；`gateway_lease_service.py` 中 `gateway_config()` 的 6 个签发字段全部改走 `issuance_config()`。
+
+### 12.5 配置契约（共享包 `config.py`）
+
+字段描述 `Field(name, env, type, required, default, secret, manifest_path)`；缺失/类型不符统一抛
+`ConfigError`，消息一次性列出全部字段名（不含值）；进程启动阶段即失败（fail-closed）。
+
+**L2（`load_l2_config(config.conf)`）**：沿用现有 `db/redis/log/deploy` section 与 fallback，不新增必填。
+仅 L2 需要的字段（`app.*`、CORS、SMTP、JWT/安全、审计、RabbitMQ、Qdrant 等）**不进入 L3 契约**。
+
+**L3 通用（两个入口共用，§5.2）**：
+
+| 字段 | 类型 | 必填 | 默认 | secret |
+|---|---|---|---|---|
+| `DB_HOST` | str | 是 | — | 否 |
+| `DB_PORT` | int | 否 | 15432 | 否 |
+| `DB_NAME` | str | 是 | — | 否 |
+| `DB_USER` | str | 是 | — | 否 |
+| `DB_PASSWORD` | str | 是 | — | 是（支持 `DB_PASSWORD_FILE`） |
+| `DB_MINSIZE`/`DB_MAXSIZE`/`DB_TIMEOUT`/`DB_COMMAND_TIMEOUT` | int | 否 | 5/20/30/30 | 否 |
+| `REDIS_ENABLED` | bool | 否 | true | 否 |
+| `REDIS_HOST` | str | 否 | 127.0.0.1 | 否 |
+| `REDIS_PORT` | int | 否 | 6379 | 否 |
+| `REDIS_DB` | int | 否 | 0 | 否 |
+| `REDIS_PASSWORD` | str | 是（redis enabled 时） | — | 是（支持 `REDIS_PASSWORD_FILE`） |
+| `LOG_DIR` / `LOG_LEVEL` | str | 否 | `<repo>/logs` / INFO | 否 |
+
+**网关（`GW_*`，manifest `config.gateway` 为默认值来源）**：按 Spec §5.4 全量映射；`GW_PUBLIC_BASE_URL`、`GW_FAIL_CLOSED=true`、`GW_PROVIDER_DOMAIN_ALLOWLIST` 非空为硬校验；`GW_ALLOW_ENV_FALLBACK/GW_ALLOW_DIRECT_PROVIDER` 固定拒绝为 true；`GW_HOST/GW_PORT` 默认取 manifest（`127.0.0.1/9999`）。
+
+**编排（`ORCH_*`，manifest `config.orchestration` 为默认值来源）**：按 Spec §5.3 全量映射；`ORCHESTRATION_SERVICE_SECRET` 必填（支持 `_FILE`），`ORCH_L2_BASE_URL`、`ORCH_PUBLIC_BASE_URL` 必须 http(s)，`deployment=standalone`，非回环必须 `ORCH_ALLOW_REMOTE_BIND=true`，`write_enabled` 显式。
+
+**解析实现**：
+- `load_env(contract)`：`_FILE` 优先 → env → default；bool 接受 `true/false/1/0/yes/no`；list 逗号分隔；dict 接受 JSON。
+- `resolve_component(manifest_path, contract, prefix)`：manifest 默认值 ← env 覆盖 → 校验。
+- `load_l2_config(path)`：`configparser` 读取，字段名与现有 `setting.py` 完全一致。
+- 任何必填缺失/类型不符：`ConfigError` 携带 `missing_fields` / `invalid_fields`，入口在 `build_app()` 前显式捕获并以退出码 2 终止。
+
+### 12.6 网关契约模块（`gateway/contracts.py`）
+
+- 错误类型映射（与 `gateway/app.py` 现有响应一致）：`gateway_auth_error`（401/403）、`gateway_rate_limit_error`（429）、`invalid_request_error`（400）、`gateway_error`（其余）。
+- 幂等键前缀：`GATEWAY_IDEM_PREFIX = "gw:"`（`gateway/service.py` 记账）、`HARNESS_IDEM_PREFIX = "harness:"`（Harness 侧确定性键）。
+- 缓存键前缀：`LEASE_CACHE_PREFIX = "gw:lease:state:"`（`gateway/lease_auth.py`）。
+- 稳定业务错误码：`orchestration_dependency_unavailable`、`orchestration_not_primary`、`quota_exceeded`、`quota_hold_closed`、`quota_reservation_in_progress`（与现有实现逐字一致）。
+- 现有模块改为从该处导入，禁止各自写字面量。
+
+### 12.7 三个独立入口
+
+| 入口 | 启动命令 | 自检 | 独立性要求 |
+|---|---|---|---|
+| L2 | `python run.py` | 现有 H-1/H-2 preflight + `init_app()` | 可 import `plugin_manager`/`base.plugins.harness` |
+| 网关 | `python -m base.common.gateway.server` | `validate_gateway_config()`，DB/Redis 预热 | 不 import `run.py`/`base.start`/`base.plugins.harness.server`；配置不 import `plugin_manager` |
+| 编排 | `python -m base.plugins.harness.server` | 只读库写拒绝 + `service_credential` 可读 | 不 import `run.py`/`base.start`/网关入口；配置不 import `plugin_manager` |
+
+验证：`grep -R "run\.py|base\.start" base/common/gateway base/plugins/harness/server.py`、
+`grep -R "plugin_manager" base/common/gateway/config.py base/plugins/harness/services/orchestration_config.py` 均应为空。
+
+### 12.8 无法在 P1 硬拆的耦合点（只报告，不改）
+
+| # | 位置 | 耦合 | P1 处理 |
+|---|---|---|---|
+| C1 | `base/common/gateway/service.py::_resolve_provider_credential` → `base.plugins.harness.services.model_credential_service` | 网关数据面经 L2 插件服务解析 provider 凭据；该服务再依赖 `base.plugins.llm.models.*` 与 `plugin_manager` | 保持函数内懒加载不改；网关启动模型清单额外包含 `base.plugins.llm.models.{api_key,model,provider}`；P2/P3 抽 `credential_resolver` 后删除 |
+| C2 | `base/common/gateway/audit.py` → 懒加载 `HarnessAuditService` | 网关审计写 L2 域服务 | 保留；audit_service 依赖的模型已是共享包 |
+| C3 | `base/common/gateway/budget.py` → `base.common.quota.services.{plan_service,quota_service}` | 网关预算预检复用 L2 配额域服务 | 保留（P1 不迁 domain）；仅确认其模型依赖已在共享清单 |
+| C4 | `base/common/plugin_manager.py::plugin_manager` 全局单例 | L2 插件系统 | 仅 L2 保留；L3 两侧配置 loader 不再引用 |
+
+### 12.9 验证步骤（每阶段完成即报告）
+
+1. **共享包与兼容层**：`.venv\Scripts\python.exe -c "import packages.agentpanel_common.models.harness as m; print(m.HarnessRun.__module__)"` → 输出 `packages.agentpanel_common.models.harness`；`python -c "import base.plugins.harness.models.harness"` 仍成功且类对象相同。
+2. **模型注册**：Tortoise `describe_model()` 表名与拆分前一致（抽查 `harness_gateway_lease`/`usage_record`/`quota_reservation`）。
+3. **L2 启动**：`python run.py`（9998）→ `GET /health/health` 返回 `status=healthy`（database/redis 子项）。
+4. **网关启动**：先注入 `DB_*`/`REDIS_*`，`python -m base.common.gateway.server`（9999）→ `GET /health` 返回 `status=ok`、`deployment=standalone`、`fail_closed=true`。
+5. **编排启动**：注入 `DB_*`/`REDIS_*`/`ORCHESTRATION_SERVICE_SECRET`，`python -m base.plugins.harness.server`（9100）→ `GET /health/health` 与 `GET /health/orchestration` 均 healthy。
+6. **业务链路**：L2→L3 会话读仍通（L3 停时 503）；L2 签发租约→网关鉴权通过并写 `usage_record(source=gateway, idem_key` 以 `gw:` 开头；编排预占/结算仍只经 L2 `/internal/v1/harness/quota/*`，`quota_reservation.counter_mode=redis`。
+7. **负向**：去掉 `DB_PASSWORD` 启动网关 → 退出码 2 且日志包含 `DB_PASSWORD`；`GW_FAIL_CLOSED=false` → 启动失败。
+
+### 12.10 交付物
+
+- 代码：§12.2/§12.3/§12.4/§12.5 全部文件；
+- 报告：`reports/ops/l3-split-p1-report.md`（搬走了什么/留下什么/import 变更面/三入口 health 证据/耦合点 C1–C4/回滚方式）。
+

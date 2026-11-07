@@ -8,6 +8,8 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from base.common.gateway.constants import is_gateway_virtual_key
+
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -18,6 +20,16 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24小时
 
 # HTTP Bearer Token
 security = HTTPBearer()
+
+
+def _reject_gateway_virtual_key(token: str) -> None:
+    """业务接口不得接受网关租约虚拟 key（与 /v1/gateway 双向隔离）。"""
+    if is_gateway_virtual_key(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="该接口不接受网关租约虚拟 key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -102,6 +114,7 @@ async def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depend
         HTTPException: 如果令牌无效或已过期
     """
     token = credentials.credentials
+    _reject_gateway_virtual_key(token)
     payload = decode_access_token(token)
 
     if payload is None:
@@ -163,6 +176,7 @@ async def get_current_actor(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> dict:
     token = credentials.credentials
+    _reject_gateway_virtual_key(token)
     print(f"[AUTH DEBUG] Token received (first 50 chars): {token[:50]}...")
     
     payload = decode_access_token(token)
@@ -199,7 +213,10 @@ async def get_current_user_id_ws(token: str = None) -> Optional[int]:
     """
     if not token:
         return None
-    
+
+    if is_gateway_virtual_key(token):
+        return None
+
     payload = decode_access_token(token)
     
     if payload is None:

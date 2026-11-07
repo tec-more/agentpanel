@@ -49,6 +49,7 @@ class AuthzContextMiddleware(BaseHTTPMiddleware):
             "/static",
             "/favicon.ico",
             "/metrics",
+            "/v1/gateway",  # 数据面不参与业务 owner 上下文与 F8 限流
         ]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:

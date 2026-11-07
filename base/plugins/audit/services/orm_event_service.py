@@ -1,6 +1,7 @@
 
 from tortoise.models import Model
 from base.common.events.event_bus import event_bus
+from base.common.masking import SENSITIVE_FIELD_NAMES, mask_secret
 from base.common.setting import settings
 from base.common.context import get_current_trace_id
 from loguru import logger
@@ -35,6 +36,10 @@ def get_instance_dict(instance) -> dict:
     for field_name in instance._meta.db_fields:
         if field_name != 'id':
             value = getattr(instance, field_name, None)
+            # 敏感字段（如 LLMApiKey.api_key）写入变更日志前必须脱敏
+            if field_name.lower() in SENSITIVE_FIELD_NAMES:
+                data[field_name] = mask_secret(value) if value else value
+                continue
             # Convert datetime/date objects to ISO strings
             if isinstance(value, (datetime, date)):
                 data[field_name] = value.isoformat()

@@ -5,15 +5,45 @@ from typing import Dict, Any
 
 router = APIRouter()
 
+# 探针超时：只要 2.5 秒仍无结果即判定 unhealthy，不做重试。
+DB_PROBE_TIMEOUT_SECONDS = 2.5
+
+
+def _db_alias() -> str:
+    """数据库连接别名：与 Tortoise 配置的 default_connection 保持单一来源。"""
+    from base.common.setting import TORTOISE_ORM
+    return TORTOISE_ORM["apps"]["models"]["default_connection"]
+
 
 async def check_database() -> Dict[str, Any]:
+    alias = ""
     try:
         from tortoise import Tortoise
-        if Tortoise.get_connection("default"):
-            return {"status": "healthy", "message": "Database connection OK"}
-        return {"status": "unhealthy", "message": "No database connection"}
+        alias = _db_alias()
+        connection = Tortoise.get_connection(alias)
+        if connection is None:
+            return {"status": "unhealthy", "message": f"No database connection ({alias})"}
+        rows = await asyncio.wait_for(
+            connection.execute_query_dict("SELECT 1 AS ok"),
+            timeout=DB_PROBE_TIMEOUT_SECONDS,
+        )
+        return {
+            "status": "healthy",
+            "message": f"Database connection OK ({alias}): SELECT 1 -> {rows}",
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "unhealthy",
+            "message": (
+                f"Database probe timeout after {DB_PROBE_TIMEOUT_SECONDS}s "
+                f"(alias={alias or 'unknown'})"
+            ),
+        }
     except Exception as e:
-        return {"status": "unhealthy", "message": str(e)}
+        return {
+            "status": "unhealthy",
+            "message": f"Database probe failed (alias={alias or 'unknown'}): {type(e).__name__}: {e}",
+        }
 
 
 async def check_redis() -> Dict[str, Any]:

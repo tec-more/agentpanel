@@ -6,10 +6,16 @@ from pathlib import Path
 from typing_extensions import override
 from loguru import logger
 from base.common.setting import settings
+from base.common.gateway.constants import GATEWAY_LOG_COMPONENT
 
 
 # 全局变量记录日志处理器ID
 _logger_handlers = []
+
+
+def _is_gateway_record(record) -> bool:
+    """网关日志（logger.bind(component=gateway)）单独归档，不混入业务请求日志。"""
+    return record["extra"].get("component") == GATEWAY_LOG_COMPONENT
 
 
 def json_formatter(record):
@@ -135,11 +141,12 @@ def setup_logging():
     # 确保日志目录存在,如果不存在则创建
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # 步骤5：配置常规日志文件
+    # 步骤5：配置常规日志文件（排除网关日志）
     handler_id = logger.add(
         str(log_dir / "info.log"),
         format=log_format,
         level="INFO",
+        filter=lambda record: not _is_gateway_record(record),
         rotation="00:00",  # 每天午夜轮转
         retention=30,      # 日志保留天数，超过此天数的日志文件将被自动清理
         compression="gz",
@@ -148,11 +155,12 @@ def setup_logging():
     )
     _logger_handlers.append(handler_id)
 
-    # 步骤6：配置错误日志文件
+    # 步骤6：配置错误日志文件（排除网关日志）
     handler_id = logger.add(
         str(log_dir / "error.log"),
         format=log_format,
         level="ERROR",
+        filter=lambda record: not _is_gateway_record(record),
         rotation="00:00",  # 每天午夜轮转
         retention=30,      # 日志保留天数，超过此天数的日志文件将被自动清理
         compression="gz",
@@ -160,6 +168,20 @@ def setup_logging():
         enqueue=use_async, # 开发同步,生产异步
         backtrace=True,
         diagnose=True
+    )
+    _logger_handlers.append(handler_id)
+
+    # 步骤6.1：网关专用日志（数据面与业务请求日志隔离）
+    handler_id = logger.add(
+        str(log_dir / "gateway.log"),
+        format=log_format,
+        level="INFO",
+        filter=_is_gateway_record,
+        rotation="00:00",
+        retention=30,
+        compression="gz",
+        encoding="utf-8",
+        enqueue=use_async,
     )
     _logger_handlers.append(handler_id)
 

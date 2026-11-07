@@ -53,6 +53,16 @@ class ASGIAppWithPrefix:
                 await self.app(scope, receive, send)
                 return
 
+            # 网关数据面是独立子应用：不叠加 /api 业务前缀、不改 root_path，
+            # 保证 /v1/gateway/* 与业务 API 的路由/文档边界结构隔离。
+            if (original_path.startswith("/v1/gateway")
+                    or original_path.startswith("/api/v1/gateway")):
+                if original_path.startswith(self.prefix):
+                    scope = dict(scope)
+                    scope["path"] = original_path[len(self.prefix):] or "/"
+                await self.app(scope, receive, send)
+                return
+
             # 静态资源路径直接透传
             if (original_path.startswith("/docs") or
                 original_path.startswith("/openapi") or
@@ -60,6 +70,11 @@ class ASGIAppWithPrefix:
                 original_path.startswith("/static") or
                 original_path.startswith("/metrics") or
                 original_path.startswith("/health")):
+                await self.app(scope, receive, send)
+                return
+
+            # 服务间内部接口（如 Harness L2 touch）不走前端 SPA，直接进入应用路由
+            if original_path.startswith("/internal/"):
                 await self.app(scope, receive, send)
                 return
 

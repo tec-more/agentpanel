@@ -5,8 +5,12 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
+from base.common.masking import SENSITIVE_FIELD_NAMES, mask_secret
 from base.common.setting import settings
 from base.plugins.audit.models.audit_log import AuditLog, AuditConfig
+
+# HTTP 审计请求参数中需要脱敏的字段（与公共敏感字段保持一致）
+SENSITIVE_REQUEST_FIELDS = sorted(SENSITIVE_FIELD_NAMES)
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
@@ -21,6 +25,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "/redoc",
             "/static",
             "/favicon.ico",
+            "/v1/gateway",  # 模型透传数据面：审计走 HarnessAuditEvent，不写业务 audit_log
         ]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -84,7 +89,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 path=path,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                request_params=request_params if request_params else request_body,
+                request_params=self._mask_sensitive_fields(
+                    request_params if request_params else request_body, SENSITIVE_REQUEST_FIELDS
+                ),
                 response_data=None,
                 status_code=response.status_code,
                 error_message=error_message,
@@ -121,11 +128,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
         """脱敏敏感字段"""
         if not data or not sensitive_fields:
             return data
+        if not isinstance(data, dict):
+            return data
         
         masked_data = data.copy()
         for key, value in masked_data.items():
             if key.lower() in [field.lower() for field in sensitive_fields]:
-                masked_data[key] = "***"
+                masked_data[key] = mask_secret(value) if value else value
             elif isinstance(value, dict):
                 masked_data[key] = self._mask_sensitive_fields(value, sensitive_fields)
             elif isinstance(value, list):

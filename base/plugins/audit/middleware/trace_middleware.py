@@ -50,6 +50,7 @@ class TraceMiddleware(BaseHTTPMiddleware):
             "/favicon.ico",
             "/v1/auth/login",
             "/v1/auth/logout",
+            "/v1/gateway",  # 模型透传数据面：不写业务链路追踪/请求日志
         ]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:

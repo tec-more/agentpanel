@@ -17,12 +17,27 @@ from typing import AsyncIterator, Tuple
 
 from fastapi import FastAPI
 
+from packages.agentpanel_common.config import ConfigError, load_l3_common
+from packages.agentpanel_common.db import (
+    GATEWAY_DEPENDENCY_MODEL_MODULES,
+    build_tortoise_orm,
+    shared_model_modules,
+    stabilize_shared_model_fields,
+)
+
 from base.common.gateway.app import create_gateway_app
 from base.common.gateway.config import (
     GatewayConfigError,
     gateway_config,
     validate_gateway_config,
 )
+
+# P1：L3 入口从环境变量读取 DB/Redis（必填缺失/类型非法 → 退出码 2）
+try:
+    _L3_CONFIG = load_l3_common(source="gateway")
+except ConfigError as exc:
+    print(f"❌ [gateway] {exc}", flush=True)
+    raise SystemExit(2)
 
 
 def _configure_stdout() -> None:
@@ -41,10 +56,18 @@ def _configure_stdout() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """连接共享库与 Redis；退出时释放连接。"""
-    from base.common.setting import TORTOISE_ORM
     from tortoise import Tortoise
 
-    await Tortoise.init(config=TORTOISE_ORM)
+    # C1/C2：这两个服务在数据面是懒加载的，但它们的导入会定义未注册的 L2 领域模型；
+    # 必须在 Tortoise.init 之前预热，否则共享字段会在 init 之后被重新绑定。
+    import base.plugins.harness.services.audit_service  # noqa: F401
+    import base.plugins.harness.services.model_credential_service  # noqa: F401
+
+    # P1：DB 连接使用 L3 环境变量配置；模型 = 共享包 + 网关依赖（C1：llm 凭据模型）
+    models = shared_model_modules() + list(GATEWAY_DEPENDENCY_MODEL_MODULES)
+    await Tortoise.init(config=build_tortoise_orm(_L3_CONFIG.db, models))
+    # C1/C2 导入的 L2 领域模型未注册，需把共享字段重绑回已注册模型
+    stabilize_shared_model_fields()
     try:
         from base.common.cache import RedisCache
 

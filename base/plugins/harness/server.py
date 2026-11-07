@@ -21,6 +21,13 @@ from typing import AsyncIterator, Tuple
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from packages.agentpanel_common.config import ConfigError, load_l3_common
+from packages.agentpanel_common.db import (
+    build_tortoise_orm,
+    shared_model_modules,
+    stabilize_shared_model_fields,
+)
+
 from base.common.exceptions import register_exceptions
 from base.common.health import router as health_router
 from base.plugins.harness.api.internal.router import internal_router
@@ -34,6 +41,13 @@ from base.plugins.harness.services.orchestration_config import (
 )
 from base.plugins.harness.services.readonly_db import close_readonly_db, get_readonly_db
 from base.plugins.harness.services.service_auth import ServiceAuthError
+
+# P1：L3 入口从环境变量读取 DB/Redis（必填缺失/类型非法 → 退出码 2）
+try:
+    _L3_CONFIG = load_l3_common(source="orchestration")
+except ConfigError as exc:
+    print(f"❌ [orchestration] {exc}", flush=True)
+    raise SystemExit(2)
 
 
 def _configure_stdout() -> None:
@@ -54,9 +68,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """共享库连接 + 只读连接自检；任一不满足即 fail-closed。"""
     from tortoise import Tortoise
 
-    from base.common.setting import TORTOISE_ORM
-
-    await Tortoise.init(config=TORTOISE_ORM)
+    # P1：DB 连接使用 L3 环境变量配置；只注册共享包模型（编排不写额度表/不跑迁移）
+    await Tortoise.init(config=build_tortoise_orm(_L3_CONFIG.db, shared_model_modules()))
+    # 懒加载的 L2 领域模型未注册，需把共享字段重绑回已注册模型
+    stabilize_shared_model_fields()
     try:
         readonly = get_readonly_db()
         await readonly.connect()

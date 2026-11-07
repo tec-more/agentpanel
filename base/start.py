@@ -149,6 +149,25 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"配额定时任务启动失败: {e}")
 
+        # 启动网关记账对账定时任务（harness 插件 + 网关 + reconciliation.enabled）
+        try:
+            from base.common.gateway.config import gateway_enabled, reconciliation_config
+            if (
+                plugin_manager.get_plugin("harness")
+                and gateway_enabled()
+                and reconciliation_config().get("enabled")
+            ):
+                task_g1 = asyncio.create_task(gateway_reconcile_task())
+                background_tasks.append(task_g1)
+                print(
+                    "网关对账定时任务已启动（间隔 "
+                    f"{reconciliation_config().get('interval_seconds')} 秒）"
+                )
+            else:
+                print("网关对账定时任务跳过（harness/网关/对账未启用）")
+        except Exception as e:
+            print(f"网关对账定时任务启动失败: {e}")
+
         # 启动审计数据变更日志清理定时任务（仅当 audit 插件启用时；每日一次）
         if plugin_manager.get_plugin("audit"):
             task_a1 = asyncio.create_task(audit_cleanup_task())
@@ -271,6 +290,34 @@ async def quota_hold_cleanup_task():
             break
         except Exception as e:
             print(f"[定时任务] 悬挂预占清理失败: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+async def gateway_reconcile_task():
+    """
+    定时任务：网关记账 vs 客户端上报对账
+    - 与手动接口复用同一幂等服务，重复执行不会重复插入差异；
+    - 间隔读取 gateway.reconciliation.interval_seconds。
+    """
+    while True:
+        try:
+            from base.common.gateway.config import reconciliation_config
+            interval = max(int(reconciliation_config().get("interval_seconds") or 600), 30)
+            await asyncio.sleep(interval)
+            from base.plugins.harness.services.reconcile_service import HarnessReconcileService
+            result = await HarnessReconcileService.execute(trigger="scheduled")
+            stats = result.get("stats") or {}
+            print(
+                "[定时任务] 网关对账完成 "
+                f"batch={result.get('batch_no')} diffs={stats.get('diffs', 0)} "
+                f"created={stats.get('created', 0)} updated={stats.get('updated', 0)}"
+            )
+        except asyncio.CancelledError:
+            print("[定时任务] 网关对账任务已取消")
+            break
+        except Exception as e:
+            print(f"[定时任务] 网关对账失败: {e}")
             import traceback
             traceback.print_exc()
 
@@ -598,12 +645,50 @@ def init_app() -> FastAPI:
         from base.common.quota.api.admin import quota_plan_admin_router
         from base.common.quota.api.usage import usage_record_router
         from base.common.quota.api.board import quota_board_router
+        from base.common.quota.api.organization import org_quota_admin_router
         app.include_router(quota_plan_admin_router)
         app.include_router(usage_record_router)
         app.include_router(quota_board_router)
-        print("[手动注册] 配额路由已注册: /v1/quota-plans, /v1/usage-records, /v1/quota")
+        app.include_router(org_quota_admin_router)
+        print("[手动注册] 配额路由已注册: /v1/quota-plans, /v1/usage-records, /v1/quota, /v1/quota/organizations")
     except ImportError as e:
         print(f"[警告] 无法导入配额路由: {e}")
+
+    # Harness 内部接口：L3 编排上报客户端活跃时间（harness_client 只由 L2 写）。
+    # 不放在 api/v1，避免被插件路由前缀 /v1/harness 包裹；仅在插件启用时挂载。
+    try:
+        from base.common.plugin_manager import plugin_manager
+        harness_manifest = plugin_manager.get_manifest("harness") or {}
+        if harness_manifest.get("is_installed") and harness_manifest.get("is_enabled"):
+            from base.plugins.harness.api.l2_internal.quota_router import l2_quota_router
+            from base.plugins.harness.api.l2_internal.touch_router import l2_touch_router
+            app.include_router(l2_touch_router)
+            app.include_router(l2_quota_router)
+            print("[手动注册] Harness 内部路由已注册: touch / quota")
+    except ImportError as e:
+        print(f"[警告] 无法注册 Harness 内部路由: {e}")
+
+    # 内部网关数据面：deployment 配置决定部署形态，切换不改代码。
+    # - standalone（默认）：由 `python -m base.common.gateway.server` 作为 L3 独立进程服务，
+    #   业务 API 不挂载 /v1/gateway；
+    # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
+    #   作为可选退回方式。
+    try:
+        from base.common.gateway.config import gateway_config, gateway_enabled
+        gw_cfg = gateway_config()
+        if gateway_enabled():
+            if str(gw_cfg.get("deployment")) == "embedded":
+                from base.common.gateway.constants import GATEWAY_DEPLOY_PREFIX
+                from base.common.gateway.app import gateway_app
+                app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
+                print(
+                    f"[手动注册] 内部网关数据面子应用已挂载: {GATEWAY_DEPLOY_PREFIX}/chat/completions"
+                    f"（独立文档: {GATEWAY_DEPLOY_PREFIX}/docs）"
+                )
+            else:
+                print("[跳过] 网关配置为 standalone，业务 API 不挂载 /v1/gateway")
+    except ImportError as e:
+        print(f"[警告] 无法注册内部网关数据面路由: {e}")
 
     return app
 

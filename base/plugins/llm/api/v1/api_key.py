@@ -7,6 +7,7 @@ from datetime import datetime
 
 from base.common.response import SuccessResponse, ErrorResponse
 from base.common.security import get_current_user_id
+from base.common.masking import mask_secret, is_masked, validate_secret
 from base.plugins.llm.models.api_key import LLMApiKey
 from base.plugins.llm.models.enums import CallMode
 
@@ -31,11 +32,12 @@ api_key_router = APIRouter(
 )
 
 
-def mask_secret(secret: str) -> str:
-    """遮蔽密钥显示"""
-    if not secret or len(secret) < 8:
-        return "****"
-    return secret[:4] + "****" + secret[-4:]
+def _resolve_base_url(data) -> Optional[str]:
+    """base_url 优先，其次 endpoint_url；入库统一去掉尾部斜杠"""
+    value = getattr(data, "base_url", None) or getattr(data, "endpoint_url", None)
+    if not value:
+        return None
+    return str(value).strip().rstrip("/")
 
 
 @api_key_router.get("", summary="获取API密钥列表")
@@ -90,7 +92,8 @@ async def get_api_keys(
             "api_id": key.api_id,
             "api_key": mask_secret(key.api_key) if key.api_key else None,
             "api_secret": mask_secret(key.api_secret) if key.api_secret else None,
-            "access_token": key.access_token,
+            "access_token": mask_secret(key.access_token) if key.access_token else None,
+            "base_url": key.endpoint_url,
             "endpoint_url": key.endpoint_url,
             "is_voice_service": key.is_voice_service,
             "is_openapi_mode": hasattr(key, 'is_openapi_mode') and key.is_openapi_mode,
@@ -158,7 +161,8 @@ async def get_api_key(key_id: int):
         "api_id": key.api_id,
         "api_key": mask_secret(key.api_key) if key.api_key else None,
         "api_secret": mask_secret(key.api_secret) if key.api_secret else None,
-        "access_token": key.access_token,
+        "access_token": mask_secret(key.access_token) if key.access_token else None,
+        "base_url": key.endpoint_url,
         "endpoint_url": key.endpoint_url,
         "is_voice_service": key.is_voice_service,
         "is_openapi_mode": key.is_openapi_mode,
@@ -191,11 +195,11 @@ async def create_api_key(
         model_id=data.model_id,
         model_service_type=data.model_service_type,
         call_mode=data.call_mode,
-        api_id=data.api_id,
-        api_key=data.api_key,
-        api_secret=data.api_secret,
-        access_token=data.access_token,
-        endpoint_url=data.endpoint_url,
+        api_id=(data.api_id or "").strip() or None,
+        api_key=validate_secret(data.api_key, "api_key"),
+        api_secret=validate_secret(data.api_secret, "api_secret"),
+        access_token=validate_secret(data.access_token, "access_token"),
+        endpoint_url=_resolve_base_url(data),
         max_quota=data.max_quota,
         description=data.description
     )
@@ -213,7 +217,8 @@ async def create_api_key(
         "api_id": api_key.api_id,
         "api_key": mask_secret(api_key.api_key) if api_key.api_key else None,
         "api_secret": mask_secret(api_key.api_secret) if api_key.api_secret else None,
-        "access_token": api_key.access_token,
+        "access_token": mask_secret(api_key.access_token) if api_key.access_token else None,
+        "base_url": api_key.endpoint_url,
         "endpoint_url": api_key.endpoint_url,
         "provider_name": provider.name,
         "is_voice_service": api_key.is_voice_service
@@ -237,11 +242,26 @@ async def update_api_key(
             raise HTTPException(status_code=404, detail="厂商不存在")
 
     update_data = data.model_dump(exclude_unset=True)
-    
-    # 处理空字符串转换为None
+
+    # 遮蔽值表示“保持原值”，直接丢弃，避免把 sk-a****z 写库
+    for field_name in ("api_key", "api_secret", "access_token"):
+        if is_masked(update_data.get(field_name)):
+            update_data.pop(field_name, None)
+
+    # base_url 归一到 endpoint_url（存储层字段）
+    if "base_url" in update_data:
+        base_url = update_data.pop("base_url")
+        if base_url is not None:
+            update_data["endpoint_url"] = str(base_url).strip().rstrip("/") or None
+
+    # 处理空字符串转换为None，并校验密钥长度/格式
     for field_name, value in list(update_data.items()):
         if value == '':
             update_data[field_name] = None
+        if field_name in ("api_key", "api_secret", "access_token") and value is not None:
+            update_data[field_name] = validate_secret(value, field_name)
+        if field_name == "api_id" and isinstance(value, str):
+            update_data[field_name] = value.strip() or None
 
     # 使用 update_fields 来明确指定要更新的字段，确保 Tortoise ORM 正确更新
     update_fields = []
@@ -265,7 +285,8 @@ async def update_api_key(
         "api_id": key.api_id,
         "api_key": mask_secret(key.api_key) if key.api_key else None,
         "api_secret": mask_secret(key.api_secret) if key.api_secret else None,
-        "access_token": key.access_token,
+        "access_token": mask_secret(key.access_token) if key.access_token else None,
+        "base_url": key.endpoint_url,
         "endpoint_url": key.endpoint_url,
         "is_voice_service": key.is_voice_service,
         "description": key.description

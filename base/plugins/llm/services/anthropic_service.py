@@ -2,9 +2,21 @@
 Anthropic Claude大模型服务
 """
 import json
-import httpx
 from typing import AsyncIterator, List, Dict
 import logging
+
+from base.common.upstream import (
+    UpstreamStatusError,
+    ensure_success,
+    iter_sse_data,
+    post_json,
+    send_stream,
+)
+from base.plugins.llm.services.upstream_helpers import (
+    chat_config,
+    egress_policy,
+    stream_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +32,9 @@ class AnthropicService:
             "Content-Type": "application/json",
             "anthropic-version": "2023-06-01"
         }
+
+    def _policy(self):
+        return egress_policy("anthropic", self.endpoint_url)
 
     async def chat(self, model: str, messages: List[Dict],
                    temperature: float = 0.7, max_tokens: int = 2000,
@@ -56,13 +71,18 @@ class AnthropicService:
             payload["stop_sequences"] = stop
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Anthropic API错误: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"Anthropic API调用失败: {e.response.text}")
+            response = await post_json(
+                url,
+                headers=self.headers,
+                json=payload,
+                cfg=chat_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="Anthropic API调用失败")
+            return response.json()
+        except UpstreamStatusError as e:
+            logger.error(f"Anthropic API错误: {e.status_code} - {e.body_text}")
+            raise Exception(f"Anthropic API调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"Anthropic服务异常: {str(e)}")
             raise
@@ -101,33 +121,35 @@ class AnthropicService:
         if stop:
             payload["stop_sequences"] = stop
 
+        response = None
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream("POST", url, headers=self.headers, json=payload) as response:
-                    response.raise_for_status()
+            response = await send_stream(
+                url,
+                headers=self.headers,
+                json=payload,
+                cfg=stream_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="Anthropic流式调用失败")
 
-                    async for line in response.aiter_lines():
-                        if not line.strip() or not line.startswith("data: "):
-                            continue
-
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(data_str)
-                            # 转换为OpenAI格式以保持一致性
-                            if "delta" in chunk:
-                                yield chunk
-                        except json.JSONDecodeError:
-                            logger.warning(f"无法解析SSE数据: {data_str}")
-                            continue
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Anthropic流式API错误: {e.response.status_code}")
-            raise Exception(f"Anthropic流式调用失败: {e.response.text}")
+            async for data_str in iter_sse_data(response):
+                try:
+                    chunk = json.loads(data_str)
+                    # 转换为OpenAI格式以保持一致性
+                    if "delta" in chunk:
+                        yield chunk
+                except json.JSONDecodeError:
+                    logger.warning(f"无法解析SSE数据: {data_str}")
+                    continue
+        except UpstreamStatusError as e:
+            logger.error(f"Anthropic流式API错误: {e.status_code}")
+            raise Exception(f"Anthropic流式调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"Anthropic流式服务异常: {str(e)}")
             raise
+        finally:
+            if response is not None:
+                await response.aclose()
 
     @staticmethod
     def estimate_tokens(text: str) -> int:

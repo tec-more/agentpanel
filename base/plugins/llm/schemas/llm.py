@@ -1,10 +1,12 @@
 """
 厂商和模型相关Schema
 """
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic_core import PydanticCustomError
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
+from base.common.masking import validate_secret
 from base.plugins.llm.models.enums import ModelServiceType, CallMode
 
 
@@ -119,11 +121,21 @@ class ApiKeyBase(BaseModel):
     api_key: Optional[str] = Field(None, max_length=512, description="API Key")
     api_secret: Optional[str] = Field(None, max_length=512, description="API Secret")
     access_token: Optional[str] = Field(None, max_length=512, description="Access Token")
+    base_url: Optional[str] = Field(None, max_length=512, description="模型 Base URL（存储为 endpoint_url）")
     endpoint_url: Optional[str] = Field(None, max_length=512, description="自定义端点URL")
 
     # 配额和备注
     max_quota: int = Field(100000, description="每日配额限制")
     description: Optional[str] = Field(None, description="备注")
+
+    @field_validator("api_key", "api_secret", "access_token")
+    @classmethod
+    def _validate_secret_fields(cls, value, info):
+        try:
+            return validate_secret(value, info.field_name)
+        except ValueError as exc:
+            # 用 PydanticCustomError 保证错误上下文可 JSON 序列化，且不回显原值
+            raise PydanticCustomError("secret_format", str(exc)) from None
 
 
 class ApiKeyCreate(ApiKeyBase):
@@ -143,11 +155,24 @@ class ApiKeyUpdate(BaseModel):
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     access_token: Optional[str] = None
+    base_url: Optional[str] = None
     endpoint_url: Optional[str] = None
 
     # 配额和备注
     max_quota: Optional[int] = None
     description: Optional[str] = None
+
+    @field_validator("api_key", "api_secret", "access_token")
+    @classmethod
+    def _validate_secret_fields(cls, value, info):
+        # 遮蔽值由路由层丢弃（保持原值），这里不把它当新密钥校验
+        from base.common.masking import is_masked
+        if is_masked(value):
+            return value
+        try:
+            return validate_secret(value, info.field_name)
+        except ValueError as exc:
+            raise PydanticCustomError("secret_format", str(exc)) from None
 
 
 class ApiKeyResponse(ApiKeyBase):

@@ -4,6 +4,18 @@
 import logging
 from typing import AsyncIterator, Optional, List, Dict
 from base.plugins.llm.models.api_key import LLMApiKey
+from base.common.upstream import (
+    UpstreamStatusError,
+    ensure_success,
+    iter_sse_data,
+    post_json,
+    send_stream,
+)
+from base.plugins.llm.services.upstream_helpers import (
+    chat_config,
+    egress_policy,
+    stream_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +157,6 @@ class DoubaoService:
         stop: Optional[List[str]] = None
     ) -> Dict:
         """HTTP 方式调用（备用方案）"""
-        import httpx
-        
         url = f"{self.endpoint_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -166,18 +176,18 @@ class DoubaoService:
             payload["stop"] = stop
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload
-                )
-                response.raise_for_status()
-                return response.json()
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"豆包API错误: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"豆包API调用失败: {e.response.text}")
+            response = await post_json(
+                url,
+                headers=headers,
+                json=payload,
+                cfg=chat_config(),
+                policy=egress_policy("doubao", self.endpoint_url),
+            )
+            await ensure_success(response, label="豆包API调用失败")
+            return response.json()
+        except UpstreamStatusError as e:
+            logger.error(f"豆包API错误: {e.status_code} - {e.body_text}")
+            raise Exception(f"豆包API调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"豆包服务异常: {str(e)}")
             raise
@@ -345,9 +355,8 @@ class DoubaoService:
         stop: Optional[List[str]] = None
     ) -> AsyncIterator[Dict]:
         """HTTP 方式流式调用（备用方案）"""
-        import httpx
         import json
-        
+
         url = f"{self.endpoint_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -366,39 +375,32 @@ class DoubaoService:
         if stop:
             payload["stop"] = stop
 
+        response = None
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    url,
-                    headers=headers,
-                    json=payload
-                ) as response:
-                    response.raise_for_status()
+            response = await send_stream(
+                url,
+                headers=headers,
+                json=payload,
+                cfg=stream_config(),
+                policy=egress_policy("doubao", self.endpoint_url),
+            )
+            await ensure_success(response, label="豆包流式调用失败")
 
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-
-                            if data_str.strip() == "[DONE]":
-                                break
-
-                            try:
-                                chunk = json.loads(data_str)
-                                yield chunk
-                            except json.JSONDecodeError:
-                                logger.warning(f"无法解析SSE数据: {data_str}")
-                                continue
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"豆包流式API错误: {e.response.status_code}")
-            raise Exception(f"豆包流式调用失败: {e.response.text}")
+            async for data_str in iter_sse_data(response):
+                try:
+                    yield json.loads(data_str)
+                except json.JSONDecodeError:
+                    logger.warning(f"无法解析SSE数据: {data_str}")
+                    continue
+        except UpstreamStatusError as e:
+            logger.error(f"豆包流式API错误: {e.status_code}")
+            raise Exception(f"豆包流式调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"豆包流式服务异常: {str(e)}")
             raise
+        finally:
+            if response is not None:
+                await response.aclose()
 
     @staticmethod
     def estimate_tokens(text: str) -> int:

@@ -2,11 +2,16 @@
 腾讯混元大模型服务
 """
 import json
-import httpx
 from typing import AsyncIterator, List, Dict
 import logging
 import time
-import hashlib
+
+from base.common.upstream import (
+    UpstreamStatusError,
+    ensure_success,
+    post_json,
+)
+from base.plugins.llm.services.upstream_helpers import chat_config, egress_policy
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,9 @@ class TencentService:
         self.service = "hunyuan"
         self.version = "2023-09-01"
         self.host = "hunyuan.tencentcloudapi.com"
+
+    def _policy(self):
+        return egress_policy("tencent", self.endpoint_url)
 
     def _sign(self, payload: str, timestamp: int) -> str:
         """生成腾讯云API签名"""
@@ -59,18 +67,23 @@ class TencentService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=headers, json={
+            response = await post_json(
+                url,
+                headers=headers,
+                json={
                     "Model": model,
                     "Messages": messages,
                     "Temperature": temperature,
                     "TopP": top_p
-                })
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"腾讯API错误: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"腾讯API调用失败: {e.response.text}")
+                },
+                cfg=chat_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="腾讯API调用失败")
+            return response.json()
+        except UpstreamStatusError as e:
+            logger.error(f"腾讯API错误: {e.status_code} - {e.body_text}")
+            raise Exception(f"腾讯API调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"腾讯服务异常: {str(e)}")
             raise

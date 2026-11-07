@@ -2,9 +2,21 @@
 OpenAI大模型服务
 """
 import json
-import httpx
 from typing import AsyncIterator, List, Dict
 import logging
+
+from base.common.upstream import (
+    UpstreamStatusError,
+    ensure_success,
+    iter_sse_data,
+    post_json,
+    send_stream,
+)
+from base.plugins.llm.services.upstream_helpers import (
+    chat_config,
+    egress_policy,
+    stream_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +31,10 @@ class LocalAIService:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+
+    def _policy(self):
+        # 本地 provider 显式允许回环/私网地址
+        return egress_policy("local", self.endpoint_url)
 
     async def chat(self, model: str, messages: List[Dict],
                    temperature: float = 0.7, max_tokens: int = 2000,
@@ -40,13 +56,18 @@ class LocalAIService:
             payload["stop"] = stop
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI API错误: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"OpenAI API调用失败: {e.response.text}")
+            response = await post_json(
+                url,
+                headers=self.headers,
+                json=payload,
+                cfg=chat_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="OpenAI API调用失败")
+            return response.json()
+        except UpstreamStatusError as e:
+            logger.error(f"OpenAI API错误: {e.status_code} - {e.body_text}")
+            raise Exception(f"OpenAI API调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"OpenAI服务异常: {str(e)}")
             raise
@@ -69,31 +90,32 @@ class LocalAIService:
         if stop:
             payload["stop"] = stop
 
+        response = None
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream("POST", url, headers=self.headers, json=payload) as response:
-                    response.raise_for_status()
+            response = await send_stream(
+                url,
+                headers=self.headers,
+                json=payload,
+                cfg=stream_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="OpenAI流式调用失败")
 
-                    async for line in response.aiter_lines():
-                        if not line.strip() or not line.startswith("data: "):
-                            continue
-
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-
-                        try:
-                            chunk = json.loads(data_str)
-                            yield chunk
-                        except json.JSONDecodeError:
-                            logger.warning(f"无法解析SSE数据: {data_str}")
-                            continue
-        except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI流式API错误: {e.response.status_code}")
-            raise Exception(f"OpenAI流式调用失败: {e.response.text}")
+            async for data_str in iter_sse_data(response):
+                try:
+                    yield json.loads(data_str)
+                except json.JSONDecodeError:
+                    logger.warning(f"无法解析SSE数据: {data_str}")
+                    continue
+        except UpstreamStatusError as e:
+            logger.error(f"OpenAI流式API错误: {e.status_code}")
+            raise Exception(f"OpenAI流式调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"OpenAI流式服务异常: {str(e)}")
             raise
+        finally:
+            if response is not None:
+                await response.aclose()
 
     @staticmethod
     def estimate_tokens(text: str) -> int:
@@ -114,14 +136,19 @@ class LocalAIService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                result = response.json()
-                return result["data"][0]["embedding"]
-        except httpx.HTTPStatusError as e:
-            logger.error(f"OpenAI Embedding API错误: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"OpenAI Embedding调用失败: {e.response.text}")
+            response = await post_json(
+                url,
+                headers=self.headers,
+                json=payload,
+                cfg=chat_config(),
+                policy=self._policy(),
+            )
+            await ensure_success(response, label="OpenAI Embedding调用失败")
+            result = response.json()
+            return result["data"][0]["embedding"]
+        except UpstreamStatusError as e:
+            logger.error(f"OpenAI Embedding API错误: {e.status_code} - {e.body_text}")
+            raise Exception(f"OpenAI Embedding调用失败: {e.body_text}")
         except Exception as e:
             logger.error(f"OpenAI Embedding服务异常: {str(e)}")
             raise

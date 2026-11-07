@@ -110,8 +110,12 @@ class ChatService:
         Returns:
             厂商服务实例
         """
-        # 如果是OpenAPI模式，直接使用OpenAIService
+        # 如果是OpenAPI模式，直接使用OpenAIService（本地 provider 走 LocalAIService 以保留回环/私网出网策略）
         if call_mode == "openapi":
+            if provider_name_en == "local":
+                if not LocalAIService:
+                    raise HTTPException(status_code=500, detail="OpenAPI服务未配置")
+                return LocalAIService(api_key=api_key, endpoint_url=endpoint_url)
             if not OpenAIService:
                 raise HTTPException(status_code=500, detail="OpenAPI服务未配置")
             return OpenAIService(api_key=api_key, endpoint_url=endpoint_url)
@@ -128,9 +132,9 @@ class ChatService:
             return OpenAIService(api_key=api_key, endpoint_url=endpoint_url)
         
         elif provider_name_en == "local":
-            if not OpenAIService:
+            if not LocalAIService:
                 raise HTTPException(status_code=500, detail="OpenAI服务未配置")
-            return OpenAIService(api_key=api_key, endpoint_url=endpoint_url)
+            return LocalAIService(api_key=api_key, endpoint_url=endpoint_url)
 
         elif provider_name_en == "anthropic":
             if not AnthropicService:

@@ -674,8 +674,8 @@ def init_app() -> FastAPI:
     # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
     #   作为可选退回方式。
     try:
-        from base.common.gateway.config import gateway_config, gateway_enabled
-        gw_cfg = gateway_config()
+        from base.common.gateway.config import issuance_config, gateway_enabled
+        gw_cfg = issuance_config()
         if gateway_enabled():
             if str(gw_cfg.get("deployment")) == "embedded":
                 from base.common.gateway.constants import GATEWAY_DEPLOY_PREFIX

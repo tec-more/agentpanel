@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
 
-from base.common.gateway.config import gateway_config, lease_ttl_override
+from base.common.gateway.config import issuance_config, lease_ttl_override
 from base.common.gateway.lease_auth import (
     TERMINAL_RUN_STATUSES,
     VIRTUAL_KEY_PREFIX,
@@ -50,7 +50,7 @@ def _ttl_seconds(
     owner_id: Optional[int] = None,
 ) -> int:
     """TTL 解析：显式请求 > 租户覆盖 > 全局默认，最终夹到 [30, max_lease_ttl_seconds]。"""
-    cfg = gateway_config()
+    cfg = issuance_config()
     default = int(cfg.get(default_key) or 900)
     override = lease_ttl_override(cfg, owner_type, owner_id)
     base = int(override) if override is not None else default
@@ -83,7 +83,7 @@ class GatewayLeaseService:
         model: Optional[str] = None,
         budget_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
-        cfg = gateway_config()
+        cfg = issuance_config()
         rpm = int(rpm_limit or cfg.get("max_rpm") or 60)
         if rpm <= 0:
             raise HTTPException(status_code=400, detail="rpm_limit 必须为正整数")

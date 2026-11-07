@@ -86,35 +86,20 @@
             "allow_env_fallback": false,
             "allow_direct_provider": false
         },
-        "gateway": {
+        "gateway_issuance": {
             "enabled": true,
             "deployment": "standalone",
-            "host": "127.0.0.1",
-            "port": 9999,
             "public_base_url": "http://127.0.0.1:9999",
+            "health_check_timeout_seconds": 3,
             "lease_ttl_seconds": 900,
             "renew_ttl_seconds": 900,
             "max_lease_ttl_seconds": 3600,
             "tenant_lease_ttl_seconds": {},
-            "lease_cache_ttl_seconds": 8,
             "max_rpm": 60,
-            "fail_closed": true,
             "provider_domain_allowlist": [
                 "api.deepseek.com"
             ],
             "allow_loopback": false,
-            "strip_request_fields": [
-                "dsh_session_log"
-            ],
-            "upstream_timeout_seconds": 300,
-            "connect_timeout_seconds": 10,
-            "lease_budget_tokens": 0,
-            "max_output_tokens_per_request": 4096,
-            "max_concurrent_requests_per_owner": 8,
-            "estimate_chars_per_token": 2.0,
-            "min_output_allowance_tokens": 1,
-            "auto_revoke_on_exhausted": true,
-            "gateway_quota_ttl_seconds": 86400,
             "reconciliation": {
                 "enabled": true,
                 "interval_seconds": 600,
@@ -126,26 +111,6 @@
                 "missing_amount_high": 1000.0,
                 "duplicate_ratio_high": 2.0
             }
-        },
-        "orchestration": {
-            "enabled": true,
-            "deployment": "standalone",
-            "host": "127.0.0.1",
-            "port": 9100,
-            "public_base_url": "http://127.0.0.1:9100",
-            "mode": "proxy_l3",
-            "write_enabled": true,
-            "l2_internal_base_url": "http://127.0.0.1:9998",
-            "internal_timeout_seconds": 5,
-            "internal_allowed_ips": [
-                "127.0.0.1",
-                "::1"
-            ],
-            "allow_remote_bind": false,
-            "policy_in_l3": false,
-            "reconcile_in_l3": false,
-            "l2_service_id": "svc_l3_orchestration",
-            "l2_service_secret_env": "ORCHESTRATION_SERVICE_SECRET"
         },
         "egress": {
             "version": 1,

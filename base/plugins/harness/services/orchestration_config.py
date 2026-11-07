@@ -1,15 +1,24 @@
 """L3 编排服务配置与启动校验（fail-closed）
 
-- 配置来源：manifest `config.orchestration`；
+- 配置来源：`services/l3-orchestration/manifest.json` 的 `config.orchestration`，
+  由 `ORCH_*` 环境变量覆盖；不再经过 `plugin_manager`。
 - 默认只监听回环地址；非回环必须显式 allow_remote_bind=true；
 - 独立入口仅允许 deployment=standalone；
 - 内部接口一律要求服务凭据，不提供匿名开关。
 """
 from typing import Any, Dict, List
 
-from base.common.plugin_manager import plugin_manager
+from packages.agentpanel_common.config import (
+    REPO_ROOT,
+    ConfigError,
+    EnvOverride,
+    apply_env_overrides,
+    load_manifest,
+    manifest_section,
+)
 
 PLUGIN_NAME = "harness"
+ORCHESTRATION_MANIFEST = REPO_ROOT / "services" / "l3-orchestration" / "manifest.json"
 
 DEFAULTS: Dict[str, Any] = {
     "enabled": True,
@@ -17,8 +26,8 @@ DEFAULTS: Dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 9100,
     "public_base_url": "http://127.0.0.1:9100",
-    "mode": "l2",
-    "write_enabled": False,
+    "mode": "proxy_l3",
+    "write_enabled": True,
     "l2_internal_base_url": "http://127.0.0.1:9998",
     "internal_timeout_seconds": 5,
     "internal_allowed_ips": ["127.0.0.1", "::1"],
@@ -28,7 +37,23 @@ DEFAULTS: Dict[str, Any] = {
     "auth_timestamp_window_seconds": 60,
     "l2_service_id": "svc_l3_orchestration",
     "l2_service_secret_env": "ORCHESTRATION_SERVICE_SECRET",
+    "schema_min_version": "",
 }
+
+ORCH_ENV_OVERRIDES: tuple[EnvOverride, ...] = (
+    EnvOverride("enabled", "ORCH_ENABLED", "bool"),
+    EnvOverride("host", "ORCH_HOST", "str"),
+    EnvOverride("port", "ORCH_PORT", "int"),
+    EnvOverride("public_base_url", "ORCH_PUBLIC_BASE_URL", "str"),
+    EnvOverride("l2_internal_base_url", "ORCH_L2_BASE_URL", "str"),
+    EnvOverride("l2_service_id", "ORCH_L2_SERVICE_ID", "str"),
+    EnvOverride("internal_timeout_seconds", "ORCH_INTERNAL_TIMEOUT_SECONDS", "int"),
+    EnvOverride("write_enabled", "ORCH_WRITE_ENABLED", "bool"),
+    EnvOverride("auth_timestamp_window_seconds", "ORCH_AUTH_TIMESTAMP_WINDOW_SECONDS", "int"),
+    EnvOverride("internal_allowed_ips", "ORCH_INTERNAL_ALLOWED_IPS", "list"),
+    EnvOverride("allow_remote_bind", "ORCH_ALLOW_REMOTE_BIND", "bool"),
+    EnvOverride("schema_min_version", "ORCH_SCHEMA_MIN_VERSION", "str"),
+)
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
@@ -37,15 +62,16 @@ class OrchestrationConfigError(RuntimeError):
     """编排配置不满足 fail-closed 约束"""
 
 
-def harness_config() -> Dict[str, Any]:
-    manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
-    return manifest.get("config") or {}
-
-
 def orchestration_config() -> Dict[str, Any]:
-    raw = harness_config().get("orchestration") or {}
+    """独立 manifest 默认值 + ORCH_* 环境变量覆盖。"""
+    manifest = load_manifest(ORCHESTRATION_MANIFEST)
+    raw = manifest_section(manifest, "orchestration")
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in raw.items() if v is not None})
+    try:
+        cfg = apply_env_overrides(cfg, ORCH_ENV_OVERRIDES, source="orchestration")
+    except ConfigError as exc:
+        raise OrchestrationConfigError(str(exc)) from exc
     return cfg
 
 

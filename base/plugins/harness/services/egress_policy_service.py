@@ -25,7 +25,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
-from base.common.gateway.config import gateway_config, upstream_allowlist
+from base.common.gateway.config import issuance_config, upstream_allowlist
 from base.common.plugin_manager import plugin_manager
 from base.plugins.harness.models.harness import HarnessAuditEvent
 from base.plugins.harness.services.audit_service import HarnessAuditService
@@ -151,14 +151,14 @@ def _dedupe(items: List[str]) -> List[str]:
 
 def provider_domain_allowlist() -> List[str]:
     """复用网关的唯一白名单来源（不在此处重复配置）。"""
-    cfg = gateway_config()
+    cfg = issuance_config()
     return sorted(upstream_allowlist(cfg))
 
 
 def current_policy() -> Dict[str, Any]:
     """当前生效的策略内容（哈希与下发都以它为准）。"""
     cfg = egress_config()
-    gw = gateway_config()
+    gw = issuance_config()
     return {
         "version": cfg["version"],
         "allow_client_non_gateway": cfg["allow_client_non_gateway"],

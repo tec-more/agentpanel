@@ -1,0 +1,62 @@
+{
+    "name": "l3-gateway",
+    "display_name": "L3 网关（数据面）",
+    "version": "0.1.0",
+    "description": "桌面端租约鉴权、provider 转发、用量记账、预算/并发/额度耗尽控制",
+    "config": {
+        "gateway": {
+            "enabled": true,
+            "deployment": "standalone",
+            "host": "127.0.0.1",
+            "port": 9999,
+            "public_base_url": "http://127.0.0.1:9999",
+            "lease_cache_ttl_seconds": 8,
+            "fail_closed": true,
+            "provider_domain_allowlist": [
+                "api.deepseek.com"
+            ],
+            "allow_loopback": false,
+            "strip_request_fields": [
+                "dsh_session_log"
+            ],
+            "upstream_timeout_seconds": 300,
+            "connect_timeout_seconds": 10,
+            "total_timeout_seconds": 0,
+            "health_check_timeout_seconds": 3,
+            "retry_max_attempts": 3,
+            "retry_backoff_seconds": 0.5,
+            "retry_max_backoff_seconds": 4.0,
+            "retry_statuses": [
+                429,
+                500,
+                502,
+                503,
+                504
+            ],
+            "verify_tls": true,
+            "proxy_url": "",
+            "trust_env": false,
+            "max_connections": 100,
+            "max_keepalive_connections": 20,
+            "keepalive_expiry_seconds": 30,
+            "lease_budget_tokens": 0,
+            "max_output_tokens_per_request": 4096,
+            "max_concurrent_requests_per_owner": 8,
+            "estimate_chars_per_token": 2.0,
+            "min_output_allowance_tokens": 1,
+            "auto_revoke_on_exhausted": true,
+            "gateway_quota_ttl_seconds": 86400,
+            "reconciliation": {
+                "enabled": true,
+                "interval_seconds": 600,
+                "window_hours": 24,
+                "max_window_hours": 168,
+                "diff_amount_high": 1000.0,
+                "diff_rate_high": 0.1,
+                "diff_cost_high": 1.0,
+                "missing_amount_high": 1000.0,
+                "duplicate_ratio_high": 2.0
+            }
+        }
+    }
+}

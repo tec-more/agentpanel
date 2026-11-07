@@ -18,7 +18,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from base.common.gateway.config import gateway_config, gateway_enabled
+from base.common.gateway.config import issuance_config, gateway_enabled
 from base.common.masking import fingerprint, mask_secret
 from base.plugins.harness.services.audit_service import HarnessAuditService
 from base.plugins.harness.services.model_credential_service import (
@@ -89,10 +89,10 @@ class HarnessRuntimeLauncher:
         """网关不可达时拒绝执行（fail-closed），不得退回内置 key 直连。"""
         import httpx
 
-        base = str(gateway_config().get("public_base_url") or "").rstrip("/")
+        base = str(issuance_config().get("public_base_url") or "").rstrip("/")
         if not base:
             raise RuntimeError("网关 public_base_url 未配置，拒绝启动 dsh（fail-closed）")
-        timeout = float(gateway_config().get("health_check_timeout_seconds") or 3)
+        timeout = float(issuance_config().get("health_check_timeout_seconds") or 3)
         try:
             async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
                 resp = await client.get(base + "/health")
@@ -109,7 +109,7 @@ class HarnessRuntimeLauncher:
             raise RuntimeError(
                 "网关模式必须先签发租约，禁止使用内置 provider key 直连（fail-closed）"
             )
-        cfg = gateway_config()
+        cfg = issuance_config()
         base_url = str(
             gateway_lease.get("base_url") or cfg.get("public_base_url") or ""
         ).rstrip("/")

@@ -1,0 +1,29 @@
+{
+    "name": "l3-orchestration",
+    "display_name": "L3 编排",
+    "version": "0.1.0",
+    "description": "Harness 会话/运行/步骤编排、策略评估、审批、审计，额度经 L2 内部 API",
+    "config": {
+        "orchestration": {
+            "enabled": true,
+            "deployment": "standalone",
+            "host": "127.0.0.1",
+            "port": 9100,
+            "public_base_url": "http://127.0.0.1:9100",
+            "mode": "proxy_l3",
+            "write_enabled": true,
+            "l2_internal_base_url": "http://127.0.0.1:9998",
+            "internal_timeout_seconds": 5,
+            "internal_allowed_ips": [
+                "127.0.0.1",
+                "::1"
+            ],
+            "allow_remote_bind": false,
+            "policy_in_l3": false,
+            "reconcile_in_l3": false,
+            "auth_timestamp_window_seconds": 60,
+            "l2_service_id": "svc_l3_orchestration",
+            "l2_service_secret_env": "ORCHESTRATION_SERVICE_SECRET"
+        }
+    }
+}

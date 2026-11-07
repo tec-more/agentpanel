@@ -1,26 +1,31 @@
 """
-内部网关（数据面）配置与启动校验
+网关配置：L2 租约签发配置 与 L3 数据面配置分离（P1 manifest 三拆）。
 
-溯源：已确认架构——桌面端只拿 agentpanel 签发的短期租约虚拟 key，经网关换成
-真实 provider key 转发；业务 API 不承载模型流量。
+- `issuance_config()`：L2 专用，读 `base/plugins/harness/manifest.json` 的
+  `config.gateway_issuance`（租约签发 / 出网策略 / 启停）。
+- `gateway_config()`：L3 网关数据面，读 `services/l3-gateway/manifest.json` 的
+  `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不再经过 plugin_manager**。
 
-fail-closed 落实：
-- gateway.enabled=true 时 gateway.fail_closed 必须为 true；
-- runtime.allow_env_fallback / runtime.allow_direct_provider 必须为 false；
-- public_base_url 与 provider 域名白名单必须显式配置；
-- 部署形态 deployment=standalone|embedded（默认 standalone：由 `python -m base.common.gateway.server`
-  作为 L3 独立进程对外服务；embedded 可选退回，随业务 API 挂载到 /v1/gateway）。
+fail-closed 语义保持不变：enabled 时 fail_closed 必须为 true、public_base_url 必须
+http(s)、provider 白名单非空、TTL/重试/连接池配置合法。
 """
 from typing import Any, Dict, List
 
-from base.common.plugin_manager import plugin_manager
-from base.common.upstream import UpstreamConfig
+from packages.agentpanel_common.config import (
+    REPO_ROOT,
+    ConfigError,
+    EnvOverride,
+    apply_env_overrides,
+    load_manifest,
+    manifest_section,
+    read_env_value,
+)
+from packages.agentpanel_common.upstream import UpstreamConfig
 
 PLUGIN_NAME = "harness"
+GATEWAY_MANIFEST = REPO_ROOT / "services" / "l3-gateway" / "manifest.json"
 
-# 网关对账（记账 vs 客户端上报）默认阈值；可在 manifest 的
-# config.gateway.reconciliation 覆盖。对账不属于数据面 fail-closed 通道，
-# 非法配置只告警并回退默认值。
+# 网关对账默认阈值（L2 执行对账）
 RECONCILE_DEFAULTS: Dict[str, Any] = {
     "enabled": True,
     "interval_seconds": 600,
@@ -77,34 +82,91 @@ DEFAULTS: Dict[str, Any] = {
     "reconciliation": RECONCILE_DEFAULTS,
 }
 
+# 数据面环境变量覆盖（§5.4）
+_GATEWAY_ENV_OVERRIDES: tuple[EnvOverride, ...] = (
+    EnvOverride("enabled", "GW_ENABLED", "bool"),
+    EnvOverride("deployment", "GW_DEPLOYMENT", "str"),
+    EnvOverride("host", "GW_HOST", "str"),
+    EnvOverride("port", "GW_PORT", "int"),
+    EnvOverride("public_base_url", "GW_PUBLIC_BASE_URL", "str"),
+    EnvOverride("fail_closed", "GW_FAIL_CLOSED", "bool"),
+    EnvOverride("provider_domain_allowlist", "GW_PROVIDER_DOMAIN_ALLOWLIST", "list"),
+    EnvOverride("allow_loopback", "GW_ALLOW_LOOPBACK", "bool"),
+    EnvOverride("strip_request_fields", "GW_STRIP_REQUEST_FIELDS", "list"),
+    EnvOverride("lease_cache_ttl_seconds", "GW_LEASE_CACHE_TTL_SECONDS", "int"),
+    EnvOverride("lease_ttl_seconds", "GW_LEASE_TTL_SECONDS", "int"),
+    EnvOverride("renew_ttl_seconds", "GW_RENEW_TTL_SECONDS", "int"),
+    EnvOverride("max_lease_ttl_seconds", "GW_MAX_LEASE_TTL_SECONDS", "int"),
+    EnvOverride("tenant_lease_ttl_seconds", "GW_TENANT_LEASE_TTL_JSON", "json"),
+    EnvOverride("max_rpm", "GW_MAX_RPM", "int"),
+    EnvOverride("upstream_timeout_seconds", "GW_UPSTREAM_TIMEOUT_SECONDS", "int"),
+    EnvOverride("connect_timeout_seconds", "GW_CONNECT_TIMEOUT_SECONDS", "int"),
+    EnvOverride("total_timeout_seconds", "GW_TOTAL_TIMEOUT_SECONDS", "float"),
+    EnvOverride("health_check_timeout_seconds", "GW_HEALTH_CHECK_TIMEOUT_SECONDS", "int"),
+    EnvOverride("retry_max_attempts", "GW_RETRY_MAX_ATTEMPTS", "int"),
+    EnvOverride("retry_backoff_seconds", "GW_RETRY_BACKOFF_SECONDS", "float"),
+    EnvOverride("retry_max_backoff_seconds", "GW_RETRY_MAX_BACKOFF_SECONDS", "float"),
+    EnvOverride("retry_statuses", "GW_RETRY_STATUSES", "int_list"),
+    EnvOverride("verify_tls", "GW_VERIFY_TLS", "bool"),
+    EnvOverride("proxy_url", "GW_PROXY_URL", "str"),
+    EnvOverride("trust_env", "GW_TRUST_ENV", "bool"),
+    EnvOverride("max_connections", "GW_MAX_CONNECTIONS", "int"),
+    EnvOverride("max_keepalive_connections", "GW_MAX_KEEPALIVE_CONNECTIONS", "int"),
+    EnvOverride("keepalive_expiry_seconds", "GW_KEEPALIVE_EXPIRY_SECONDS", "float"),
+    EnvOverride("lease_budget_tokens", "GW_LEASE_BUDGET_TOKENS", "int"),
+    EnvOverride("max_output_tokens_per_request", "GW_MAX_OUTPUT_TOKENS_PER_REQUEST", "int"),
+    EnvOverride("max_concurrent_requests_per_owner", "GW_MAX_CONCURRENT_REQUESTS_PER_OWNER", "int"),
+    EnvOverride("estimate_chars_per_token", "GW_ESTIMATE_CHARS_PER_TOKEN", "float"),
+    EnvOverride("min_output_allowance_tokens", "GW_MIN_OUTPUT_ALLOWANCE_TOKENS", "int"),
+    EnvOverride("auto_revoke_on_exhausted", "GW_AUTO_REVOKE_ON_EXHAUSTED", "bool"),
+    EnvOverride("gateway_quota_ttl_seconds", "GW_GATEWAY_QUOTA_TTL_SECONDS", "int"),
+)
+
 
 class GatewayConfigError(RuntimeError):
     """网关配置不满足 fail-closed 约束"""
 
 
-def harness_config() -> Dict[str, Any]:
+def _l2_harness_config() -> Dict[str, Any]:
+    """仅 L2 使用：读插件 manifest（延迟导入 plugin_manager，避免 L3 依赖）。"""
+    from base.common.plugin_manager import plugin_manager
+
     manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
     return manifest.get("config") or {}
 
 
 def runtime_config() -> Dict[str, Any]:
-    return harness_config().get("runtime") or {}
+    """L2 运行时配置（仅 L2 校验使用）。"""
+    return _l2_harness_config().get("runtime") or {}
 
 
-def gateway_config() -> Dict[str, Any]:
-    raw = harness_config().get("gateway") or {}
+def issuance_config() -> Dict[str, Any]:
+    """L2：租约签发 / 出网策略 / 启停 / 对账（来自 harness manifest）。"""
+    raw = _l2_harness_config().get("gateway_issuance") or {}
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in raw.items() if v is not None})
     return cfg
 
 
+def gateway_config() -> Dict[str, Any]:
+    """L3 网关数据面：独立 manifest 默认值 + GW_* 环境变量覆盖。"""
+    manifest = load_manifest(GATEWAY_MANIFEST)
+    raw = manifest_section(manifest, "gateway")
+    cfg = dict(DEFAULTS)
+    cfg.update({k: v for k, v in raw.items() if v is not None})
+    try:
+        cfg = apply_env_overrides(cfg, _GATEWAY_ENV_OVERRIDES, source="gateway")
+    except ConfigError as exc:
+        raise GatewayConfigError(str(exc)) from exc
+    return cfg
+
+
 def gateway_enabled() -> bool:
-    return bool(gateway_config().get("enabled"))
+    """L2 启停判断（租约签发/运行时启动）。"""
+    return bool(issuance_config().get("enabled"))
 
 
-def lease_ttl_override(
-    cfg: Dict[str, Any], owner_type: Any, owner_id: Any
-) -> Any:
+def lease_ttl_override(cfg: Dict[str, Any], owner_type: Any, owner_id: Any) -> Any:
     """按租户（owner_type:owner_id）读取 TTL 覆盖值；未命中返回 None。"""
     if not owner_type or owner_id is None:
         return None
@@ -153,8 +215,8 @@ def gateway_upstream_config() -> UpstreamConfig:
 
 
 def reconciliation_config() -> Dict[str, Any]:
-    """合并对账默认配置并做轻量校验；非法项回退默认值（不阻断启动）。"""
-    raw = gateway_config().get("reconciliation")
+    """合并对账默认配置并做轻量校验；非法项回退默认值（不阻断启动）。L2 使用。"""
+    raw = issuance_config().get("reconciliation")
     cfg = dict(RECONCILE_DEFAULTS)
     if isinstance(raw, dict):
         cfg.update({k: v for k, v in raw.items() if v is not None})
@@ -200,21 +262,9 @@ def upstream_allowlist(cfg: Dict[str, Any]) -> List[str]:
     return [str(x).strip().lower() for x in allow if str(x).strip()]
 
 
-def validate_gateway_config() -> Dict[str, Any]:
-    """启动时校验；不满足 fail-closed 直接拒绝启动。"""
-    cfg = gateway_config()
+def _validate_fail_closed(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not cfg.get("enabled"):
         return cfg
-
-    runtime = runtime_config()
-    if runtime.get("allow_env_fallback"):
-        raise GatewayConfigError(
-            "网关模式下禁止 runtime.allow_env_fallback=true（不得退回环境变量 provider key）"
-        )
-    if runtime.get("allow_direct_provider"):
-        raise GatewayConfigError(
-            "网关模式下禁止 runtime.allow_direct_provider=true（不得使用内置 key 直连 provider）"
-        )
     if not cfg.get("fail_closed"):
         raise GatewayConfigError("网关模式下 gateway.fail_closed 必须为 true")
     if str(cfg.get("deployment")) not in ("standalone", "embedded"):
@@ -265,3 +315,39 @@ def validate_gateway_config() -> Dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise GatewayConfigError(f"gateway 上游传输配置非法: {exc}")
     return cfg
+
+
+def validate_gateway_config() -> Dict[str, Any]:
+    """L3 网关启动校验：数据面配置 + 固定拒绝 env fallback/直连。"""
+    cfg = gateway_config()
+    if not cfg.get("enabled"):
+        return cfg
+    try:
+        if read_env_value("GW_ALLOW_ENV_FALLBACK", "bool", default=False):
+            raise GatewayConfigError(
+                "网关模式下禁止 GW_ALLOW_ENV_FALLBACK=true（不得退回环境变量 provider key）"
+            )
+        if read_env_value("GW_ALLOW_DIRECT_PROVIDER", "bool", default=False):
+            raise GatewayConfigError(
+                "网关模式下禁止 GW_ALLOW_DIRECT_PROVIDER=true（不得使用内置 key 直连 provider）"
+            )
+    except ConfigError as exc:
+        raise GatewayConfigError(str(exc)) from exc
+    return _validate_fail_closed(cfg)
+
+
+def validate_issuance_config() -> Dict[str, Any]:
+    """L2 启动校验：租约签发/出网配置（来自 harness manifest）。"""
+    cfg = issuance_config()
+    if not cfg.get("enabled"):
+        return cfg
+    runtime = runtime_config()
+    if runtime.get("allow_env_fallback"):
+        raise GatewayConfigError(
+            "网关模式下禁止 runtime.allow_env_fallback=true（不得退回环境变量 provider key）"
+        )
+    if runtime.get("allow_direct_provider"):
+        raise GatewayConfigError(
+            "网关模式下禁止 runtime.allow_direct_provider=true（不得使用内置 key 直连 provider）"
+        )
+    return _validate_fail_closed(cfg)

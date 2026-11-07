@@ -112,3 +112,8 @@ export function setUserRoles(userId, roleIds) {
 export function getUserPermissions(userId) {
   return request.get(`/v1/rbac/users/${userId}/permissions`)
 }
+
+// 获取当前登录用户权限（无需管理端权限点）
+export function getMyPermissions() {
+  return request.get('/v1/rbac/my/permissions')
+}

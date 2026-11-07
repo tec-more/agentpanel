@@ -67,6 +67,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="api_id" label="API ID" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="base_url" label="Base URL" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.base_url || row.endpoint_url || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="api_key" label="API Key" min-width="200">
           <template #default="{ row }">
             <el-tag>{{ row.api_key }}</el-tag>
@@ -225,8 +230,9 @@
           />
         </el-form-item>
 
-        <el-form-item label="端点URL">
-          <el-input v-model="form.endpoint_url" placeholder="自定义端点，留空使用默认" />
+        <el-form-item label="Base URL">
+          <el-input v-model="form.base_url" placeholder="如：https://api.deepseek.com" />
+          <div class="text-gray text-xs mt-1">模型访问地址，留空则使用厂商默认；保存后按 endpoint_url 存储</div>
         </el-form-item>
 
         <!-- 配额和备注 -->
@@ -323,6 +329,7 @@ const form = reactive({
   api_key: '',
   api_secret: '',
   access_token: '',
+  base_url: '',
   endpoint_url: '',
   // 其他
   max_quota: 100000,
@@ -389,6 +396,7 @@ const handleAdd = () => {
   form.api_key = ''
   form.api_secret = ''
   form.access_token = ''
+  form.base_url = ''
   form.endpoint_url = ''
   // 其他
   form.max_quota = 100000
@@ -412,12 +420,12 @@ const handleEdit = (row) => {
   form.api_key = row.api_key ?? row.app_key ?? ''
   form.api_secret = row.api_secret ?? ''
   form.access_token = row.access_token ?? ''
+  form.base_url = row.base_url ?? row.endpoint_url ?? ''
   form.endpoint_url = row.endpoint_url ?? ''
   // 其他
   form.max_quota = row.max_quota ?? 100000
   form.description = row.description ?? ''
 
-  console.log('[handleEdit] 设置后的form对象:', JSON.parse(JSON.stringify(form)))
 
   isEdit.value = true
   dialogVisible.value = true
@@ -430,7 +438,7 @@ const submit = async () => {
       const updateData = { ...form }
 
       // 处理空字符串：转换为null
-      const fields = ['api_id', 'api_key', 'api_secret', 'access_token', 'endpoint_url', 'model_id']
+      const fields = ['api_id', 'api_key', 'api_secret', 'access_token', 'base_url', 'endpoint_url', 'model_id']
       fields.forEach(field => {
         if (updateData[field] === '') {
           updateData[field] = null
@@ -454,8 +462,6 @@ const submit = async () => {
       // 删除 id 字段，因为 URL 中已经包含了
       delete updateData.id
 
-      console.log('[submit] 发送更新请求，数据:', JSON.parse(JSON.stringify(updateData)))
-      
       await updateApiKey(form.id, updateData)
       ElMessage.success('更新成功')
       dialogVisible.value = false

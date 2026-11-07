@@ -1,0 +1,179 @@
+{
+    "name": "harness",
+    "display_name": "Harness 接入",
+    "version": "0.1.0",
+    "description": "DeepSeek Harness 业务接入：客户端凭据、身份映射、会话/运行生命周期、步骤与用量回传、安全审计、动作策略、模型价格",
+    "author": "agentpanel",
+    "is_installed": true,
+    "is_enabled": true,
+    "route_prefix": "/v1/harness",
+    "routes": [
+        "api/v1"
+    ],
+    "models": [
+        "harness",
+        "model_price",
+        "service_credential"
+    ],
+    "schemas": [
+        "harness"
+    ],
+    "menus": [],
+    "permissions": [
+        {
+            "name": "Harness 客户端管理",
+            "code": "harness:client:manage",
+            "module": "harness",
+            "description": "签发/吊销 Harness 客户端凭据"
+        },
+        {
+            "name": "Harness 身份映射管理",
+            "code": "harness:identity:manage",
+            "module": "harness",
+            "description": "绑定/禁用外部身份到本地用户"
+        },
+        {
+            "name": "Harness 会话与运行查看",
+            "code": "harness:run:view",
+            "module": "harness",
+            "description": "查看 Harness 会话、运行与步骤"
+        },
+        {
+            "name": "Harness 审计查看",
+            "code": "harness:audit:view",
+            "module": "harness",
+            "description": "查看 Harness 安全审计事件"
+        },
+        {
+            "name": "Harness 动作策略管理",
+            "code": "harness:policy:manage",
+            "module": "harness",
+            "description": "管理高危动作安全策略"
+        },
+        {
+            "name": "Harness 模型价格管理",
+            "code": "harness:price:manage",
+            "module": "harness",
+            "description": "管理模型价格版本"
+        }
+    ],
+    "dependencies": [],
+    "hooks": {},
+    "config": {
+        "hold_ttl_seconds": 3600,
+        "fail_closed": true,
+        "lock_runtime_version": "0.1.5rc1",
+        "session_format": "auto",
+        "session_format_source": "header.version",
+        "session_format_supported": [
+            "v3",
+            "v4"
+        ],
+        "model_credential": {
+            "provider": null,
+            "model": null
+        },
+        "runtime": {
+            "dsh_command": null,
+            "dsh_command_mode": "sdk_runtime",
+            "dsh_home": ".dsh",
+            "env_names": {
+                "api_key": "DEEPSEEK_API_KEY",
+                "base_url": "DEEPSEEK_BASE_URL",
+                "provider": "DSH_PROVIDER",
+                "model": "DSH_MODEL"
+            },
+            "allow_env_fallback": false,
+            "allow_direct_provider": false
+        },
+        "gateway": {
+            "enabled": true,
+            "deployment": "standalone",
+            "host": "127.0.0.1",
+            "port": 9999,
+            "public_base_url": "http://127.0.0.1:9999",
+            "lease_ttl_seconds": 900,
+            "renew_ttl_seconds": 900,
+            "max_lease_ttl_seconds": 3600,
+            "tenant_lease_ttl_seconds": {},
+            "lease_cache_ttl_seconds": 8,
+            "max_rpm": 60,
+            "fail_closed": true,
+            "provider_domain_allowlist": [
+                "api.deepseek.com"
+            ],
+            "allow_loopback": false,
+            "strip_request_fields": [
+                "dsh_session_log"
+            ],
+            "upstream_timeout_seconds": 300,
+            "connect_timeout_seconds": 10,
+            "lease_budget_tokens": 0,
+            "max_output_tokens_per_request": 4096,
+            "max_concurrent_requests_per_owner": 8,
+            "estimate_chars_per_token": 2.0,
+            "min_output_allowance_tokens": 1,
+            "auto_revoke_on_exhausted": true,
+            "gateway_quota_ttl_seconds": 86400,
+            "reconciliation": {
+                "enabled": true,
+                "interval_seconds": 600,
+                "window_hours": 24,
+                "max_window_hours": 168,
+                "diff_amount_high": 1000.0,
+                "diff_rate_high": 0.1,
+                "diff_cost_high": 1.0,
+                "missing_amount_high": 1000.0,
+                "duplicate_ratio_high": 2.0
+            }
+        },
+        "orchestration": {
+            "enabled": true,
+            "deployment": "standalone",
+            "host": "127.0.0.1",
+            "port": 9100,
+            "public_base_url": "http://127.0.0.1:9100",
+            "mode": "proxy_l3",
+            "write_enabled": true,
+            "l2_internal_base_url": "http://127.0.0.1:9998",
+            "internal_timeout_seconds": 5,
+            "internal_allowed_ips": [
+                "127.0.0.1",
+                "::1"
+            ],
+            "allow_remote_bind": false,
+            "policy_in_l3": false,
+            "reconcile_in_l3": false,
+            "l2_service_id": "svc_l3_orchestration",
+            "l2_service_secret_env": "ORCHESTRATION_SERVICE_SECRET"
+        },
+        "egress": {
+            "version": 1,
+            "min_supported_version": 1,
+            "allow_client_non_gateway": false,
+            "tool_denylist": [
+                "web_fetch",
+                "web_search",
+                "browser",
+                "http_request"
+            ],
+            "snapshot_ttl_seconds": 300
+        },
+        "approval": {
+            "interception": "backend_api",
+            "timeout_seconds": 300,
+            "default_scope": "once",
+            "allowed_scopes": [
+                "once",
+                "session_pattern"
+            ],
+            "admin_fallback_risk": [
+                "high",
+                "critical"
+            ],
+            "ruleset_version": 1,
+            "fail_closed": true,
+            "degrade_to_danger_full_access": false
+        }
+    }
+}

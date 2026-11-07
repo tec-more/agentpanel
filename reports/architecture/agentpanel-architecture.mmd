@@ -1,0 +1,83 @@
+flowchart TB
+  classDef planned fill:#f1f3f5,stroke:#adb5bd,stroke-width:1px,stroke-dasharray:4 3,color:#495057
+  classDef external fill:#f8f9fa,stroke:#6b7280,stroke-width:1px,stroke-dasharray:6 3,color:#374151
+  classDef auth stroke:#b45309,stroke-width:2px
+
+  subgraph L1["L1 表示层 · Windows 桌面端（本机执行）"]
+    direction LR
+    UI["用户 / 桌面 UI"]
+    DSH["本机 dsh 运行时<br/>工具调用 · 文件操作 · 沙箱"]
+    JSONL[("本地会话 JSONL 日志")]
+    CRED["客户端凭据 hcli_*<br/>来源 IP 白名单 + 有效期"]
+    ADMIN["管理台 Web（web/）<br/>浏览器 · 用户 JWT"]
+    UI --> DSH --> JSONL
+    DSH --- CRED
+  end
+
+  subgraph L2["L2 业务层 · 9998（控制面）"]
+    direction TB
+    LEASE["租约签发<br/>POST /v1/harness/gateway/leases"]
+    EGRESS["出网策略下发<br/>GET /v1/harness/egress-policy/snapshot · 仅策略来源"]
+    AUTH["配置与权限<br/>/v1/auth · /v1/users · /v1/rbac"]
+    LLM["模型 / Provider / API Key<br/>/v1/llm/*"]
+    DOC["文档 / 知识库 / 版本<br/>/v1/document/*"]
+    DASH["报表 / 看板 facade<br/>/v1/harness/dashboard/*（本地读 PG）"]
+    QAPI["内部额度 API<br/>/internal/v1/harness/quota/*<br/>HMAC + quota:operate"]
+  end
+
+  subgraph L3O["L3 编排服务 · 9100"]
+    direction TB
+    CAPI["客户端业务 API<br/>9 写 + 5 读"]
+    POLICY["策略评估（三档）<br/>POST /v1/harness/policies/evaluate"]
+    QB["quota_backend<br/>reserve / settle / release"]
+    EVT["事件采集<br/>POST /v1/harness/runs/{no}/events"]
+    RDB["只读 DB 账号<br/>SELECT 可用，写被拒"]
+    RECON["对账触发（未迁移 L3）"]:::planned
+  end
+
+  subgraph L3G["L3 网关数据面 · 9999"]
+    direction TB
+    GLEASE["dgw.* 虚拟 key 校验<br/>租约缓存 8s（Redis 可选）"]
+    GCHAT["POST /v1/gateway/chat/completions"]
+    GQUOTA["额度 / 并发预检 + 输出截断"]
+    GSSE["SSE 流式透传（不缓冲、不聚合）"]
+    GACCT["用量记账<br/>usage_record source=gateway"]
+  end
+
+  subgraph DATA["数据层"]
+    direction LR
+    PG[("PostgreSQL 5432<br/>usage_record（计费权威账本）<br/>quota_account / quota_reservation<br/>harness_session/run/step/audit_event<br/>harness_client / gateway_lease/budget/concurrency<br/>service_credential / reconcile_batch/diff")]
+    REDIS[("Redis（当前未启用）<br/>额度原子计数 · 租约缓存 · 限流窗口 · 并发槽")]:::planned
+  end
+
+  EXT["外部 provider<br/>api.deepseek.com:443"]:::external
+
+  DSH -->|"① HTTPS 9998 · 客户端凭据（换租约 / 拉策略快照）"| LEASE
+  DSH -->|"同步 GET · 同一客户端凭据"| EGRESS
+  DSH -->|"⑥ HTTPS 9100 · 客户端凭据"| CAPI
+  CRED -->|"② HTTPS 9999 · Bearer dgw.*"| GCHAT
+  ADMIN -->|"用户 JWT"| AUTH
+  ADMIN -->|"用户 JWT"| DASH
+
+  GCHAT -->|"③ 租约校验 + 额度/并发预检"| GLEASE
+  GLEASE --> GQUOTA --> GSSE
+  GCHAT -->|"④ HTTPS 443 · 真实 provider key"| EXT
+  GACCT -->|"⑤ 写 usage_record"| PG
+  GLEASE -.->|"租约缓存（可选）"| REDIS
+
+  CAPI --> QB
+  QB -->|"⑦ HTTP 环回 · HMAC 服务凭据"| QAPI
+  QAPI --> PG
+  CAPI --> POLICY
+  CAPI --> EVT
+  CAPI -->|"只读 SELECT"| PG
+  DASH -.->|"本地读（未转发 L3）"| PG
+  DASH -.->|"权限缓存（可选）"| REDIS
+  RECON -.->|"reconcile_in_l3=false，当前在 L2"| DASH
+
+  class LEASE,EGRESS,QAPI,CAPI auth
+  style L1 fill:#f0f9ff,stroke:#bae6fd
+  style L2 fill:#f0fdf4,stroke:#bbf7d0
+  style L3O fill:#fff7ed,stroke:#fed7aa
+  style L3G fill:#fdf2f8,stroke:#fbcfe8
+  style DATA fill:#f8fafc,stroke:#e2e8f0

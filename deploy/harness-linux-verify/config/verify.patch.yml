@@ -1,0 +1,10 @@
+# dsh profile patch：仅在验证容器内挂载 Claude Code 兼容 hooks 桥。
+# 通过 --patch 传入，不修改业务代码和宿主 .dsh profile。
+- insert:
+    - id: claude-hooks
+      name: '@deepseek-ai/dsh-hooks-claude-code'
+      config:
+        configPath: /opt/verify/config/hooks.json
+        projectDir: /work/ws
+        defaultTimeoutMs: 10000
+        stderrSummaryMaxChars: 500

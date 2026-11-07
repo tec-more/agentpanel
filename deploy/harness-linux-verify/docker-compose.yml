@@ -1,0 +1,22 @@
+# 仅用于 Linux 容器验证；不接入生产 compose，也不占用业务端口。
+# 使用：
+#   docker compose -f deploy/harness-linux-verify/docker-compose.yml run --rm agentpanel-dsh-verify
+services:
+  agentpanel-dsh-verify:
+    build: .
+    image: agentpanel-dsh-verify:0.1.5rc1
+    container_name: agentpanel-dsh-verify
+    # 切断外部网络，仅保留 loopback；用于验证“非白名单出网失败”。
+    network_mode: none
+    # bubblewrap / unshare 需要放开 Docker 默认 seccomp 限制。
+    security_opt:
+      - seccomp:unconfined
+    extra_hosts:
+      # 白名单域名在容器内指向本机假 provider（127.0.0.1:18080）。
+      - "api.deepseek.com:127.0.0.1"
+    volumes:
+      - ./out:/out
+      # 只读挂载业务侧真实出网白名单实现，供只读校验，不修改业务代码。
+      - ../../base/common/gateway/service.py:/opt/project_gateway_service.py:ro
+    environment:
+      FAKE_PROVIDER_PORT: "18080"

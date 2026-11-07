@@ -3,7 +3,7 @@ CustomerOrganization / CustomerOrganizationMember models - 客户组织与成员
 
 溯源：docs/arch/02-系统上下文与领域模型.md §4.2；01-需求与约束.md C-23
 - 仅客户域；用途限于 HITL 审批人范围解析与协作可见性
-- 边界禁区：不引入组织级配额、不复用后台 Department（C-23）
+- P3 已解禁组织级配额：quota 域按 organization_id 记账（不建 FK、不新建并行账本）
 """
 from tortoise import fields
 from base.common.model import BaseModel, TimestampMixin

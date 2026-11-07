@@ -11,6 +11,7 @@ M9 套餐服务：QuotaPlan CRUD、绑定关系管理、主体套餐解析
 - cus：有效 CustomerMembership（is_active 且未过期）→ membership_level.level_type
   → 绑定；无会员记录时按 "regular" 兜底
 - usr：用户全部激活角色 code → 绑定集合，priority 大者优先，并列取 plan_id 大者
+- org：客户组织 ID 直接命中 bind_type=organization（P3 组织级配额）
 - 未命中绑定：返回 None（不计量不拦截，看板 plan=null）
 """
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,13 @@ from loguru import logger
 
 from base.common.quota.models.binding import QuotaPlanBinding
 from base.common.quota.models.quota import QuotaPlan
+
+VALID_SCOPES = ("cus", "usr", "org", "both")
+
+
+def _validate_scope(scope: str) -> None:
+    if scope not in VALID_SCOPES:
+        raise ValueError(f"非法适用范围: {scope}，仅支持 {'/'.join(VALID_SCOPES)}")
 
 
 class PlanService:
@@ -32,10 +40,12 @@ class PlanService:
         existing = await QuotaPlan.get_or_none(code=data["code"])
         if existing:
             raise ValueError(f"套餐编码已存在: {data['code']}")
+        scope = data.get("scope", "both")
+        _validate_scope(scope)
         return await QuotaPlan.create(
             code=data["code"],
             name=data["name"],
-            scope=data.get("scope", "both"),
+            scope=scope,
             quota_items=data.get("quota_items") or {},
             status=data.get("status", "active"),
         )
@@ -50,6 +60,8 @@ class PlanService:
             if dup:
                 raise ValueError(f"套餐编码已存在: {data['code']}")
             plan.code = data["code"]
+        if "scope" in data:
+            _validate_scope(data["scope"])
         for field in ("name", "scope", "quota_items", "status"):
             if field in data:
                 setattr(plan, field, data[field])
@@ -104,11 +116,28 @@ class PlanService:
     # ============================================================
     @staticmethod
     async def bind(bind_type: str, bind_key: str, plan_id: int, priority: int = 0) -> QuotaPlanBinding:
-        if bind_type not in (QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL, QuotaPlanBinding.BIND_TYPE_ROLE):
+        if bind_type not in (
+            QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL,
+            QuotaPlanBinding.BIND_TYPE_ROLE,
+            QuotaPlanBinding.BIND_TYPE_ORGANIZATION,
+        ):
             raise ValueError(f"非法绑定类型: {bind_type}")
         plan = await QuotaPlan.get_or_none(id=plan_id)
         if plan is None:
             raise ValueError(f"套餐不存在: {plan_id}")
+        if bind_type == QuotaPlanBinding.BIND_TYPE_ORGANIZATION:
+            if plan.scope not in ("org", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定组织")
+            try:
+                bind_key = str(int(bind_key))
+            except (TypeError, ValueError):
+                raise ValueError(f"非法组织 ID: {bind_key}")
+        elif bind_type == QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL:
+            if plan.scope not in ("cus", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定客户等级")
+        elif bind_type == QuotaPlanBinding.BIND_TYPE_ROLE:
+            if plan.scope not in ("usr", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定角色")
         binding = await QuotaPlanBinding.get_or_none(bind_type=bind_type, bind_key=bind_key)
         if binding:
             # 幂等：重复绑定更新指向与优先级
@@ -157,6 +186,9 @@ class PlanService:
         elif owner_type == "usr":
             keys = await PlanService._user_role_codes(owner_id)
             bind_type = QuotaPlanBinding.BIND_TYPE_ROLE
+        elif owner_type == "org":
+            keys = [str(owner_id)]
+            bind_type = QuotaPlanBinding.BIND_TYPE_ORGANIZATION
         else:
             return None
         if not keys:

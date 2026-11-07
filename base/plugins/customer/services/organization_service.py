@@ -6,7 +6,8 @@ M11 客户组织服务（Q-H）与 HITL 审批人解析
 - docs/arch/04-核心流程与接口契约.md §6 resolve_assignee(mode, owner) -> principal
 - PRD §5.9 HITL 审批人仅限本人或同组织成员
 
-边界禁区（C-23）：仅客户域；不引入组织级配额；不复用后台 Department。
+边界禁区（C-23）：仅客户域；P3 起组织级配额由 quota 域按 organization_id 记账
+（本服务不持有配额数据），不复用后台 Department。
 """
 from typing import List, Optional
 

@@ -109,6 +109,8 @@ def get_model_list() -> List[str]:
 		"base.common.quota.models.quota",
 		# T4 套餐绑定关系（Q-D 映射，服务层维护）
 		"base.common.quota.models.binding",
+		# Harness P0：配额预占持久化（不依赖插件启用态）
+		"base.common.quota.models.reservation",
 		"base.common.authz.models.resource_grant",
 	] + ['aerich.models']
 	return model_list

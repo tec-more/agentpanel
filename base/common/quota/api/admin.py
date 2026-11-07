@@ -19,7 +19,7 @@ quota_plan_admin_router = APIRouter(prefix="/v1/quota-plans", tags=["配额套�
 class PlanUpsertSchema(BaseModel):
     code: str = Field(..., min_length=1, max_length=50, description="套餐编码（唯一）")
     name: str = Field(..., min_length=1, max_length=100, description="套餐名称")
-    scope: str = Field("both", description="适用范围: cus/usr/both")
+    scope: str = Field("both", description="适用范围: cus/usr/org/both")
     quota_items: Dict[str, Any] = Field(default_factory=dict, description="配额项定义")
     status: str = Field("active", description="状态: active/disabled")
 
@@ -33,8 +33,8 @@ class PlanUpdateSchema(BaseModel):
 
 
 class BindingSchema(BaseModel):
-    bind_type: str = Field(..., description="绑定类型: membership_level/role")
-    bind_key: str = Field(..., min_length=1, max_length=50, description="会员等级 level_type 或角色 code")
+    bind_type: str = Field(..., description="绑定类型: membership_level/role/organization")
+    bind_key: str = Field(..., min_length=1, max_length=50, description="会员等级 level_type / 角色 code / 组织 ID")
     plan_id: int = Field(..., gt=0, description="套餐 ID")
     priority: int = Field(0, description="优先级（数值大者优先）")
 

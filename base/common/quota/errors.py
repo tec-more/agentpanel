@@ -43,3 +43,24 @@ class QuotaError(Exception):
             "remaining": self.remaining,
             "estimated": self.estimated,
         }
+
+
+class QuotaReservationConflict(Exception):
+    """确定性 hold_id 重复使用但状态不可复用（明确“已存在”而非静默累加）。
+
+    - pending：另一个调用正在预扣，尚未完成；
+    - settled/released/expired：该预占已关闭，不允许复用同一 hold_id 重新预扣。
+    """
+
+    def __init__(self, hold_id: str, status: str):
+        self.hold_id = hold_id
+        self.status = status
+        super().__init__(f"预占 {hold_id} 当前状态为 {status}，不能重复预占")
+
+    @property
+    def code(self) -> str:
+        return "quota_reservation_in_progress" if self.status == "pending" else "quota_hold_closed"
+
+    @property
+    def data(self) -> dict:
+        return {"error_code": self.code, "hold_id": self.hold_id, "status": self.status}

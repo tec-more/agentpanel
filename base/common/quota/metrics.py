@@ -38,6 +38,21 @@ concurrent_runs = _get_or_create(
     Gauge, "concurrent_runs", "Current concurrent runs", []
 )
 
+# 额度耗尽中断（网关数据面）：因余额/预算被拒绝、因估算触发截断
+gateway_quota_reject_total = _get_or_create(
+    Counter,
+    "gateway_quota_reject_total",
+    "Gateway quota rejections (balance/lease budget/concurrency)",
+    ["reason"],
+)
+
+gateway_quota_truncate_total = _get_or_create(
+    Counter,
+    "gateway_quota_truncate_total",
+    "Gateway stream truncations caused by estimated budget exhaustion",
+    ["reason"],
+)
+
 # 灰度监控（docs/ops/grayscale-monitoring-checklist.md）：
 # M-4 保底强制收尾触发（协作路径失效信号，出现即 P1 告警）
 force_finalize_total = _get_or_create(
@@ -66,6 +81,20 @@ def inc_settle_failure() -> None:
 def inc_quota_reject(item: str) -> None:
     try:
         quota_reject_total.labels(item=item).inc()
+    except Exception:
+        pass
+
+
+def inc_gateway_quota_reject(reason: str) -> None:
+    try:
+        gateway_quota_reject_total.labels(reason=reason).inc()
+    except Exception:
+        pass
+
+
+def inc_gateway_quota_truncate(reason: str) -> None:
+    try:
+        gateway_quota_truncate_total.labels(reason=reason).inc()
     except Exception:
         pass
 

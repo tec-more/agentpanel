@@ -5,6 +5,10 @@ from pydantic_settings import BaseSettings
 from typing import Any, List, Optional, Literal
 from pathlib import Path
 
+# P1：共享包为配置解析与模型的唯一来源（L2 仅保留 config.conf 读取入口）
+from packages.agentpanel_common.config import load_l2_config, read_env_value
+from packages.agentpanel_common.db import shared_model_modules
+
 
 def get_discovered_plugins() -> List[str]:
 	"""
@@ -99,32 +103,32 @@ def get_model_list() -> List[str]:
 	# 加载所有已发现插件的模型（不论安装/激活状态）
 	discovered_plugins = get_discovered_plugins()
 	for plugin_name in discovered_plugins:
+		# P1：harness 的 quota/reservation/凭据等模型已迁入共享包（唯一来源）
+		if plugin_name == "harness":
+			continue
 		models = get_plugin_models_from_manifest(plugin_name)
 		plugin_models.extend(models)
 
-	model_list = core_models + plugin_models + [
+	# 共享包模型（L2/L3 同一份类定义，注册路径唯一）
+	model_list = core_models + plugin_models + shared_model_modules() + [
 		"base.common.events.models.event_record",
 		"base.common.events.models.replay_audit_log",
-		# T1 新增公共层模型（Q1/Q2：base/common 非插件，显式注册，与插件启用态解耦 R-07）
-		"base.common.quota.models.quota",
-		# T4 套餐绑定关系（Q-D 映射，服务层维护）
-		"base.common.quota.models.binding",
-		# Harness P0：配额预占持久化（不依赖插件启用态）
-		"base.common.quota.models.reservation",
 		"base.common.authz.models.resource_grant",
 	] + ['aerich.models']
 	return model_list
 
-# 数据库配置
-db_host: str = config.config.get("db", "db_host", fallback="127.0.0.1")
-db_name: str = config.config.get("db", "db_name", fallback="aipaneladmin")
-db_user: str = config.config.get("db", "db_user", fallback="admin")
-db_password: str = config.config.get("db", "db_password", fallback="123456")
-db_port: int = config.config.getint("db", "db_port", fallback=15432)
-minsize: int = config.config.getint("db", "minsize", fallback=5)
-maxsize: int = config.config.getint("db", "maxsize", fallback=20)
-timeout: int = config.config.getint("db", "timeout", fallback=30)
-command_timeout: int = config.config.getint("db", "command_timeout", fallback=30)
+# 数据库配置（与 L3 共用 packages.agentpanel_common.config 的解析代码）
+# 环境变量优先（L2 容器化 / L3 env-only 均复用同一套字段名）；配置文件仅作默认值。
+_L2_CONFIG = load_l2_config()
+db_host: str = read_env_value("DB_HOST", "str", default=_L2_CONFIG.db_host)
+db_name: str = read_env_value("DB_NAME", "str", default=_L2_CONFIG.db_name)
+db_user: str = read_env_value("DB_USER", "str", default=_L2_CONFIG.db_user)
+db_password: str = read_env_value("DB_PASSWORD", "str", secret=True, default=_L2_CONFIG.db_password)
+db_port: int = read_env_value("DB_PORT", "int", default=_L2_CONFIG.db_port)
+minsize: int = read_env_value("DB_MINSIZE", "int", default=_L2_CONFIG.minsize)
+maxsize: int = read_env_value("DB_MAXSIZE", "int", default=_L2_CONFIG.maxsize)
+timeout: int = read_env_value("DB_TIMEOUT", "int", default=_L2_CONFIG.timeout)
+command_timeout: int = read_env_value("DB_COMMAND_TIMEOUT", "int", default=_L2_CONFIG.command_timeout)
 # 模块级别的TORTOISE_ORM配置，用于aerich命令
 TORTOISE_ORM: dict = {
 	"connections": {

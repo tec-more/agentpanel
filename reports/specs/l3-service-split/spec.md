@@ -913,5 +913,16 @@ L2 业务后端 :9998（宿主进程）
 - T4.11（D-P3-2=B 后的收口）：确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界。
 - T4.12（新增）：L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2），删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth`。
 - P5 前置复核：`services/l3-gateway` 不得出现 `from base` 导入（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型。
-- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步 `base/common/quota/services/plan_resolver.py`（L2 ORM）与 `services/l3-gateway/app/plan_resolver.py`（网关只读 SQL），并运行 `services/l3-gateway/tests/plan_parity.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补对拍 fixture 并在 §13.6 登记；提交说明注明“双解析器已对拍”。
+- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步共享包 `packages/agentpanel_common/quota/services/plan_resolver.py`（唯一实现，L2 与网关共用）；改动后必须运行黄金用例 `services/l3-gateway/tests/plan_golden.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补黄金 fixture 并在 §13.6 登记。
+
+## 14. P4 网关计费口径（`usage_record.cost`）
+
+- **计费输入** = 非缓存输入 + cache_read + cache_write（三者互不重叠，`tokens_in` 已扣除 cache_read）；output 单独计，reasoning 不重复计；单价按 `model_price.*_price_per_1k` 每 1K token。
+- **价格解析**：`ModelPriceService.resolve(provider, model)`，只取 `status=active` 且命中生效区间的行；provider 为空时按 model 最新价格版本。
+- **舍入**：`Decimal` 按 6 位小数 `ROUND_HALF_UP`（与 `usage_record.cost numeric(12,6)` 对齐）；不设最低计费下限。
+- **缺价**：`cost=0`、`currency=CNY`、`price_snapshot.missing_price=true`；请求正常返回，不因缺价失败。
+- **舍入归零**：原始金额 > 0 且 6 位舍入后为 0 时，`price_snapshot.rounded_to_zero=true`，并写入 `price_snapshot.unrounded_cost`（未舍入原值）。
+- **失败请求**（`status>=400` 或 `error`）：不查询价格，`amount=0`、`cost=0`，保持现状。
+- `price_snapshot` 同时保留网关元数据（`gateway_status/stream/attempt/usage_missing/estimated/truncated/over_budget`）。
+- **验证方式**：假 provider + 构造 usage（不调用真实 key），断言正常计价、缺价、舍入归零三条分支。
 

@@ -112,6 +112,7 @@
 | T4.10 | 重构 `base/plugins/__init__.py` 传递性加载与 `plugin_manager` 单例为显式注册（C4 最后一项，P2 阶段已确认编排侧不再触达） | L2 插件装配无 import 副作用；`plugin_manager` 无全局单例隐式创建；L2 启动与插件路由不变 |
 | T4.11 | 清理过渡层：确认 L2 无外部引用后删除 `base/common/quota/services/{quota_service,plan_service,plan_resolver}.py` 与 `metrics.py` 的 shim；保留路径至 P4 删除边界 | `grep "base.common.quota.services" --include=*.py` 仅剩 P4 计划内引用 |
 | T4.12 | 随 T4.2 删除 `base/common/gateway/*` shim；删除前确认 `gateway_lease_service` 仅引用 `issuance_config` 与共享 `lease_auth` | L2 无 `base.common.gateway` 运行引用 |
+| T4.13 | 网关 `usage_record` 成本计算落地（见 Spec §14）：6 位舍入、缺价记 0 + `missing_price`、归零标记 `rounded_to_zero` 并存未舍入值 | 假 provider 构造 usage 验证正常计价/缺价/归零三分支；三服务 healthy |
 
 > T4.10 来源：P2 阶段 3 遗留决策，用户确认延后至 P4 删边界时一并处理，本阶段不动代码。
 > T4.11/T4.12 来源：P3 决策 D-P3-2=B / D-P3-5=A 产生的过渡层收口。

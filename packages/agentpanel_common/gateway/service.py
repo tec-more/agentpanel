@@ -8,12 +8,14 @@
 """
 import json
 import uuid
+from decimal import Decimal
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from .logging import gateway_logger
 
 from .runtime import gateway_config
+from ..domain.pricing_service import ModelPriceService
 from ..models.quota import UsageRecord
 from ..upstream import EgressPolicy
 
@@ -141,6 +143,38 @@ async def record_gateway_usage(
     prompt = int(usage.get("prompt_tokens") or 0)
     completion = int(usage.get("completion_tokens") or 0)
     cache_read = int(usage.get("cache_read_tokens") or 0)
+    amount = float(total) if ok else 0
+    tokens_in = max(prompt - cache_read, 0)
+    cost = Decimal("0")
+    currency = "CNY"
+    pricing: Dict[str, Any] = {}
+    if ok and total > 0:
+        # 计费口径见 reports/specs/l3-service-split/spec.md §14：
+        # 输入（含缓存拆分）+ 输出按每 1K 计价，6 位四舍五入；缺价/归零只标记不改请求结果
+        try:
+            result = await ModelPriceService.estimate_cost(
+                provider or lease.provider,
+                model or lease.model,
+                input_tokens=tokens_in,
+                output_tokens=completion,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=0,
+                rounding_places=6,
+            )
+            cost = Decimal(str(result.get("cost") or 0))
+            currency = result.get("currency") or "CNY"
+            snap = result.get("price_snapshot")
+            if result.get("missing_price") or not snap:
+                pricing = {"missing_price": True}
+            else:
+                pricing = dict(snap)
+                if cost == 0:
+                    pricing["rounded_to_zero"] = True
+                    pricing["unrounded_cost"] = result.get("unrounded_cost")
+        except Exception as exc:
+            # 价格解析失败同样不得影响数据面响应：按缺价记账
+            gateway_logger.error(f"[gateway] 计费价格解析失败 lease={lease.lease_id}: {exc}")
+            pricing = {"missing_price": True}
     idem = f"gw:{lease.lease_id}:{uuid.uuid4().hex[:20]}"
     snapshot: Dict[str, Any] = {
         "gateway_status": status_code,
@@ -152,6 +186,7 @@ async def record_gateway_usage(
         "truncated": bool(truncated),
         "over_budget": bool(over_budget),
     }
+    snapshot.update(pricing)
     if truncated:
         snapshot["truncation_reason"] = truncation_reason or "estimated_budget_exceeded"
         snapshot["billing_status"] = "partial"
@@ -166,13 +201,14 @@ async def record_gateway_usage(
             node_id="gateway",
             seq=0,
             resource_type="llm_token" if ok else "gateway_error",
-            amount=float(total) if ok else 0,
-            tokens_in=max(prompt - cache_read, 0),
+            amount=amount,
+            tokens_in=tokens_in,
             tokens_out=completion,
             cache_read_tokens=cache_read,
             cache_write_tokens=0,
             reasoning_tokens=int(usage.get("reasoning_tokens") or 0),
-            cost=0,
+            cost=cost,
+            currency=currency,
             source="gateway",
             gateway_key=lease.lease_id,
             usage_kind=usage_kind if ok else "normal",

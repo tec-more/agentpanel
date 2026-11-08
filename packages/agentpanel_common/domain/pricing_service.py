@@ -19,8 +19,8 @@ def _d(value: Any) -> Decimal:
         return Decimal("0")
 
 
-def _money(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+def _money(value: Decimal, places: int = 8) -> Decimal:
+    return value.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
 
 
 class ModelPriceService:
@@ -54,6 +54,7 @@ class ModelPriceService:
         output_tokens: int = 0,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        rounding_places: int = 8,
     ) -> Dict[str, Any]:
         price = await cls.resolve(provider, model)
         if price is None:
@@ -62,6 +63,7 @@ class ModelPriceService:
                 "currency": "CNY",
                 "price_snapshot": None,
                 "missing_price": True,
+                "unrounded_cost": "0",
             }
 
         in_price = _d(price.input_price_per_1k)
@@ -70,16 +72,17 @@ class ModelPriceService:
         cache_write_price = _d(price.cache_write_price_per_1k) or in_price
 
         billed_input = int(input_tokens or 0) + int(cache_read_tokens or 0) + int(cache_write_tokens or 0)
-        cost = (
+        unrounded = (
             _d(billed_input) * in_price
             + _d(cache_read_tokens) * (cache_read_price - in_price)
             + _d(cache_write_tokens) * (cache_write_price - in_price)
             + _d(output_tokens) * out_price
         ) / Decimal("1000")
-        cost = _money(cost)
+        cost = _money(unrounded, rounding_places)
 
         return {
             "cost": float(cost),
+            "unrounded_cost": format(unrounded, "f"),
             "currency": price.currency,
             "price_snapshot": {
                 "provider": price.provider,

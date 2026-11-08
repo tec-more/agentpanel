@@ -131,9 +131,9 @@ class GatewayConfigError(RuntimeError):
 
 def _l2_harness_config() -> Dict[str, Any]:
     """仅 L2 使用：读插件 manifest（延迟导入 plugin_manager，避免 L3 依赖）。"""
-    from base.common.plugin_manager import plugin_manager
+    from base.common.plugin_manager import get_plugin_manager
 
-    manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
+    manifest = get_plugin_manager().get_manifest(PLUGIN_NAME) or {}
     return manifest.get("config") or {}
 
 

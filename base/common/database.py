@@ -172,7 +172,7 @@ async def _run_sql_migrations() -> None:
     不符合规范的旧文件会尝试从文件名推断插件归属（兼容旧文件）。
     """
     import asyncpg
-    from base.common.plugin_manager import plugin_manager
+    from base.common.plugin_manager import get_plugin_manager
 
     migrations_dir = Path(__file__).resolve().parent.parent.parent / "migrations"
     if not migrations_dir.exists():
@@ -182,7 +182,7 @@ async def _run_sql_migrations() -> None:
     def _plugin_enabled(plugin_name: str | None) -> bool:
         if plugin_name is None:
             return True
-        plugin = plugin_manager.get_plugin(plugin_name) if plugin_manager else None
+        plugin = get_plugin_manager().get_plugin(plugin_name)
         if plugin is not None:
             return bool(getattr(plugin, "is_enabled", False))
         manifest = Path(__file__).resolve().parent.parent.parent / "base" / "plugins" / plugin_name / "manifest.json"

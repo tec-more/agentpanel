@@ -863,5 +863,23 @@ class PluginManager:
                 await plugin.on_shutdown()
 
 
-# 全局插件管理器实例
-plugin_manager = PluginManager()
+# 显式注册：进程启动时由 base.start 调用 init_plugin_manager() 创建实例，
+# 其他模块通过 get_plugin_manager() 获取；导入本模块不再产生隐式单例。
+_plugin_manager: Optional[PluginManager] = None
+
+
+def init_plugin_manager() -> PluginManager:
+    """创建（或返回已创建的）插件管理器实例（幂等）。"""
+    global _plugin_manager
+    if _plugin_manager is None:
+        _plugin_manager = PluginManager()
+    return _plugin_manager
+
+
+def get_plugin_manager() -> PluginManager:
+    """获取已初始化的插件管理器；未初始化时 fail-fast。"""
+    if _plugin_manager is None:
+        raise RuntimeError(
+            "插件管理器未初始化：进程启动需先调用 init_plugin_manager()"
+        )
+    return _plugin_manager

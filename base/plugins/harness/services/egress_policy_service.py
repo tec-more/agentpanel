@@ -26,7 +26,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from base.plugins.harness.services.gateway_config import issuance_config, upstream_allowlist
-from base.common.plugin_manager import plugin_manager
+from base.common.plugin_manager import get_plugin_manager
 from base.plugins.harness.models.harness import HarnessAuditEvent
 from base.plugins.harness.services.audit_service import HarnessAuditService
 
@@ -110,7 +110,7 @@ def _as_bool(value: Any) -> bool:
 
 def egress_config() -> Dict[str, Any]:
     """读取 manifest.config.egress，非法配置直接抛错（fail-closed）。"""
-    manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
+    manifest = get_plugin_manager().get_manifest(PLUGIN_NAME) or {}
     raw = (manifest.get("config") or {}).get("egress") or {}
     if not isinstance(raw, dict):
         raise EgressPolicyConfigError("config.egress 必须为对象")

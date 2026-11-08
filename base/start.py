@@ -12,7 +12,7 @@ from base.common.exceptions import register_exceptions
 from base.common.router import register_routers
 from base.common.json_encoder import DateTimeEncoder
 from base.common.logging_config import register_exceptions_with_logging
-from base.plugins import plugin_manager
+from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
 
 # 网关共享运行时显式装配（P4 B：原 base/common/gateway 兼容层已删除）：
@@ -23,6 +23,9 @@ import base.common.quota.services.plan_service  # noqa: F401,E402
 from base.plugins.harness.services.gateway_config import configure_shared_runtime  # noqa: E402
 
 configure_shared_runtime()
+
+# 插件管理器显式注册（T4.10）：不再依赖 base.common.plugin_manager 的导入副作用。
+init_plugin_manager()
 
 # 配置日志 - 使用 Loguru 进行完整的日志配置
 from base.common.log import setup_logging
@@ -127,13 +130,14 @@ async def lifespan(app: FastAPI):
         # 审计事件处理器已在 init_app 中注册
 
         # 初始化插件系统
-        plugin_manager.set_app(app)
-        await plugin_manager.load_enabled_plugins()
-        await plugin_manager.startup()
+        manager = get_plugin_manager()
+        manager.set_app(app)
+        await manager.load_enabled_plugins()
+        await manager.startup()
         print("插件系统初始化完成")
 
         # 启动订单过期检查定时任务（仅当 sales 插件启用时）
-        if plugin_manager.get_plugin("sales"):
+        if manager.get_plugin("sales"):
             task1 = asyncio.create_task(cancel_expired_orders_task())
             background_tasks.append(task1)
             print("订单过期检查定时任务已启动")
@@ -141,7 +145,7 @@ async def lifespan(app: FastAPI):
             print("订单过期检查定时任务跳过（sales 插件未启用）")
 
         # 启动会员数据更新定时任务（仅当 customer 和 llm 插件启用时）
-        if plugin_manager.get_plugin("customer") and plugin_manager.get_plugin("llm"):
+        if manager.get_plugin("customer") and manager.get_plugin("llm"):
             task2 = asyncio.create_task(update_membership_data_task())
             background_tasks.append(task2)
             print("会员数据更新定时任务已启动（每10分钟）")
@@ -162,7 +166,7 @@ async def lifespan(app: FastAPI):
         try:
             from base.plugins.harness.services.gateway_config import gateway_enabled, reconciliation_config
             if (
-                plugin_manager.get_plugin("harness")
+                manager.get_plugin("harness")
                 and gateway_enabled()
                 and reconciliation_config().get("enabled")
             ):
@@ -178,7 +182,7 @@ async def lifespan(app: FastAPI):
             print(f"网关对账定时任务启动失败: {e}")
 
         # 启动审计数据变更日志清理定时任务（仅当 audit 插件启用时；每日一次）
-        if plugin_manager.get_plugin("audit"):
+        if manager.get_plugin("audit"):
             task_a1 = asyncio.create_task(audit_cleanup_task())
             background_tasks.append(task_a1)
             print(
@@ -234,7 +238,7 @@ async def lifespan(app: FastAPI):
         # 2. 关闭插件系统
         print("正在关闭插件系统...")
         try:
-            await plugin_manager.shutdown()
+            await get_plugin_manager().shutdown()
         except Exception as e:
             print(f"关闭插件系统时出错: {e}")
 
@@ -666,8 +670,8 @@ def init_app() -> FastAPI:
     # Harness 内部接口：L3 编排上报客户端活跃时间（harness_client 只由 L2 写）。
     # 不放在 api/v1，避免被插件路由前缀 /v1/harness 包裹；仅在插件启用时挂载。
     try:
-        from base.common.plugin_manager import plugin_manager
-        harness_manifest = plugin_manager.get_manifest("harness") or {}
+        from base.common.plugin_manager import get_plugin_manager
+        harness_manifest = get_plugin_manager().get_manifest("harness") or {}
         if harness_manifest.get("is_installed") and harness_manifest.get("is_enabled"):
             from base.plugins.harness.api.l2_internal.quota_router import l2_quota_router
             from base.plugins.harness.api.l2_internal.touch_router import l2_touch_router

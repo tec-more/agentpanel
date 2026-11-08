@@ -9,7 +9,7 @@ Harness 模型凭据解析服务（L2 兼容层）
 from typing import Any, Dict, List, Optional
 
 from base.common.masking import fingerprint, mask_secret
-from base.common.plugin_manager import plugin_manager
+from base.common.plugin_manager import get_plugin_manager
 from base.plugins.llm.models.api_key import LLMApiKey
 from packages.agentpanel_common.domain import credential_resolver as _shared
 from packages.agentpanel_common.domain.credential_resolver import (  # noqa: F401（对外契约）
@@ -24,7 +24,7 @@ _l2_configured = False
 
 
 def _harness_config() -> Dict[str, Any]:
-    manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
+    manifest = get_plugin_manager().get_manifest(PLUGIN_NAME) or {}
     config = manifest.get("config") or {}
     return config if isinstance(config, dict) else {}
 

@@ -107,12 +107,13 @@ async def sync_audit_menu(current_user_id: int = Depends(get_current_user_id)):
         return ErrorResponse(msg="无权限执行此操作", status_code=status.HTTP_403_FORBIDDEN)
 
     try:
-        from base.common.plugin_manager import plugin_manager
-        manifest = plugin_manager.get_manifest("audit")
+        from base.common.plugin_manager import get_plugin_manager
+        manager = get_plugin_manager()
+        manifest = manager.get_manifest("audit")
         if not manifest:
             return ErrorResponse(msg="审计插件manifest不存在", status_code=status.HTTP_404_NOT_FOUND)
 
-        result = await plugin_manager._process_plugin_menus("audit", manifest)
+        result = await manager._process_plugin_menus("audit", manifest)
         if result:
             return SuccessResponse(msg="审计模块菜单同步成功")
         else:

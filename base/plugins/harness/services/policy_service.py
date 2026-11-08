@@ -11,14 +11,14 @@ PLUGIN_NAME = "harness"
 
 def configure_l2() -> None:
     """显式注入 manifest 审批配置与审批插件可用性（由 harness on_startup 调用）。"""
-    from base.common.plugin_manager import plugin_manager
+    from base.common.plugin_manager import get_plugin_manager
 
     def _approval_config():
-        manifest = plugin_manager.get_manifest(PLUGIN_NAME) or {}
+        manifest = get_plugin_manager().get_manifest(PLUGIN_NAME) or {}
         return (manifest.get("config") or {}).get("approval") or {}
 
     def _approval_channel() -> bool:
-        manifest = plugin_manager.get_manifest("approval") or {}
+        manifest = get_plugin_manager().get_manifest("approval") or {}
         return bool(manifest.get("is_installed") and manifest.get("is_enabled"))
 
     configure_approval(config_provider=_approval_config, channel_provider=_approval_channel)

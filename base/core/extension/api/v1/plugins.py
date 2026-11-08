@@ -14,7 +14,7 @@ from base.core.extension.schemas.plugin import PluginSettingsUpdate, PluginUpdat
 from base.common.security import get_current_user_id, verify_password
 from base.common.response import SuccessResponse, ErrorResponse
 from base.core.users.services.user_service import UserService
-from base.plugins import plugin_manager
+from base.plugins import get_plugin_manager
 
 router = APIRouter(prefix="/v1/plugins", tags=["插件管理"])
 
@@ -63,7 +63,7 @@ async def discover_plugins(
         return ErrorResponse(msg="无权限执行此操作", status_code=status.HTTP_403_FORBIDDEN)
 
     # 使用 discover_plugins_info 直接从 manifest.json 读取信息，避免加载插件模块
-    discovered = plugin_manager.discover_plugins_info()
+    discovered = get_plugin_manager().discover_plugins_info()
     result = []
 
     for info in discovered:
@@ -90,7 +90,7 @@ async def sync_plugins(
         return ErrorResponse(msg="无权限执行此操作", status_code=status.HTTP_403_FORBIDDEN)
 
     # 使用 discover_plugins_info 直接从 manifest.json 读取信息，避免加载插件模块
-    discovered = plugin_manager.discover_plugins_info()
+    discovered = get_plugin_manager().discover_plugins_info()
     synced = []
 
     for info in discovered:
@@ -140,7 +140,7 @@ async def enable_plugin(
         return ErrorResponse(msg="插件不存在", status_code=status.HTTP_404_NOT_FOUND)
 
     # 调用插件管理器启用插件
-    success = await plugin_manager.enable_plugin(plugin.name)
+    success = await get_plugin_manager().enable_plugin(plugin.name)
     if not success:
         return ErrorResponse(msg="启用插件失败", status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -164,7 +164,7 @@ async def disable_plugin(
         return ErrorResponse(msg="插件不存在", status_code=status.HTTP_404_NOT_FOUND)
 
     # 调用插件管理器禁用插件
-    success = await plugin_manager.disable_plugin(plugin.name)
+    success = await get_plugin_manager().disable_plugin(plugin.name)
     if not success:
         return ErrorResponse(msg="禁用插件失败", status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -191,12 +191,12 @@ async def install_plugin(
         return ErrorResponse(msg="插件已安装，无需重复安装", status_code=status.HTTP_400_BAD_REQUEST)
 
     # 校验插件文件（manifest.json）是否存在
-    manifest = plugin_manager.get_manifest(plugin.name)
+    manifest = get_plugin_manager().get_manifest(plugin.name)
     if not manifest:
         return ErrorResponse(msg="插件文件缺失，请重新上传插件包", status_code=status.HTTP_400_BAD_REQUEST)
 
     # 写入 manifest 安装状态（安装后默认不启用，需用户手动启用）
-    plugin_manager.update_plugin_status(plugin.name, is_installed=True, is_enabled=False)
+    get_plugin_manager().update_plugin_status(plugin.name, is_installed=True, is_enabled=False)
 
     # 更新数据库记录
     plugin = await PluginService.set_install_status(plugin_id, True)
@@ -233,12 +233,12 @@ async def uninstall_plugin(
     # 4. 若插件处于启用状态，先禁用（卸载路由、菜单等）
     if plugin.is_enabled:
         try:
-            await plugin_manager.disable_plugin(plugin.name)
+            await get_plugin_manager().disable_plugin(plugin.name)
         except Exception:
             pass  # 禁用失败不阻断卸载流程
 
     # 5. 写入 manifest：未安装 + 未启用（保留插件文件，便于再次安装）
-    plugin_manager.update_plugin_status(plugin.name, is_installed=False, is_enabled=False)
+    get_plugin_manager().update_plugin_status(plugin.name, is_installed=False, is_enabled=False)
 
     # 6. 更新数据库记录
     plugin = await PluginService.set_install_status(plugin_id, False)
@@ -267,12 +267,12 @@ async def upload_plugin(
             f.write(content)
 
         # 安装插件
-        plugin_name = await plugin_manager.install_plugin(str(temp_file))
+        plugin_name = await get_plugin_manager().install_plugin(str(temp_file))
         if not plugin_name:
             return ErrorResponse(msg="安装插件失败", status_code=status.HTTP_400_BAD_REQUEST)
 
         # 从 manifest.json 读取插件信息同步到数据库，不加载模块
-        manifest = plugin_manager.get_manifest(plugin_name)
+        manifest = get_plugin_manager().get_manifest(plugin_name)
         if manifest:
             db_plugin = await PluginService.sync_plugin(
                 name=manifest.get("name", plugin_name),
@@ -309,12 +309,12 @@ async def get_plugin_settings(
 
     # 优先从已加载的插件实例获取 schema，否则从 manifest.json 读取
     schema = None
-    plugin_instance = plugin_manager.get_plugin(plugin.name)
+    plugin_instance = get_plugin_manager().get_plugin(plugin.name)
     if plugin_instance and hasattr(plugin_instance, 'get_settings_schema'):
         schema = plugin_instance.get_settings_schema()
     else:
         # 从 manifest.json 读取 settings_schema
-        manifest = plugin_manager.get_manifest(plugin.name)
+        manifest = get_plugin_manager().get_manifest(plugin.name)
         if manifest:
             schema = manifest.get("settings_schema")
 
@@ -339,7 +339,7 @@ async def update_plugin_settings(
         return ErrorResponse(msg="插件不存在", status_code=status.HTTP_404_NOT_FOUND)
 
     # 如果插件已加载，通知插件实例更新设置
-    plugin_instance = plugin_manager.get_plugin(plugin.name)
+    plugin_instance = get_plugin_manager().get_plugin(plugin.name)
     if plugin_instance and hasattr(plugin_instance.module, 'on_settings_update'):
         try:
             await plugin_instance.module.on_settings_update(settings_data.settings)

@@ -214,6 +214,21 @@ def gateway_upstream_config() -> UpstreamConfig:
     )
 
 
+def configure_shared_runtime() -> None:
+    """把 L2 的网关配置注入共享网关模块（P3 T3.7）。
+
+    共享模块（router/service/budget/lease_auth）不再 import `base.common.gateway.config`，
+    由 L2 各兼容层 shim 在导入时调用本函数一次。
+    """
+    from packages.agentpanel_common.gateway import runtime as _runtime
+
+    _runtime.configure(
+        config_provider=gateway_config,
+        upstream_provider=gateway_upstream_config,
+        lease_ttl_provider=lambda cfg=None: lease_cache_ttl_seconds(cfg or gateway_config()),
+    )
+
+
 def reconciliation_config() -> Dict[str, Any]:
     """合并对账默认配置并做轻量校验；非法项回退默认值（不阻断启动）。L2 使用。"""
     raw = issuance_config().get("reconciliation")

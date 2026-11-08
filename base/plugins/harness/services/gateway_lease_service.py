@@ -331,39 +331,15 @@ class GatewayLeaseService:
         event_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """吊销单个租约并写审计；幂等，且只影响目标 lease，不波及同租户其他租约。"""
-        from base.common.gateway.audit import record_gateway_quota_event
-        from base.common.gateway.constants import GATEWAY_EVENT_SOURCE
+        from packages.agentpanel_common.gateway.lease_revoke import revoke_lease_internal
 
-        lease = await HarnessGatewayLease.get_or_none(lease_id=lease_id)
-        if lease is None:
-            raise HTTPException(status_code=404, detail="租约不存在")
-        changed = False
-        if lease.status == "active":
-            lease.status = "revoked"
-            lease.revoked_at = _now()
-            await lease.save(update_fields=["status", "revoked_at", "updated_at"])
-            changed = True
-        # 吊销写穿缓存：下一次数据面请求立即读到 revoked，不等缓存 TTL
-        await invalidate_lease_cache(lease_id)
-        await record_gateway_quota_event(
-            action="gateway.lease_revoked",
-            lease_id=lease_id,
+        return await revoke_lease_internal(
+            lease_id,
             reason=reason,
-            detail={
-                "changed": changed,
-                "actor_type": actor_type,
-                "actor_id": actor_id,
-                "event_source": event_source or GATEWAY_EVENT_SOURCE,
-            },
-            risk_level="high",
-            decision="deny",
-            client_id=lease.client_id,
-            session_no=lease.session_no,
-            run_no=lease.run_no,
             actor_type=actor_type,
-            actor_id=actor_id or "gateway-budget",
+            actor_id=actor_id,
+            event_source=event_source,
         )
-        return {"lease_id": lease.lease_id, "status": lease.status, "changed": changed}
 
     @classmethod
     async def list_leases(cls, client_id: str, active_only: bool = True) -> list:

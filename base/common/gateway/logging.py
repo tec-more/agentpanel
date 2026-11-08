@@ -1,6 +1,7 @@
-"""网关日志：独立 sink（component=gateway），不与业务请求日志混写。"""
-from loguru import logger
+"""兼容层：网关日志已迁至 `packages.agentpanel_common.gateway.logging`（P3 T3.2）。"""
+from base.common.gateway.config import configure_shared_runtime
 
-from base.common.gateway.constants import GATEWAY_LOG_COMPONENT
+configure_shared_runtime()
 
-gateway_logger = logger.bind(component=GATEWAY_LOG_COMPONENT)
+from packages.agentpanel_common.gateway.logging import *  # noqa: E402,F401,F403
+from packages.agentpanel_common.gateway.logging import gateway_logger  # noqa: E402,F401

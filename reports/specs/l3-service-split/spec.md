@@ -242,6 +242,8 @@ agentpanel/
 | `harness_approval_request` / `harness_approval_grant` | 读写 | — | 审批创建/查询 |
 | `harness_action_policy` / `harness_policy_rule` | 只读 | — | 策略评估 |
 | `harness_client` / `harness_identity` | 只读 | 只读 | 客户端鉴权/身份映射 |
+| `user` | 只读（限列） | — | 审批人解析：只允许 `id` / `username` / `is_superuser` / `is_active` 四列，且 `is_active=true`；不注册 ORM 模型，走只读 SQL |
+| `customer_organization` / `customer_organization_member` | 只读 | — | 组织级配额成员校验（组织 owner/member 归属判断） |
 | `harness_gateway_lease` | — | 读写 | 状态、用量、最后使用时间 |
 | `harness_gateway_budget` / `harness_gateway_concurrency` | — | 读写 | 预算/并发记账 |
 | `usage_record` | 只读 | 写 | 网关记账；编排写经 L2 QuotaService |

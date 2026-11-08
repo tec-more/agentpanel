@@ -74,19 +74,25 @@
 
 ## P3 L3 网关独立工程（`services/l3-gateway`）
 
+> 实施规格：`spec.md` §13（含依赖取舍 G1–G10、决策 D-P3-1..5、验证矩阵 V1–V13、对拍 P1–P14、回滚步骤）。
+> **决策结果（用户已确认）**：D-P3-1=A 共享 Redis client / D-P3-2=B 配额域迁共享+双解析器对拍 / D-P3-3=A llm 模型迁共享 / D-P3-4=A 租约校验与吊销共享化 / D-P3-5=A L2 网关 12 模块全部 shim。
+
 | ID | 任务 | 验收 |
 |---|---|---|
-| T3.1 | 建工程骨架：`app/main.py`、lifespan（Tortoise + Redis 预热）、uvicorn 入口 | 本地 `.venv` 可启动 9999 |
-| T3.2 | 迁 `gateway/app.py`、`router.py`、`auth.py`、`lease_auth.py`、`service.py` | 租约校验/转发/记账行为不变 |
-| T3.3 | 迁 `budget.py`、`audit.py`、`logging.py` | 预算/并发/额度耗尽/审计来源 `gateway` 不变 |
-| T3.4 | 重写 `gateway/config.py`：env 配置 + 原 fail-closed 规则；删除 embedded/runtime 分支 | 非法配置启动失败单测 |
-| T3.5 | 凭据解析改共享 `credential_resolver`（无 L2 运行时依赖） | 停 L2 后网关仍可转发（mock provider） |
-| T3.6 | 新增/补齐 `/health/health`（DB/Redis 子项），保留 `/health` | 两项探针真实反映依赖 |
-| T3.7 | 移除网关对 `plugin_manager`、manifest、`base.common.gateway` 旧路径的依赖 | `grep plugin_manager services/l3-gateway` 为空 |
-| T3.8 | 单测：租约签发→调用、吊销、RPM/并发、预算耗尽、上游重试 | 全部通过 |
-| T3.9 | 本地联调：租约→网关→mock upstream + 记账 | `usage_record` 唯一、`gw:lease:state` 存在 |
+| ✅ T3.1 | 建工程骨架：`run.py`、`app/{config,http,health,logging,constants,app,main}.py`，lifespan（Redis configure + Tortoise + 预热） | `GW_PORT=9990` 可启动；`/health`、`/health/health` 正常；旧 9999 不受影响 |
+| ✅ T3.2 | 迁 `gateway/{router,auth,audit,service,app}.py` 到 `app/`，import 改共享包 | 租约校验/转发/记账行为不变 |
+| ✅ T3.3 | 迁 `gateway/{budget,lease_auth,constants}.py`；`budget` 改共享模型/cache/配额域；`lease_auth` 薄封装共享 `domain/lease_auth.py` | 预算/并发/额度耗尽/自动吊销/审计来源 `gateway` 不变 |
+| ✅ T3.4 | 重写 `app/config.py`：数据面 `DEFAULTS` + `GW_*` 覆盖 + 原 fail-closed 规则；删除 issuance/runtime/embedded 分支 | V2 负向全部退出码 2 |
+| ✅ T3.5 | 抽共享 `domain/credential_resolver.py`；llm 模型迁共享包；L2 `model_credential_service` 改 shim + `configure_l2()` | 网关不 import `base.plugins.harness`；停 L2 仍可转发（假 provider） |
+| ✅ T3.6 | 抽共享 `cache.py`（`RedisCache` + 显式 `configure`），`base/common/cache.py` 改 shim | L2 行为不变；网关不读 `config.conf` |
+| ✅ T3.7 | 抽共享 `domain/lease_auth.py` 与 `domain/lease_revoke.py`；L2 `lease_auth` shim、`gateway_lease_service.revoke_internal` 委托 | L2 签发/吊销路径引用不变；网关去 `base.plugins.harness.services` |
+| ✅ T3.8 | `grep plugin_manager|manifest 旧路径|base.common.gateway` in `services/l3-gateway` | 为空 |
+| ✅ T3.9 | 单测/脚本按 V3–V11：鉴权、白名单、剥离、SSE 逐字节、usage 唯一、预算/并发、Redis 缓存、DB 兜底、审计 | 全部通过，且只用本地假 provider |
+| ✅ T3.10 | 等价对照 V12：同一租约/请求分别打 9990（新）与 9999（旧） | 状态码/响应体/记账字段一致 |
+| ✅ T3.11 | 切换 9999：停旧进程 → 启新入口；报告阶段 1/2/3 | `/health` 正常；`gw:lease:state` 生成；回滚命令可用 |
+| ✅ T3.12 | 清理与回滚说明；P4/P5 待办登记（T4.11 等） | 报告含可执行回滚动作；临时假 provider/脚本清理 |
 
-**阶段出口**：9999 可独立启动；L2 仍保留 embedded 网关代码（用于回滚）。
+**阶段出口**：9999 可独立启动（新入口）；L2 仍保留 embedded 网关代码（用于回滚）；任一验证失败可按 §13.6 在分钟级回滚。
 
 ---
 
@@ -104,8 +110,11 @@
 | T4.8 | 删除 L3 专用依赖（aerich 保留给 L2；L3 相关包不进 L2 依赖锁定） | 依赖清单无冗余 |
 | T4.9 | 回归：L2 单独启动、三进程（新 L3）联调、G1 | 全绿 |
 | T4.10 | 重构 `base/plugins/__init__.py` 传递性加载与 `plugin_manager` 单例为显式注册（C4 最后一项，P2 阶段已确认编排侧不再触达） | L2 插件装配无 import 副作用；`plugin_manager` 无全局单例隐式创建；L2 启动与插件路由不变 |
+| T4.11 | 清理过渡层：确认 L2 无外部引用后删除 `base/common/quota/services/{quota_service,plan_service,plan_resolver}.py` 与 `metrics.py` 的 shim；保留路径至 P4 删除边界 | `grep "base.common.quota.services" --include=*.py` 仅剩 P4 计划内引用 |
+| T4.12 | 随 T4.2 删除 `base/common/gateway/*` shim；删除前确认 `gateway_lease_service` 仅引用 `issuance_config` 与共享 `lease_auth` | L2 无 `base.common.gateway` 运行引用 |
 
 > T4.10 来源：P2 阶段 3 遗留决策，用户确认延后至 P4 删边界时一并处理，本阶段不动代码。
+> T4.11/T4.12 来源：P3 决策 D-P3-2=B / D-P3-5=A 产生的过渡层收口。
 
 **阶段出口**：业务仓库不含 L3 运行代码；L2 仍可独立运行；回滚 tag 可用。
 

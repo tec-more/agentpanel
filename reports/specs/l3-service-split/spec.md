@@ -242,19 +242,29 @@ agentpanel/
 | `harness_approval_request` / `harness_approval_grant` | 读写 | — | 审批创建/查询 |
 | `harness_action_policy` / `harness_policy_rule` | 只读 | — | 策略评估 |
 | `harness_client` / `harness_identity` | 只读 | 只读 | 客户端鉴权/身份映射 |
-| `user` | 只读（限列） | — | 审批人解析：只允许 `id` / `username` / `is_superuser` / `is_active` 四列，且 `is_active=true`；不注册 ORM 模型，走只读 SQL |
+| `user` | 只读（限列） | 只读（限列） | 编排：审批人解析，仅 `id` / `username` / `is_superuser` / `is_active` 且 `is_active=true`；网关：套餐角色解析，仅 `id`。均不注册 ORM 模型，走只读 SQL |
+| `user_role` | — | 只读（限列） | 网关套餐解析（P3 增补）：仅 `user_id` / `role_id`；只读 SQL |
+| `role` | — | 只读（限列） | 网关套餐解析（P3 增补）：仅 `id` / `code` / `is_active`，只取 `is_active=true`；只读 SQL |
+| `customer_membership` / `customer_membership_level` | — | 只读（限列） | 网关套餐解析（P3 增补）：`customer_membership` 仅 `customer_id` / `membership_level_id` / `expire_time` / `is_active`；`customer_membership_level` 仅 `id` / `level_type`；只取 `is_active=true`，`expire_time` 按 UTC 判过期 |
 | `customer_organization` / `customer_organization_member` | 只读 | — | 组织级配额成员校验（组织 owner/member 归属判断） |
 | `harness_gateway_lease` | — | 读写 | 状态、用量、最后使用时间 |
 | `harness_gateway_budget` / `harness_gateway_concurrency` | — | 读写 | 预算/并发记账 |
 | `usage_record` | 只读 | 写 | 网关记账；编排写经 L2 QuotaService |
-| `quota_account` / `quota_plan` / `quota_plan_binding` | 只读 | 只读 | 限额读取 |
+| `quota_account` / `quota_plan` / `quota_plan_binding` | 只读 | 只读 + 既有 DB 兜底写 | 限额读取；网关在 Redis 不可用时沿用原 `QuotaService` DB 兜底（`ensure_account`、`quota_account.used` 回写），见 §3.2“Redis/DB 计数不动” |
 | `quota_reservation` | **不直接写** | 只读 | 预占/结算只经 L2 内部额度 API |
 | `model_price` | 只读 | 只读 | 成本计算 |
 | `service_credential` | 只读 | 只读 | HMAC 验签 |
 | 模型凭据/供应商配置表 | 只读 | 只读 | 共享 `credential_resolver` 解密 |
 | `harness_reconcile_batch` / `harness_reconcile_diff` | — | — | 对账留 L2 |
 
-**禁止**：L3 写 `user`/`role`/`permission`/`customer`/`quota_plan*`；禁止 L3 连接管理员账号，编排用只读账号，网关只对上述白名单表使用专用最小权限账号（或同一只读账号 + 受控写连接）。
+**禁止**：L3 写 `user`/`user_role`/`role`/`permission`/`customer`/`customer_membership`/`customer_membership_level`/`quota_plan*`；禁止 L3 连接管理员账号，编排用只读账号，网关只对上述白名单表使用专用最小权限账号（或同一只读账号 + 受控写连接）。
+
+**§4.2 白名单增补理由（P3 决策 D-P3-2=B）**：
+
+1. `PlanService` 迁入共享包后，网关进程不再能懒加载 L2 插件模型，`cus/usr` 套餐解析改由网关注入“只读 SQL 解析器”，因此新增 `user_role`、`role`、`customer_membership`、`customer_membership_level` 四张表的限列只读；
+2. 列清单按 ORM 实际查询逐列收敛：`user_role(user_id,role_id)`、`role(id,code,is_active)`、`customer_membership(customer_id,membership_level_id,expire_time,is_active)`、`customer_membership_level(id,level_type)`；不读这些表的其它列；
+3. 过滤条件与 ORM 逐条对齐：仅 `is_active=true` 的角色/会员记录参与解析，`expire_time` 按 UTC 与当前时间比较（naive 视为 UTC）；`user` 自身是否停用不参与角色解析（与原 ORM 行为一致）；
+4. **等价性由对拍保证**：同一批 fixture 下 L2 ORM 解析器与网关只读 SQL 解析器逐字段比对，任一分支不等价即停止实施并上报，不接受“近似等价”；对拍范围见 §13.6。
 
 ---
 
@@ -742,4 +752,166 @@ L2 业务后端 :9998（宿主进程）
 
 - 代码：§12.2/§12.3/§12.4/§12.5 全部文件；
 - 报告：`reports/ops/l3-split-p1-report.md`（搬走了什么/留下什么/import 变更面/三入口 health 证据/耦合点 C1–C4/回滚方式）。
+
+---
+
+## 13. P3 实施规格（L3 网关独立工程 `services/l3-gateway`）
+
+> 状态：**已确认（2026-11-08，用户选择 `1B 2A 3A 4A`）**。本节把 P3 的依赖取舍、文件清单、验证与回滚写到可执行粒度；
+> 原则与 P2 同构：搬代码、共享单一来源、L2 全部留 shim、独立入口、配置契约独立；迁移期 L2 / L3 编排 / 网关三者并行可用。
+
+### 13.1 网关对 `base.*` 的现存依赖（只读核实结论）
+
+| # | 网关位置 | 依赖 | 能否干净剥离 | P3 处理 |
+|---|---|---|---|---|
+| G1 | `service.py` | `base.plugins.harness.services.model_credential_service` → `base.plugins.llm.models.*` + `plugin_manager` | 可（C1） | 抽共享 `credential_resolver`；llm 模型迁共享包，L2 留 shim |
+| G2 | `audit.py` | `base.plugins.harness.services.audit_service` | 可 | 直接用共享 `domain/audit_service.py`（已是单一来源） |
+| G3 | `budget.py` | `base.plugins.harness.models.harness`（Budget/Concurrency/Lease） | 可 | 改共享 `models/harness.py`（L2 已是 shim） |
+| G4 | `budget.py` / `lease_auth.py` / `server.py` | `base.common.cache.RedisCache`（**读 `config.conf`**，经 `base.common.setting`） | 可 | `RedisCache` 迁共享 `cache.py`，显式 `configure(RedisConfig)`；L2 shim 复原 settings |
+| G5 | `budget.py` | `base.common.quota.services.{quota_service,plan_service}`（Redis 预占 / DB 兜底 / 套餐解析） | **否（存在结构性冲突）** | 见 D-P3-2 |
+| G6 | `budget.py` | `base.common.quota.metrics`（Prometheus 计数） | 可 | 随 D-P3-2：A 保留；B 迁共享 |
+| G7 | `budget.py::maybe_auto_revoke` | `base.plugins.harness.services.gateway_lease_service.revoke_internal` | 可 | 吊销核心迁共享 `domain/lease_revoke.py`；L2 委托 |
+| G8 | `lease_auth.py` | `base.common.gateway.config.{gateway_config,lease_cache_ttl_seconds}` | 可 | 共享 `domain/lease_auth.py` 改为注入 config provider；L2 shim 注入 `issuance_config` |
+| G9 | `service.py` / `router.py` / `budget.py` | `base.common.upstream` | 已是 shim | 直接改共享 `packages.agentpanel_common.upstream` |
+| G10 | `auth.py` / `budget.py` | `base.common.gateway.constants` | 已是 shim | 直接改共享 `packages.agentpanel_common.gateway.constants` |
+
+### 13.2 决策结果（用户已确认 `1B 2A 3A 4A`）
+
+| ID | 确认结果 | 约束 / 验收 |
+|---|---|---|
+| D-P3-1 | **A**：`RedisCache` 迁共享 `cache.py`（显式 `configure(RedisConfig)`），`base/common/cache.py` 改 shim | 网关不读 `config.conf`；D2 硬超时/熔断语义不变；L2 行为由 shim 复原 |
+| D-P3-2 | **B**：`quota_service.py` + `plan_service.py` + `metrics.py`（含 `prometheus.py`）迁共享包，L2 留 shim；`plan_service` 的 `cus/usr` 解析改为**注入解析器**（L2 注入 ORM 版、网关注入只读 SQL 版） | **双实现必须对拍**：同一 fixture 下逐字段一致，覆盖无套餐/多套餐优先级/组织套餐/客户等级/过期/停用/无会员/无角色等分支；不等价即停工上报，禁止“近似等价” |
+| D-P3-3 | **A**：`LLMProvider/LLMModel/LLMApiKey/enums` 迁共享 `models/`，L2 留 shim；共享 `credential_resolver` 注入配置 | 保持 `Q(__iexact)`/`prefetch_related`/`is_available` 语义逐字一致；§4.2 已覆盖，无需新增凭据表白名单 |
+| D-P3-4 | **A**：`lease_auth` 迁共享 `domain/lease_auth.py`（config provider 注入）；`revoke_internal` 核心迁共享 `domain/lease_revoke.py`，L2 委托 | 网关去 `base.plugins.harness.services`；L2 签发/吊销路径引用不变 |
+| D-P3-5 | **A**：L2 `base/common/gateway/*` 12 个模块**全部改 shim**，网关运行代码由共享包承载（P2 同构）；L2 `config.py` 保留 `issuance_config()` 与 `gateway_config()` 供 shim 注入 | L2 现有 import 路径不变；embedded 挂载仍停用，回滚以 git 为准 |
+
+### 13.3 文件清单
+
+**新增 `services/l3-gateway/`（仅入口与配置，运行代码在共享包）**
+
+| 文件 | 内容 |
+|---|---|
+| `run.py` | 与 `services/l3-orchestration/run.py` 同构：注入 `PROJECT_DIR`/`REPO_ROOT` → `from app.main import main` |
+| `app/__init__.py` | — |
+| `app/config.py` | 数据面配置：`DEFAULTS` + `_GATEWAY_ENV_OVERRIDES` + `gateway_config()` + `validate_gateway_config()` + `gateway_upstream_config()` + `lease_cache_ttl_seconds()`；默认值读 `services/l3-gateway/manifest.json`；删除 `issuance_config/runtime_config/reconciliation_config/validate_issuance_config` |
+| `app/plan_resolver.py` | 网关只读 SQL 套餐解析器（实现共享 `PlanResolver` 协议）：`cus` 查 `customer_membership`/`customer_membership_level`，`usr` 查 `user_role`/`role`；仅用 §4.2 白名单列，异常时与原 ORM 一致返回 `None`/`[]` |
+| `app/main.py` | `load_l3_common` 失败 `SystemExit(2)`；`gateway.runtime.configure(app.config.gateway_config, app.config.gateway_upstream_config, app.config.lease_cache_ttl_seconds)`；`plan_service.configure(app.plan_resolver.SqlPlanResolver())`；lifespan：`RedisCache.configure(_L3_CONFIG.redis)` → `Tortoise.init(shared_model_modules() + gateway_dependency_modules())` → 预热；`build_app()` 校验 `deployment=standalone` |
+| `app/health.py` | 保留 `/health` 形状；新增 `/health/health`（DB `SELECT 1` + Redis `PING`） |
+| `tests/fake_provider.py` | 本地假 provider（OpenAI 兼容 JSON/SSE；回显请求体；仅 127.0.0.1）；验证期临时启动，禁止真实 provider |
+| `tests/plan_parity.py` | ORM 解析器 vs 只读 SQL 解析器对拍脚本（见 §13.6） |
+| `tests/gateway_cases.py` | V1–V12 用例脚本；用例结束清理临时 fixture |
+
+**共享包：网关运行代码（D-P3-5=A，L2 全部 shim）**
+
+| 文件 | 来源/说明 |
+|---|---|
+| `packages/agentpanel_common/gateway/runtime.py`（新） | `configure(config_provider, upstream_provider, lease_ttl_provider)` + 访问器；不 import `base` |
+| `packages/agentpanel_common/gateway/lease_auth.py`（新） | `base/common/gateway/lease_auth.py` 原样迁入；配置经 `runtime` 取 |
+| `packages/agentpanel_common/gateway/{auth,audit,service,budget,router,app,logging,health}.py`（新） | 原 8 个网关模块迁入；import 改共享模型/upstream/constants/domain/配额域；删除 embedded 形态 |
+| `packages/agentpanel_common/gateway/{constants,contracts}.py` | 已存在，按需补 `GatewayConfigError` |
+
+**共享包：配额域（D-P3-2=B）**
+
+| 文件 | 来源/说明 |
+|---|---|
+| `packages/agentpanel_common/prometheus.py`（新） | `base/common/prometheus.py` 迁入 |
+| `packages/agentpanel_common/quota/metrics.py`（新） | `base/common/quota/metrics.py` 迁入，import 改共享 prometheus |
+| `packages/agentpanel_common/quota/services/quota_service.py`（新） | `base/common/quota/services/quota_service.py` 迁入，import 改共享 cache/errors/metrics/models |
+| `packages/agentpanel_common/quota/services/plan_service.py`（新） | 同文件迁入；新增 `PlanResolver` 协议与 `configure(resolver)`；`_customer_level_type`/`_user_role_codes` 委托注入解析器（未注入时返回 `None`/`[]`，与原异常分支一致） |
+
+**共享包：模型与域（D-P3-3=A / D-P3-4=A）**
+
+| 文件 | 来源/说明 |
+|---|---|
+| `packages/agentpanel_common/models/llm_{enums,provider,model,api_key}.py`（新） | `base/plugins/llm/models/*` 原样迁入；表名/字段/属性不变 |
+| `packages/agentpanel_common/domain/credential_resolver.py`（新） | 解析逻辑迁入；`configure(defaults, env_fallback, env_names)`；不 import `base`/`plugin_manager` |
+| `packages/agentpanel_common/domain/lease_auth.py` | 见上（亦可归入 gateway 包，择一保持单一来源） |
+| `packages/agentpanel_common/domain/lease_revoke.py`（新） | `revoke_internal` 核心：共享 `HarnessGatewayLease` 更新 + `invalidate_lease_cache` + `HarnessAuditService` |
+| `packages/agentpanel_common/db.py` | `gateway_dependency_modules()` = 共享 llm 模型（只读凭据解析用）；**不再注册** `base.core.users.models.*`（套餐解析走只读 SQL） |
+
+**L2 shim / 委托（全部行为不变）**
+
+| 文件 | 改动 |
+|---|---|
+| `base/common/gateway/*.py`（12 个） | 全部改 shim：`configure` 共享 `runtime`（注入 L2 的 `gateway_config`/upstream/ttl）后 re-export 共享实现；`config.py` 保留 `issuance_config()`/`gateway_config()` |
+| `base/common/cache.py` | shim：`from base.common.setting import settings` → `configure(...)` → re-export `RedisCache` 等 |
+| `base/common/prometheus.py`、`base/common/quota/metrics.py` | shim re-export 共享实现 |
+| `base/common/quota/services/quota_service.py` | shim re-export 共享实现（供 L2 API 引用） |
+| `base/common/quota/services/plan_service.py` | shim re-export 共享 `PlanService`，并 `configure(L2OrmPlanResolver())` 注入 ORM 解析器 |
+| `base/common/quota/services/plan_resolver.py`（新，非 shim） | L2 ORM 解析器：保留原 `_customer_level_type`/`_user_role_codes` 懒加载实现，作为对拍基准 |
+| `base/plugins/llm/models/{enums,provider,model,api_key}.py` | shim re-export 共享类；`__init__.py` 仍导出 `LLMUsageRecord`（留 L2） |
+| `base/plugins/harness/services/model_credential_service.py` | `resolve`/两类型 re-export 共享 resolver + `configure_l2()`；`list_configured()` 保留（读共享 llm 模型） |
+| `base/plugins/harness/services/gateway_lease_service.py` | `revoke_internal` 委托共享 `domain/lease_revoke.py` |
+
+### 13.4 配置契约（网关）
+
+- 默认值来源：`services/l3-gateway/manifest.json` 的 `config.gateway`；覆盖来源：`GW_*`（§5.4 全量）。
+- 硬校验与现有 `validate_gateway_config()` 等价：`fail_closed=true`、`public_base_url` http(s)、`provider_domain_allowlist` 非空、TTL 合法、重试/连接池合法、`GW_ALLOW_ENV_FALLBACK`/`GW_ALLOW_DIRECT_PROVIDER` 必须为 false。
+- DB/Redis 来源：`load_l3_common()`（`DB_*` / `REDIS_*`，支持 `_FILE`）；网关进程**不读** `config.conf`。
+- 凭据解析配置：`defaults=(None,None)`、`env_fallback=False`（与 L2 manifest 现值一致）；不新增环境变量。
+- L2 的 `issuance_config()` 保持读 L2 manifest `config.gateway_issuance`，仅供租约签发。
+
+### 13.5 验证矩阵（仅本地假 provider，禁止真实 provider）
+
+| # | 用例 | 通过判据 |
+|---|---|---|
+| V1 | 骨架启动（`GW_PORT=9990`，旧 9999 不动） | `/health` → `ok/standalone/true`；`/health/health` → database/redis 均 healthy |
+| V2 | 负向启动 | 缺 `DB_PASSWORD` → 退出码 2；`GW_FAIL_CLOSED=false`、空白名单、非法 `GW_PUBLIC_BASE_URL`、`GW_ALLOW_ENV_FALLBACK=true` → 退出码 2 |
+| V3 | 租约鉴权 | 缺失/JWT/格式错 → 401；已吊销 → 401；已过期 → 401；会话关闭 → 403；run 终态 → 403；超 RPM → 429 |
+| V4 | 出网白名单 | 非白名单域名 → 403，且假 provider 未收到请求；`GW_ALLOW_LOOPBACK=false` 时 127.0.0.1 → 403 |
+| V5 | 字段剥离 | 假 provider 回显：`dsh_session_log` 不存在，其余字段逐字不变 |
+| V6 | SSE 逐字节透传 | 假 provider 产出固定帧序列；客户端收到的字节串与上游逐字节相等（除截断场景） |
+| V7 | usage 记账 | `usage_record` 每请求恰好 1 行，`source=gateway`、`gateway_key=<lease_id>`、`idem_key` 以 `gw:` 开头、`resource_type=llm_token`，token 数与假 provider 上报一致；失败请求 `resource_type=gateway_error` 且 `amount=0` |
+| V8 | 预算/并发 | 租约 `budget_tokens` 耗尽 → 402 `quota.lease_budget_exhausted` 且自动吊销；并发上限 1 时第二路 429；流式越界截断 → `billing_status=partial` + 截断帧 |
+| V9 | Redis 缓存 | 鉴权后存在 `gw:lease:state:<lease_id>`（TTL≈8s）；吊销后写穿删除 |
+| V10 | DB 兜底 | `REDIS_ENABLED=false` 启动 → 预检/结算走 DB，`quota_account.used`/`harness_gateway_budget` 正确变更，`usage_record` 仍唯一 |
+| V11 | 审计 | 鉴权拒绝/额度拒绝/吊销事件 `event_source=gateway` |
+| V12 | 与旧网关等价 | 同一租约/同一请求体在 9990（新）与 9999（旧）分别调用假 provider，响应体/状态码/记账字段一致 |
+| V13 | 套餐解析对拍（硬门槛） | 见 §13.6；任一分支不等价 → 停止实施并上报 |
+
+### 13.6 套餐解析对拍（D-P3-2=B 的硬门槛）
+
+**目的**：`PlanService` 迁共享包后，L2 ORM 解析器与网关只读 SQL 解析器必须对同一批数据给出完全相同的 `resolve_plan` 结果；不接受“近似等价”。
+
+**对拍方式**：
+
+1. 在同一测试库内用事务或临时 fixture 构造数据，结束后回滚/清理；
+2. 分别以 `plan_service.configure(L2OrmPlanResolver())` 与 `configure(SqlPlanResolver())` 调用共享 `PlanService.resolve_plan(owner_type, owner_id)`；
+3. 比较字段：`plan.id` / `code` / `name` / `scope` / `status` / `quota_items`（`None` 表示未命中，需两侧同为 `None`）；
+4. 另单独比较解析键：`_customer_level_type(customer_id)` 与 `_user_role_codes(user_id)` 的返回值（含异常分支）。
+
+**必须覆盖的 fixture 分支**：
+
+| # | 场景 | 预期 |
+|---|---|---|
+| P1 | 无任何绑定 | 两侧 `None` |
+| P2 | 多套餐同主体命中，`priority` 不同 | 取 `priority` 大者 |
+| P3 | `priority` 并列 | 取 `plan_id` 大者 |
+| P4 | 组织套餐 `org` | 命中 `bind_type=organization` |
+| P5 | 客户等级套餐（active 且未过期） | 命中对应 `level_type` |
+| P6 | 客户会员记录过期 | 回落 `regular` 绑定 |
+| P7 | 客户无会员记录 | 回落 `regular` 绑定 |
+| P8 | 会员等级为 `null` 或 `level_type` 缺失 | 回落 `regular` |
+| P9 | 角色套餐（用户多激活角色） | 命中最高优先级角色绑定 |
+| P10 | 角色 `is_active=false` | 该角色不参与 |
+| P11 | 用户不存在 | 两侧 `[]` → `None` |
+| P12 | 绑定套餐 `status=disabled` | 两侧 `None` |
+| P13 | 客户不存在 / 查询异常 | 两侧 `None`（异常仅记 warning，不抛出） |
+| P14 | 表存在但 `expire_time` 为 naive 时间 | 两侧按 UTC 判过期一致 |
+
+**停止条件**：任一行两侧结果不同（含 `None` 语义、字段值、异常分支），立即停止 P3 实施，保留对拍输出并向用户报告，不得用“近似等价”继续。
+
+### 13.7 回滚（可执行动作）
+
+1. 停新进程：结束 `services/l3-gateway/run.py` 进程（保留代码目录，不删）；
+2. 旧网关仍在 9999 运行则无需动作；若已切换到新进程，重新启动 `-m base.common.gateway.server`。P3 代码尚未提交时，工作区的 `base.common.gateway` 为 shim（行为等价）；若判定 shim 异常，用 `git worktree add --detach <临时目录> 02bc87f` 从基线提交启旧入口（已在 9996 预演）；P3 提交后则用 `git revert <P3提交>` 还原；
+3. 共享 shim 为行为等价层，无需回退 git；如判定 shim 异常：`git switch --  <单个 shim 文件>` 后重启对应进程；
+4. 数据面无需迁移：未新增表/键，仅读现有表；`gw:*` 键格式不变。
+
+### 13.8 P3 新增待办（写入 P4/P5）
+
+- T4.11（D-P3-2=B 后的收口）：确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界。
+- T4.12（新增）：L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2），删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth`。
+- P5 前置复核：`services/l3-gateway` 不得出现 `from base` 导入（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型。
+- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步 `base/common/quota/services/plan_resolver.py`（L2 ORM）与 `services/l3-gateway/app/plan_resolver.py`（网关只读 SQL），并运行 `services/l3-gateway/tests/plan_parity.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补对拍 fixture 并在 §13.6 登记；提交说明注明“双解析器已对拍”。
 

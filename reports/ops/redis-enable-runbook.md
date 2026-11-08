@@ -104,10 +104,10 @@ docker ps -a --filter "name=aipanel-redis" --format "{{.Names}}|{{.Image}}|{{.St
 ```powershell
 # 作用：三个入口的导入检查（只导入，不启动服务、不占端口）
 $env:PYTHONPATH = $ROOT
-foreach ($m in 'run','base.common.gateway.server','base.plugins.harness.server','base.app_wrapper') {
+foreach ($m in 'run','base.common.gateway.server','base.app_wrapper') {
   & $VENV -c "import $m; print('IMPORT_OK: $m')"
 }
-# 预期：四行 IMPORT_OK，退出码 0
+# 预期：三行 IMPORT_OK，退出码 0
 ```
 
 ```powershell
@@ -278,7 +278,7 @@ Start-Process $VENV -ArgumentList '-m','base.common.gateway.server' -WorkingDire
   -RedirectStandardOutput "$ROOT\logs\gw.out.log" -RedirectStandardError "$ROOT\logs\gw.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9999 -ErrorAction SilentlyContinue)
 
-Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDirectory $ROOT -WindowStyle Hidden `
+Start-Process $VENV -ArgumentList 'services\l3-orchestration\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\l3.out.log" -RedirectStandardError "$ROOT\logs\l3.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9100 -ErrorAction SilentlyContinue)
 ```

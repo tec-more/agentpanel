@@ -4,7 +4,6 @@
 - L3：启动时注入调用 L2 内部额度 API 的实现（服务凭据 + 幂等键）。
 
 未注入即视为额度后端不可用，抛 `QuotaUnavailable`，由路由层转 503 fail-closed。
-P2 起删除 `orchestration_runtime.is_l3()` 分支：共享代码不再感知进程角色。
 """
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 

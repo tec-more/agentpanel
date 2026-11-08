@@ -16,10 +16,13 @@ from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
 
 # 网关共享运行时显式装配（P4 B：原 base/common/gateway 兼容层已删除）：
-# 1) 共享缓存绑定 L2 Redis 配置；2) 共享套餐服务注入 L2 ORM 解析器；
+# 1) 共享缓存绑定 L2 Redis 配置；2) 共享套餐服务注入唯一 SQL 解析器；
 # 3) 共享网关运行时注入 L2 的配置/上游/租约缓存 TTL provider。
 import base.common.cache  # noqa: F401,E402
-import base.common.quota.services.plan_service  # noqa: F401,E402
+from packages.agentpanel_common.quota.services import plan_service as _shared_plan_service  # noqa: E402
+from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver  # noqa: E402
+
+_shared_plan_service.configure(SqlPlanResolver())
 from base.plugins.harness.services.gateway_config import configure_shared_runtime  # noqa: E402
 
 configure_shared_runtime()

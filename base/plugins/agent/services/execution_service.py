@@ -169,7 +169,7 @@ class ExecutionService:
 
     @staticmethod
     async def _concurrency_limit(owner: OwnerContext) -> int:
-        from base.common.quota.services.plan_service import PlanService
+        from packages.agentpanel_common.quota.services.plan_service import PlanService
 
         plan = await PlanService.resolve_plan(owner.owner_type, owner.owner_id)
         items = (plan.quota_items if plan else {}) or {}

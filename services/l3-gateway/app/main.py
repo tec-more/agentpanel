@@ -30,6 +30,7 @@ from packages.agentpanel_common.domain import credential_resolver
 from packages.agentpanel_common.gateway import runtime as gateway_runtime
 from packages.agentpanel_common.gateway.router import gateway_data_router
 from packages.agentpanel_common.quota.services import plan_service
+from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver
 
 from app import health as health_module
 from app.config import (
@@ -39,7 +40,6 @@ from app.config import (
     lease_cache_ttl_seconds,
     validate_gateway_config,
 )
-from app.plan_resolver import SqlPlanResolver
 
 # P3：仍是环境变量契约；必填缺失/类型非法 → 退出码 2（与旧入口一致）
 try:

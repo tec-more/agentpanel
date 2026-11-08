@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from base.common.permissions import require_superuser
 from base.common.response import fail_response, success_response
-from base.common.quota.services.plan_service import PlanService
+from packages.agentpanel_common.quota.services.plan_service import PlanService
 
 quota_plan_admin_router = APIRouter(prefix="/v1/quota-plans", tags=["配额套餐管理"])
 

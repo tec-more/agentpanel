@@ -1,12 +1,13 @@
-"""网关侧套餐解析器：只读 SQL 版（P3 D-P3-2=B）。
+"""套餐解析器（共享包唯一实现，P4 E/T4.11 方案 A）。
 
-与 L2 ORM 版 `base/common/quota/services/plan_resolver.py` 必须逐字段对拍
-（`services/l3-gateway/tests/plan_parity.py`，覆盖 P1–P14）。
+原网关只读 SQL 版迁入共享包，L2 与网关共用同一份实现：
+- L2 启动期显式 `plan_service.configure(SqlPlanResolver())`
+- 网关启动期同样显式注入（`services/l3-gateway/app/main.py`）
 
-语义冻结：
+语义冻结（spec §13.6，黄金用例见 `services/l3-gateway/tests/plan_golden.py`）：
 - cus：customer_membership(is_active) LEFT JOIN customer_membership_level，取 level_type
   - 无记录 / expire_time 已过（naive 视为 UTC）/ 等级缺失 → "regular"；异常 → None
-- usr：user_role → role，取 is_active 角色 code；异常 → []
+- usr：user_role → role，取 is_active 角色 code，按 role.id 升序；异常 → []
 """
 from datetime import datetime, timezone
 from typing import List, Optional

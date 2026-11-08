@@ -277,9 +277,14 @@ async def quota_reconcile_task():
         try:
             await asyncio.sleep(60)
             from base.common.quota.services.quota_service import QuotaService
-            count = await QuotaService.reconcile_active_accounts()
-            if count > 0:
-                print(f"[定时任务] 配额对账落盘完成，账户数: {count}")
+            result = await QuotaService.reconcile_active_accounts()
+            processed = int(result.get("processed") or 0)
+            skipped = int(result.get("skipped") or 0)
+            if processed > 0 or skipped > 0:
+                print(
+                    "[定时任务] 配额对账落盘完成 "
+                    f"batch={result.get('batch_no')} 处理 {processed} 条 / 跳过 {skipped} 条"
+                )
         except asyncio.CancelledError:
             print("[定时任务] 配额对账任务已取消")
             break

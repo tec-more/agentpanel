@@ -1157,11 +1157,16 @@ class QuotaService:
     # 对账与清理（定时任务）
     # ============================================================
     @classmethod
-    async def reconcile_active_accounts(cls) -> int:
+    async def reconcile_active_accounts(cls) -> Dict[str, Any]:
         """
         活跃账户对账落盘（§3.6：Redis → PG used，每分钟）；
-        顺带完成周期滚动。返回对账账户数。Redis 不可用时仅做滚动。
+        顺带完成周期滚动。Redis 不可用时仅做滚动。
+
+        逐条容错：单条标识无法解析或落盘失败时跳过该条并计入异常清单，
+        不中断整批；异常清单保留原始标识、失败原因与批次号。
+        返回 {batch_no, total, processed, skipped, anomalies}。
         """
+        batch_no = f"qrc{_now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4]}"
         redis = await cls._redis()
         owners: List[str] = []
         if redis is not None:
@@ -1169,24 +1174,57 @@ class QuotaService:
                 owners = list(await redis.smembers(ACTIVE_OWNERS_KEY) or [])
             except Exception as e:
                 logger.warning(f"[quota] 对账读取活跃账户失败: {e}")
-        count = 0
+        processed = 0
+        anomalies: List[Dict[str, Any]] = []
+
+        def _skip(ident: str, reason: str, exc: Optional[Exception] = None) -> None:
+            anomaly = {
+                "batch_no": batch_no,
+                "hold_id": ident,
+                "reason": reason,
+                "error": str(exc) if exc else None,
+            }
+            anomalies.append(anomaly)
+            detail = f"[quota] 对账跳过 batch={batch_no} hold_id={ident} reason={reason}"
+            if exc is not None:
+                detail += f" error={exc}"
+            logger.warning(detail)
+
         for ident in owners:
-            ot, _, oid = ident.partition(":")
+            ot, sep, raw_oid = ident.partition(":")
+            if not sep or not ot or not raw_oid:
+                _skip(ident, "标识格式不符，应为 owner_type:owner_id")
+                continue
             try:
-                account = await cls.ensure_account(ot, int(oid))
+                oid = int(raw_oid)
+            except (TypeError, ValueError) as e:
+                _skip(ident, f"owner_id 无法解析为整数: {raw_oid!r}", e)
+                continue
+            try:
+                account = await cls.ensure_account(ot, oid)
                 if redis is not None:
                     period = current_period()
-                    pattern = cls._used_key(ot, int(oid), "*", period)
+                    pattern = cls._used_key(ot, oid, "*", period)
                     used = dict(account.used or {})
                     async for key in redis.scan_iter(match=pattern):
                         item = key.split(":")[3]
                         used[item] = float(await redis.get(key) or 0)
                     account.used = used
                     await account.save()
-                count += 1
+                processed += 1
             except Exception as e:
-                logger.error(f"[quota] 对账失败 {ident}: {e}")
-        return count
+                _skip(ident, "对账落盘失败", e)
+        if anomalies:
+            logger.warning(
+                f"[quota] 对账完成 batch={batch_no} 处理 {processed} 条 / 跳过 {len(anomalies)} 条"
+            )
+        return {
+            "batch_no": batch_no,
+            "total": len(owners),
+            "processed": processed,
+            "skipped": len(anomalies),
+            "anomalies": anomalies,
+        }
 
     @classmethod
     async def cleanup_stale_holds(cls, now_ts: Optional[float] = None) -> int:

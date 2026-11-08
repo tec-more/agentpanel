@@ -1,9 +1,11 @@
 # P5 Docker 交付：L2 + L3 编排 + L3 网关
 #
-# 端口约定（与宿主机 9998/9999/9100 常驻进程不冲突）：
-#   宿主机 127.0.0.1:19998 -> L2 容器 9998
-#   宿主机 127.0.0.1:19999 -> L3 网关容器 9999
-#   宿主机 127.0.0.1:19100 -> L3 编排容器 9100
+# 端口约定（容器接管宿主机 9998/9999/9100，客户端地址不变）：
+#   宿主机 127.0.0.1:9998  -> L2 容器 9998
+#   宿主机 127.0.0.1:9999  -> L3 网关容器 9999
+#   宿主机 127.0.0.1:9100  -> L3 编排容器 9100
+#
+# 回滚到容器旧端口（19998/19999/19100）见 reports/ops/port-switch-9998-9999-9100.md
 #
 # 依赖前置：
 #   1. docker network create --subnet 172.28.0.0/16 agentpanel-net
@@ -22,7 +24,7 @@ services:
     image: agentpanel-l2:${TAG:-local}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:19998:9998"
+      - "127.0.0.1:9998:9998"
     environment:
       DEPLOY_ENV: docker
       STRICT_STARTUP: "true"
@@ -67,7 +69,7 @@ services:
     image: agentpanel-l3-gateway:${TAG:-local}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:19999:9999"
+      - "127.0.0.1:9999:9999"
     read_only: true
     tmpfs:
       - /tmp
@@ -84,7 +86,7 @@ services:
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       GW_HOST: 0.0.0.0
       GW_PORT: "9999"
-      GW_PUBLIC_BASE_URL: ${GW_PUBLIC_BASE_URL:-http://127.0.0.1:19999}
+      GW_PUBLIC_BASE_URL: ${GW_PUBLIC_BASE_URL:-http://127.0.0.1:9999}
       GW_FAIL_CLOSED: "true"
       GW_PROVIDER_DOMAIN_ALLOWLIST: ${GW_PROVIDER_DOMAIN_ALLOWLIST:-api.deepseek.com}
     secrets: [db_password, redis_password]
@@ -104,7 +106,7 @@ services:
     image: agentpanel-l3-orchestration:${TAG:-local}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:19100:9100"
+      - "127.0.0.1:9100:9100"
     read_only: true
     tmpfs:
       - /tmp
@@ -125,7 +127,7 @@ services:
       ORCH_HOST: 0.0.0.0
       ORCH_PORT: "9100"
       ORCH_ALLOW_REMOTE_BIND: "true"
-      ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:19100}
+      ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:9100}
       ORCH_L2_BASE_URL: http://l2:9998
       ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
     secrets: [db_password, redis_password, orchestration_service_secret]

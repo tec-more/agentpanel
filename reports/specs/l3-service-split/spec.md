@@ -926,3 +926,18 @@ L2 业务后端 :9998（宿主进程）
 - `price_snapshot` 同时保留网关元数据（`gateway_status/stream/attempt/usage_missing/estimated/truncated/over_budget`）。
 - **验证方式**：假 provider + 构造 usage（不调用真实 key），断言正常计价、缺价、舍入归零三条分支。
 
+## 15. 套餐解析器事务约束（唯一 SQL 实现）
+
+`packages/agentpanel_common/quota/services/plan_resolver.py` 通过 `tortoise.connections.get("postgres").execute_query_dict` 直接执行只读 SQL，**不参与调用方已打开的 `in_transaction()` 事务上下文**。
+
+- **当前调用点（均不在事务内，符合约束）**：
+  - `packages/agentpanel_common/quota/services/quota_service.py:215`
+  - `packages/agentpanel_common/quota/services/quota_service.py:258`
+  - `packages/agentpanel_common/quota/services/quota_service.py:1113`
+  - `packages/agentpanel_common/gateway/budget.py:290`
+  - `base/plugins/agent/services/execution_service.py:174`
+- **新增调用点禁止**在 `in_transaction()` 内调用 `PlanService.resolve_plan()` / `SqlPlanResolver`；事务内读取不会被解析器感知，可能读到事务外的旧快照。
+- **如确需在事务内读取未提交数据**：必须先改造解析器为事务感知实现（复用当前事务连接执行同一只读 SQL），补充黄金用例覆盖该场景，并更新本节调用点清单；不得让业务代码直接调用裸 SQL 解析器绕过约束。
+- 解析器只允许 `SELECT`，不得引入任何写路径、`save()` 或事务开启/提交。
+- 修改解析器或套餐规则时，仍须运行 `services/l3-gateway/tests/plan_golden.py`（P1–P14，20/20）。
+

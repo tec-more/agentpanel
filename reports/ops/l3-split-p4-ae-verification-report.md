@@ -13,7 +13,7 @@
 |---|---|---|---|
 | A | 新编排入口接管 9100，旧入口删除；路由 19/21，L2 代理可用 | 9100 与重跑 9101 预演 diff=0；旧快照→当前仅新增 3 条审批路由；9100 停/起时 L2 分别返回 503/401 | 原始切换没有保留带时间戳的日志；本报告重跑了 9101 预演，只能证明同代码下 9100/9101 路由等价 |
 | B | `base/common/gateway` 整目录已删除，`base/` 引用为 0 | `git grep`：33 行（`e87e6cf^`）→ 0（`HEAD`）；消费方 18 处改指 / 10 处新增共享 import | “28 处”无法复现，见 §2.3 |
-| C | `orchestration_runtime` 无代码引用；`proxy_l3` 保留 | `*.py` grep 仅剩 1 行 docstring；17 处 `proxy_l3` 配置/写主判断全部保留 | grep 并非字面为空，见 §3 |
+| C | `orchestration_runtime` 无代码引用；`proxy_l3` 保留 | `*.py` grep **0 命中**（`21387bd` 清理后）；17 处 `proxy_l3` 配置/写主判断全部保留 | 无（清理前曾剩 1 行 docstring，已单独清理） |
 | D | 358 条路由 method+path 集合零变化；插件顺序一致 | 358/358 paths、450/450 ops，removed=0、added=0；插件 8 个顺序完全一致 | 无 |
 | E | 唯一 SQL 实现生效；黄金用例 20/20 | `plan_golden.py` 实测 20 通过 / 0 失败，EXIT=0；旧模块路径均不存在 | “20 处引用”无法复现；实际生产 import 7 处 / 6 文件，见 §5.2 |
 | 回滚 | 两步 revert 路径可用 | 在 HEAD=`c6e4239` 的临时 worktree 重跑：两步 EXIT=0，`git diff --stat` 均为 0 行 | 无 |
@@ -191,15 +191,14 @@ GW_PORT=9999
 
 `6a7aed8` 删除 `base/plugins/harness/services/orchestration_runtime.py`（此前无任何代码调用点）。
 
-全仓 `*.py` grep 当前结果：
+全仓 `*.py` grep 结果（清理前/后）：
 
 ```
-ORCH_RUNTIME_CODE_HITS=1
-packages/agentpanel_common/domain/quota_backend.py:7:
-P2 起删除 `orchestration_runtime.is_l3()` 分支：共享代码不再感知进程角色。
+清理前：ORCH_RUNTIME_CODE_HITS=1（仅 quota_backend.py:7 一行 docstring 历史说明）
+清理后（21387bd）：ORCH_RUNTIME_CODE_HITS=0
 ```
 
-**口径说明**：grep 不是字面为空——只剩 1 行 docstring 历史说明；没有任何 `import` / 调用。影响：不影响运行行为；若要求字面清零，需要单独做一次纯注释清理提交。
+**口径说明**：`6a7aed8` 删除模块后，代码已无 import/调用；残留的 1 行 docstring 已由 `21387bd` 单独清理，现为字面清零。
 
 ### 3.2 `proxy_l3` 保留现状
 
@@ -366,7 +365,7 @@ git worktree list -> 仅主工作区
 |---|---|---|
 | A 原始切换时序 | 没有保留带时间戳的切换日志 | 只能重跑 9101 预演并实测当前 9100/代理；路由等价与 503/401 行为可复核，精确切换秒数不可复核 |
 | B “28 处” | 与仓库历史不符 | 已给出可复现口径：删除前 33 行引用、消费方 18 处改指；结论“base/ 引用清零”不受影响 |
-| C grep 空 | 剩 1 行 docstring | 无运行引用；如需字面清零，可做纯注释清理提交 |
+| C grep 空 | 无（`21387bd` 已清理） | 清理前仅 1 行 docstring，无运行引用 |
 | E “20 处” | 与实测不符 | 实际生产 import 7 处 / 6 文件；删除模块残留引用为 0，结论不受影响 |
 | D | 无缺口 | 路由与插件顺序均零差异 |
 | 回滚 | 无缺口 | 已在含 cost 的 HEAD 上实测两步空 diff |

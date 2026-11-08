@@ -1,5 +1,6 @@
 import shutil
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -267,7 +268,16 @@ async def _run_sql_migrations() -> None:
         await conn.close()
 
 
+def _db_migrations_enabled() -> bool:
+    """容器部署可关闭启动期迁移（RUN_DB_MIGRATIONS=false），由部署流程单独执行。"""
+    value = os.environ.get("RUN_DB_MIGRATIONS", "true")
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 async def init_db():
+    if not _db_migrations_enabled():
+        print("RUN_DB_MIGRATIONS=false，跳过启动期迁移（由部署流程单独执行）")
+        return
     print("开始初始化数据库...")
     print(f"模型列表: {TORTOISE_ORM['apps']['models']['models']}")
     
@@ -312,7 +322,11 @@ async def init_db():
     print("数据库初始化流程完成")
     
 async def init_data():
-    await init_db()
+    run_migrations = _db_migrations_enabled()
+    if run_migrations:
+        await init_db()
+    else:
+        print("RUN_DB_MIGRATIONS=false，跳过启动期迁移与建表（由部署流程单独执行）")
     
     from tortoise import Tortoise
     print("初始化 Tortoise ORM...")
@@ -320,9 +334,8 @@ async def init_data():
         await Tortoise.init(config=TORTOISE_ORM)
         print("Tortoise ORM 初始化完成")
         
-        import os
         is_main_worker = os.environ.get("UVICORN_WORKER_ID") is None
-        if is_main_worker:
+        if is_main_worker and run_migrations:
             print("生成数据库表（主进程）...")
             try:
                 await Tortoise.generate_schemas(safe=True)

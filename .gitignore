@@ -81,3 +81,8 @@ migrations/models/
 # 本地运行配置（含 Redis 密码，禁止入库）
 /config.conf
 /config.conf.bak-*
+
+# P5 Docker 本地 secrets / env（禁止入库；仅提交 .env.example）
+deploy/l3/secrets/
+deploy/l3/.env
+!deploy/l3/.env.example

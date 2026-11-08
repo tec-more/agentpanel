@@ -1,0 +1,162 @@
+# P5 Docker 交付：L2 + L3 编排 + L3 网关
+#
+# 端口约定（与宿主机 9998/9999/9100 常驻进程不冲突）：
+#   宿主机 127.0.0.1:19998 -> L2 容器 9998
+#   宿主机 127.0.0.1:19999 -> L3 网关容器 9999
+#   宿主机 127.0.0.1:19100 -> L3 编排容器 9100
+#
+# 依赖前置：
+#   1. docker network create --subnet 172.28.0.0/16 agentpanel-net
+#   2. docker network connect agentpanel-net agentredis   # 热接入，不重启容器
+#   3. 执行 deploy/l3/scripts/prepare-secrets.ps1 生成本地 secrets 与 .env
+#
+# 迁移不随容器启动执行；需要迁移时单独运行一次性任务（见 P5 runbook）。
+
+name: agentpanel-l3
+
+services:
+  l2:
+    build:
+      context: ../..
+      dockerfile: deploy/l3/Dockerfile.l2
+    image: agentpanel-l2:${TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19998:9998"
+    environment:
+      DEPLOY_ENV: docker
+      STRICT_STARTUP: "true"
+      UVICORN_HOST: 0.0.0.0
+      UVICORN_PORT: "9998"
+      # 迁移不随容器启动执行；需要时用一次性任务单独跑（见 P5 runbook）
+      RUN_DB_MIGRATIONS: "false"
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME:?set DB_NAME in deploy/l3/.env}
+      DB_USER: ${DB_USER:?set DB_USER in deploy/l3/.env}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      # 编排容器使用固定 IP，internal_allowed_ips 为精确匹配，不能写 CIDR
+      ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
+      # L2 的 orchestration_proxy 在 proxy_l3 模式下把用户请求转发到该地址
+      ORCH_PUBLIC_BASE_URL: "http://l3-orchestration:9100"
+    secrets:
+      - source: l2_config
+        target: /app/config.conf
+        mode: 0444
+      - db_password
+      - redis_password
+    networks: [agentpanel-net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - l2_storage:/app/storage
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  l3-gateway:
+    build:
+      context: ../..
+      dockerfile: services/l3-gateway/Dockerfile
+    image: agentpanel-l3-gateway:${TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19999:9999"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      TMPDIR: /tmp
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      GW_HOST: 0.0.0.0
+      GW_PORT: "9999"
+      GW_PUBLIC_BASE_URL: ${GW_PUBLIC_BASE_URL:-http://127.0.0.1:19999}
+      GW_FAIL_CLOSED: "true"
+      GW_PROVIDER_DOMAIN_ALLOWLIST: ${GW_PROVIDER_DOMAIN_ALLOWLIST:-api.deepseek.com}
+    secrets: [db_password, redis_password]
+    networks: [agentpanel-net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  l3-orchestration:
+    build:
+      context: ../..
+      dockerfile: services/l3-orchestration/Dockerfile
+    image: agentpanel-l3-orchestration:${TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:19100:9100"
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      l2:
+        condition: service_healthy
+    environment:
+      TMPDIR: /tmp
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      ORCH_HOST: 0.0.0.0
+      ORCH_PORT: "9100"
+      ORCH_ALLOW_REMOTE_BIND: "true"
+      ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:19100}
+      ORCH_L2_BASE_URL: http://l2:9998
+      ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
+    secrets: [db_password, redis_password, orchestration_service_secret]
+    command:
+      - /bin/sh
+      - -c
+      - 'export ORCHESTRATION_SERVICE_SECRET="$$(cat /run/secrets/orchestration_service_secret)"; exec python services/l3-orchestration/run.py'
+    networks:
+      agentpanel-net:
+        ipv4_address: 172.28.0.10
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  agentpanel-net:
+    external: true
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  redis_password:
+    file: ./secrets/redis_password
+  orchestration_service_secret:
+    file: ./secrets/orchestration_service_secret
+  l2_config:
+    file: ./secrets/l2_config.conf
+
+volumes:
+  l2_storage:

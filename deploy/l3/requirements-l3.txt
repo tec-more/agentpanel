@@ -1,0 +1,17 @@
+# L3 独立服务最小运行依赖（编排 / 网关共用）
+# 只包含 packages/agentpanel_common 与 services/l3-* 实际 import 的第三方包；
+# 不引入 L2 插件所需的 ML/文档处理重型依赖。
+fastapi==0.141.1
+httpx==0.28.1
+loguru==0.7.3
+pydantic==2.11.7
+pyjwt==2.10.1
+python-multipart==0.0.20
+pytz==2024.2
+starlette==1.6.0
+tortoise-orm[asyncpg]==0.23.0
+typing-extensions==4.15.0
+uvicorn==0.34.0
+psutil>=7.2.2
+redis>=5.0.0
+prometheus-client

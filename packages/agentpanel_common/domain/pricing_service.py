@@ -12,6 +12,22 @@ from typing import Any, Dict, Optional
 from packages.agentpanel_common.models.model_price import ModelPrice
 
 
+def _as_instant(value: Optional[datetime]) -> Optional[datetime]:
+    """把时间统一成带时区的绝对时刻。
+
+    DB 字段是 timestamptz，Tortoise（use_tz=True + timezone=Asia/Shanghai）读出来
+    是带 +08:00 的 aware datetime；容器进程本地时区通常是 UTC，`datetime.now()`
+    是 naive UTC。直接 strip tzinfo 比较会得到“生效时间在未来”的错误结论，
+    导致 L3 容器内价格解析永远 missing_price。
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        # naive 值一律视为进程本地时间（与 `datetime.now()` 语义一致）
+        return value.astimezone()
+    return value
+
+
 def _d(value: Any) -> Decimal:
     try:
         return Decimal(str(value or 0))
@@ -30,14 +46,14 @@ class ModelPriceService:
     ) -> Optional[ModelPrice]:
         if not model:
             return None
-        now = at or datetime.now()
+        now = _as_instant(at) or datetime.now().astimezone()
         query = ModelPrice.filter(model=model, status="active")
         if provider:
             query = query.filter(provider=provider)
         rows = await query.order_by("-effective_from", "-id").all()
         for row in rows:
-            start = row.effective_from.replace(tzinfo=None) if row.effective_from else None
-            end = row.effective_to.replace(tzinfo=None) if row.effective_to else None
+            start = _as_instant(row.effective_from)
+            end = _as_instant(row.effective_to)
             if start and start > now:
                 continue
             if end and end <= now:

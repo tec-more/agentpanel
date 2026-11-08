@@ -30,6 +30,9 @@ GATEWAY_DEPENDENCY_MODEL_MODULES: tuple[str, ...] = (
     "base.core.users.models.rbac",
 )
 
+# L3 编排不注册客户域模型：customer_organization 的 FK 会拖入 L2 的 Customer 模型。
+# 组织级额度校验走只读 SQL 目录（domain/organization_directory.py，Spec §4.2 只读）。
+
 
 def patch_asyncpg_reset() -> bool:
     """GaussDB/openGauss 兼容补丁：连接池释放时忽略默认复位语句失败。

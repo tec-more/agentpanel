@@ -1,7 +1,8 @@
-"""只读加载业务侧 base/common/gateway/service.py，验证真实出网白名单判定。
+"""只读加载共享网关 service.py，验证真实出网白名单判定。
 
-通过 docker run 把业务源码文件只读挂到 /opt/project_gateway_service.py；
-这里注入最小 stub 依赖，不修改业务代码，不发起真实出网请求。
+通过 docker run 把共享包源码只读挂到 /opt/project_gateway_service.py 与
+/opt/project_gateway_egress.py；这里注入最小 stub 依赖（运行时配置/日志/ORM 模型），
+不修改业务代码，不发起真实出网请求。
 """
 from __future__ import annotations
 
@@ -10,36 +11,59 @@ import sys
 import types
 from typing import Any, Dict
 
+GATEWAY_MODULE = "packages.agentpanel_common.gateway.service_probe"
+EGRESS_PATH = "/opt/project_gateway_egress.py"
+
 
 def _install_stubs(config_holder: Dict[str, Any]) -> None:
-    modules = {
-        "base": types.ModuleType("base"),
-        "base.common": types.ModuleType("base.common"),
-        "base.common.gateway": types.ModuleType("base.common.gateway"),
-        "base.common.quota": types.ModuleType("base.common.quota"),
-        "base.common.quota.models": types.ModuleType("base.common.quota.models"),
-    }
-    logging_mod = types.ModuleType("base.common.gateway.logging")
+    packages = types.ModuleType("packages")
+    packages.__path__ = []  # type: ignore[attr-defined]
+    common = types.ModuleType("packages.agentpanel_common")
+    common.__path__ = []  # type: ignore[attr-defined]
+    gateway = types.ModuleType("packages.agentpanel_common.gateway")
+    gateway.__path__ = []  # type: ignore[attr-defined]
+    models = types.ModuleType("packages.agentpanel_common.models")
+    models.__path__ = []  # type: ignore[attr-defined]
+    upstream = types.ModuleType("packages.agentpanel_common.upstream")
+    upstream.__path__ = []  # type: ignore[attr-defined]
+
+    logging_mod = types.ModuleType("packages.agentpanel_common.gateway.logging")
     logging_mod.gateway_logger = types.SimpleNamespace(
         info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
         error=lambda *a, **k: None,
         exception=lambda *a, **k: None,
     )
-    config_mod = types.ModuleType("base.common.gateway.config")
-    config_mod.gateway_config = lambda: config_holder["config"]
-    quota_mod = types.ModuleType("base.common.quota.models.quota")
+    runtime_mod = types.ModuleType("packages.agentpanel_common.gateway.runtime")
+    runtime_mod.gateway_config = lambda: config_holder["config"]
+    quota_mod = types.ModuleType("packages.agentpanel_common.models.quota")
     quota_mod.UsageRecord = type("UsageRecord", (), {})
 
-    modules["base.common.gateway.logging"] = logging_mod
-    modules["base.common.gateway.config"] = config_mod
-    modules["base.common.quota.models.quota"] = quota_mod
-    for name, module in modules.items():
-        sys.modules[name] = module
-    sys.modules["base"].common = sys.modules["base.common"]
-    sys.modules["base.common"].gateway = sys.modules["base.common.gateway"]
-    sys.modules["base.common"].quota = sys.modules["base.common.quota"]
-    sys.modules["base.common.quota"].models = sys.modules["base.common.quota.models"]
+    sys.modules["packages"] = packages
+    sys.modules["packages.agentpanel_common"] = common
+    sys.modules["packages.agentpanel_common.gateway"] = gateway
+    sys.modules["packages.agentpanel_common.models"] = models
+    sys.modules["packages.agentpanel_common.upstream"] = upstream
+    sys.modules["packages.agentpanel_common.gateway.logging"] = logging_mod
+    sys.modules["packages.agentpanel_common.gateway.runtime"] = runtime_mod
+    sys.modules["packages.agentpanel_common.models.quota"] = quota_mod
+
+    packages.agentpanel_common = common  # type: ignore[attr-defined]
+    common.gateway = gateway  # type: ignore[attr-defined]
+    common.models = models  # type: ignore[attr-defined]
+    common.upstream = upstream  # type: ignore[attr-defined]
+
+
+def _load_egress(egress_path: str) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "packages.agentpanel_common.upstream.egress", egress_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    upstream = sys.modules["packages.agentpanel_common.upstream"]
+    upstream.EgressPolicy = module.EgressPolicy
+    upstream.UpstreamEgressError = module.UpstreamEgressError
 
 
 def run_check(service_path: str) -> Dict[str, Any]:
@@ -51,7 +75,8 @@ def run_check(service_path: str) -> Dict[str, Any]:
         }
     }
     _install_stubs(config_holder)
-    spec = importlib.util.spec_from_file_location("agentpanel_gateway_service", service_path)
+    _load_egress(EGRESS_PATH)
+    spec = importlib.util.spec_from_file_location(GATEWAY_MODULE, service_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

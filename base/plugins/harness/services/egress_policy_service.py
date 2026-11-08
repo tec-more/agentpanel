@@ -25,7 +25,7 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
-from base.common.gateway.config import issuance_config, upstream_allowlist
+from base.plugins.harness.services.gateway_config import issuance_config, upstream_allowlist
 from base.common.plugin_manager import plugin_manager
 from base.plugins.harness.models.harness import HarnessAuditEvent
 from base.plugins.harness.services.audit_service import HarnessAuditService

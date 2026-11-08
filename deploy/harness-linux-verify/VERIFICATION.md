@@ -6,7 +6,7 @@
 - 运行用户：`verifier`（UID 10001，非 root）
 - 模型：**未调用真实 provider**。`DEEPSEEK_BASE_URL=http://127.0.0.1:18080/v1` 指向容器内假 provider，key 为占位值 `sk-agentpanel-verify-placeholder`
 - 网络：主验证容器 `--network none`，仅 loopback；另跑一次联网对照容器（仅 web_fetch 域名策略）
-- 业务代码：未修改；仅只读挂载 `base/common/gateway/service.py` 调用真实 `assert_egress_allowed`
+- 业务代码：未修改；仅只读挂载 `packages/agentpanel_common/gateway/service.py` 与 `packages/agentpanel_common/upstream/egress.py` 调用真实 `assert_egress_allowed`
 
 ## 结论速览
 

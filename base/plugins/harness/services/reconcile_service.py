@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tortoise.expressions import Q
 
-from base.common.gateway.config import reconciliation_config
+from base.plugins.harness.services.gateway_config import reconciliation_config
 from base.common.quota.models.quota import UsageRecord
 from base.plugins.harness.models.harness import (
     HarnessGatewayLease,

@@ -18,7 +18,7 @@ import sysconfig
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from base.common.gateway.config import issuance_config, gateway_enabled
+from base.plugins.harness.services.gateway_config import issuance_config, gateway_enabled
 from base.common.masking import fingerprint, mask_secret
 from base.plugins.harness.services.audit_service import HarnessAuditService
 from base.plugins.harness.services.model_credential_service import (

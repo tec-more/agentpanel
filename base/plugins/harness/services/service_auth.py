@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Request
 
-from base.common.gateway.constants import is_gateway_virtual_key, looks_like_jwt
+from packages.agentpanel_common.gateway.constants import is_gateway_virtual_key, looks_like_jwt
 from packages.agentpanel_common.security import build_signature, signature_payload
 from base.plugins.harness.services.orchestration_config import (
     auth_timestamp_window_seconds,

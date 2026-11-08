@@ -1,5 +1,5 @@
 """Harness Plugin - DeepSeek Harness 业务接入"""
-from base.common.gateway.config import validate_issuance_config
+from base.plugins.harness.services.gateway_config import validate_issuance_config
 
 
 async def on_startup() -> None:

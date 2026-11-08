@@ -15,6 +15,15 @@ from base.common.logging_config import register_exceptions_with_logging
 from base.plugins import plugin_manager
 import asyncio
 
+# 网关共享运行时显式装配（P4 B：原 base/common/gateway 兼容层已删除）：
+# 1) 共享缓存绑定 L2 Redis 配置；2) 共享套餐服务注入 L2 ORM 解析器；
+# 3) 共享网关运行时注入 L2 的配置/上游/租约缓存 TTL provider。
+import base.common.cache  # noqa: F401,E402
+import base.common.quota.services.plan_service  # noqa: F401,E402
+from base.plugins.harness.services.gateway_config import configure_shared_runtime  # noqa: E402
+
+configure_shared_runtime()
+
 # 配置日志 - 使用 Loguru 进行完整的日志配置
 from base.common.log import setup_logging
 setup_logging()
@@ -151,7 +160,7 @@ async def lifespan(app: FastAPI):
 
         # 启动网关记账对账定时任务（harness 插件 + 网关 + reconciliation.enabled）
         try:
-            from base.common.gateway.config import gateway_enabled, reconciliation_config
+            from base.plugins.harness.services.gateway_config import gateway_enabled, reconciliation_config
             if (
                 plugin_manager.get_plugin("harness")
                 and gateway_enabled()
@@ -302,7 +311,7 @@ async def gateway_reconcile_task():
     """
     while True:
         try:
-            from base.common.gateway.config import reconciliation_config
+            from base.plugins.harness.services.gateway_config import reconciliation_config
             interval = max(int(reconciliation_config().get("interval_seconds") or 600), 30)
             await asyncio.sleep(interval)
             from base.plugins.harness.services.reconcile_service import HarnessReconcileService
@@ -669,17 +678,17 @@ def init_app() -> FastAPI:
         print(f"[警告] 无法注册 Harness 内部路由: {e}")
 
     # 内部网关数据面：deployment 配置决定部署形态，切换不改代码。
-    # - standalone（默认）：由 `python -m base.common.gateway.server` 作为 L3 独立进程服务，
+    # - standalone（默认）：由 `services/l3-gateway/run.py` 作为 L3 独立进程服务，
     #   业务 API 不挂载 /v1/gateway；
     # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
     #   作为可选退回方式。
     try:
-        from base.common.gateway.config import issuance_config, gateway_enabled
+        from base.plugins.harness.services.gateway_config import issuance_config, gateway_enabled
         gw_cfg = issuance_config()
         if gateway_enabled():
             if str(gw_cfg.get("deployment")) == "embedded":
-                from base.common.gateway.constants import GATEWAY_DEPLOY_PREFIX
-                from base.common.gateway.app import gateway_app
+                from packages.agentpanel_common.gateway.constants import GATEWAY_DEPLOY_PREFIX
+                from packages.agentpanel_common.gateway.app import gateway_app
                 app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
                 print(
                     f"[手动注册] 内部网关数据面子应用已挂载: {GATEWAY_DEPLOY_PREFIX}/chat/completions"

@@ -1,10 +1,12 @@
 """
-网关配置：L2 租约签发配置 与 L3 数据面配置分离（P1 manifest 三拆）。
+网关配置（L2 唯一实现）：租约签发配置、L3 数据面配置读取、共享运行时注入。
 
 - `issuance_config()`：L2 专用，读 `base/plugins/harness/manifest.json` 的
   `config.gateway_issuance`（租约签发 / 出网策略 / 启停）。
-- `gateway_config()`：L3 网关数据面，读 `services/l3-gateway/manifest.json` 的
-  `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不再经过 plugin_manager**。
+- `gateway_config()`：网关数据面配置，读 `services/l3-gateway/manifest.json` 的
+  `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不经过 plugin_manager**。
+- `configure_shared_runtime()`：由 L2 启动期显式调用，把配置/上游/租约缓存 TTL
+  provider 注入 `packages.agentpanel_common.gateway.runtime`。
 
 fail-closed 语义保持不变：enabled 时 fail_closed 必须为 true、public_base_url 必须
 http(s)、provider 白名单非空、TTL/重试/连接池配置合法。
@@ -215,10 +217,10 @@ def gateway_upstream_config() -> UpstreamConfig:
 
 
 def configure_shared_runtime() -> None:
-    """把 L2 的网关配置注入共享网关模块（P3 T3.7）。
+    """把 L2 的网关配置注入共享网关模块（P4 B：启动期显式装配）。
 
-    共享模块（router/service/budget/lease_auth）不再 import `base.common.gateway.config`，
-    由 L2 各兼容层 shim 在导入时调用本函数一次。
+    共享模块（router/service/budget/lease_auth）不 import `base.*`，
+    由 L2 启动期显式调用本函数一次。
     """
     from packages.agentpanel_common.gateway import runtime as _runtime
 

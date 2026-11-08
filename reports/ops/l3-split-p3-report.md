@@ -204,18 +204,35 @@ git -C $ROOT worktree prune
 
 ### 5.3 git revert 路径（P3 提交之后使用）
 
-P3 提交后，回滚等价于 revert 该提交并重启旧入口：
+P3 之后还有 P4（L2 残留边界删除）。回滚必须分**两步**，不能一次把 P3、P4 混在一起 revert：
+
+1. **先 revert P4**：撤销 P4 各组提交（哈希区间 `dd06288..HEAD`，git revert 会自动按时间倒序逐个应用）。此步完成后回到 P3 末态：新工程 `services/l3-gateway` 与 `services/l3-orchestration` 仍在，L2 网关兼容层恢复，三个服务可继续以 P3 方式运行。
+2. **再 revert P3**：撤销 P3 的 4 个提交（区间 `02bc87f..dd06288`），回到 P3 前基线 `02bc87f`。
 
 ```powershell
-$P3_COMMIT = '<P3 提交哈希>'   # 提交后填入，可用 `git log --oneline -1` 核对
-git -C $ROOT revert --no-commit $P3_COMMIT
-git -C $ROOT status --short      # 预期：仅 P3 涉及文件被还原
-git -C $ROOT commit -m "revert: 回滚 L3 网关拆分 P3"
+$ROOT = 'd:\programs\fastapi\agentpanel'
+
+# 第 1 步：revert P4（区间形式等价于按时间倒序逐提交 revert）
+git -C $ROOT revert --no-commit dd06288..HEAD
+git -C $ROOT diff --stat dd06288   # 预期：无输出（完全回到 P3 末态）
+# 此时重启仍用 P3 入口：services/l3-gateway/run.py、services/l3-orchestration/run.py
+
+# 第 2 步：revert P3（4 个提交，区间内含 185f3c1/1245ce4/e005ab6/dd06288）
+git -C $ROOT revert --no-commit 02bc87f..dd06288
+git -C $ROOT status --short        # 预期：仅 P3/P4 涉及文件被还原
+git -C $ROOT diff --stat 02bc87f   # 预期：无输出（完全回到 P3 前基线）
+git -C $ROOT commit -m "revert: 回滚 L3 网关拆分 P3/P4"
+
+# 回到基线后 9999/9100 使用旧入口
 Stop-ByPort 9999
 Start-Process $VENV -ArgumentList '-m','base.common.gateway.server' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\rollback-old.out.log" -RedirectStandardError "$ROOT\logs\rollback-old.err.log"
+Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDirectory $ROOT -WindowStyle Hidden `
+  -RedirectStandardOutput "$ROOT\logs\rollback-old-l3.out.log" -RedirectStandardError "$ROOT\logs\rollback-old-l3.err.log"
 ```
 
+> 已实测：在临时 worktree 上按上述两步（先 `dd06288..HEAD`、再 `02bc87f..dd06288`）`revert --no-commit` 后，`git diff --stat 02bc87f` 为空，证明 P3+P4 可完整还原至基线。
+> P4 后续组提交后无需改本文：区间随 `HEAD` 自动覆盖。
 > 若 revert 出现冲突：`git revert --abort` 后改用 §5.2 的 worktree 路径（结果等价，不污染工作区）。
 
 ### 5.4 健康检查验证点

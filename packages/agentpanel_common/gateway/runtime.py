@@ -2,7 +2,8 @@
 
 网关模块不直接读取 L2 manifest / `config.conf`；配置源由入口注入：
 - L3 新入口：`app/config.py` 的 `gateway_config` / `gateway_upstream_config`
-- L2 旧入口（兼容层）：`base/common/gateway/config.py` 的 `configure_shared_runtime()`
+- L2 启动期：`base/plugins/harness/services/gateway_config.py` 的 `configure_shared_runtime()`
+  在 `base.start` 导入时显式调用一次。
 """
 from typing import Any, Callable, Dict, Optional
 

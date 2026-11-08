@@ -74,6 +74,20 @@ def shared_model_modules() -> List[str]:
     return list(SHARED_MODEL_MODULES)
 
 
+def gateway_dependency_modules() -> List[str]:
+    """L3 网关独立入口需注册的共享模型（P3 D-P3-3=A）。
+
+    仅共享 llm 模型：凭据解析走共享 `domain/credential_resolver.py`；
+    客户等级/用户角色由只读 SQL 解析器读取，不再注册 User 模型。
+    旧入口回滚仍使用上面的 `GATEWAY_DEPENDENCY_MODEL_MODULES` 原样清单。
+    """
+    return [
+        "packages.agentpanel_common.models.llm_api_key",
+        "packages.agentpanel_common.models.llm_model",
+        "packages.agentpanel_common.models.llm_provider",
+    ]
+
+
 def _credentials(db: DbConfig) -> dict:
     return {
         "host": db.host,

@@ -1,0 +1,235 @@
+"""套餐服务（共享实现，P3 D-P3-2=B）。
+
+解析规则：
+- cus：有效 CustomerMembership（is_active 且未过期）→ membership_level.level_type
+  → 绑定；无会员记录时按 "regular" 兜底
+- usr：用户全部激活角色 code → 绑定集合，priority 大者优先，并列取 plan_id 大者
+- org：客户组织 ID 直接命中 bind_type=organization
+- 未命中绑定：返回 None（不计量不拦截，看板 plan=null）
+
+客户等级 / 用户角色是环境相关读取，必须由入口注入 resolver：
+- L2 注入 ORM 版（`base/common/quota/services/plan_resolver.py`）
+- L3 网关注入只读 SQL 版（`services/l3-gateway/app/plan_resolver.py`）
+两份实现必须逐字段对拍（spec §13.6 P1–P14）。
+"""
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+
+from ...models.binding import QuotaPlanBinding
+from ...models.quota import QuotaPlan
+
+VALID_SCOPES = ("cus", "usr", "org", "both")
+
+_resolver: Any = None
+
+
+def configure(resolver: Any) -> None:
+    """注入客户等级/用户角色解析器（需提供 customer_level_type/user_role_codes）。"""
+    global _resolver
+    _resolver = resolver
+
+
+def resolver() -> Any:
+    return _resolver
+
+
+def _validate_scope(scope: str) -> None:
+    if scope not in VALID_SCOPES:
+        raise ValueError(f"非法适用范围: {scope}，仅支持 {'/'.join(VALID_SCOPES)}")
+
+
+class PlanService:
+    """套餐定义与绑定（全部 async）"""
+
+    # ============================================================
+    # 套餐 CRUD
+    # ============================================================
+    @staticmethod
+    async def create_plan(data: Dict[str, Any]) -> QuotaPlan:
+        existing = await QuotaPlan.get_or_none(code=data["code"])
+        if existing:
+            raise ValueError(f"套餐编码已存在: {data['code']}")
+        scope = data.get("scope", "both")
+        _validate_scope(scope)
+        return await QuotaPlan.create(
+            code=data["code"],
+            name=data["name"],
+            scope=scope,
+            quota_items=data.get("quota_items") or {},
+            status=data.get("status", "active"),
+        )
+
+    @staticmethod
+    async def update_plan(plan_id: int, data: Dict[str, Any]) -> Optional[QuotaPlan]:
+        plan = await QuotaPlan.get_or_none(id=plan_id)
+        if plan is None:
+            return None
+        if "code" in data and data["code"] != plan.code:
+            dup = await QuotaPlan.get_or_none(code=data["code"])
+            if dup:
+                raise ValueError(f"套餐编码已存在: {data['code']}")
+            plan.code = data["code"]
+        if "scope" in data:
+            _validate_scope(data["scope"])
+        for field in ("name", "scope", "quota_items", "status"):
+            if field in data:
+                setattr(plan, field, data[field])
+        await plan.save()
+        return plan
+
+    @staticmethod
+    async def delete_plan(plan_id: int) -> bool:
+        plan = await QuotaPlan.get_or_none(id=plan_id)
+        if plan is None:
+            return False
+        await plan.delete()  # 绑定经 FK CASCADE 清理；账户 plan_id 置 NULL（SET_NULL）
+        return True
+
+    @staticmethod
+    async def get_plan(plan_id: int) -> Optional[QuotaPlan]:
+        return await QuotaPlan.get_or_none(id=plan_id)
+
+    @staticmethod
+    async def list_plans(page: int = 1, page_size: int = 20,
+                         status: Optional[str] = None,
+                         scope: Optional[str] = None) -> Dict[str, Any]:
+        query = QuotaPlan.all()
+        if status:
+            query = query.filter(status=status)
+        if scope:
+            query = query.filter(scope=scope)
+        total = await query.count()
+        plans = await query.offset((page - 1) * page_size).limit(page_size).order_by("id")
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": [PlanService.plan_to_dict(p) for p in plans],
+        }
+
+    @staticmethod
+    def plan_to_dict(plan: QuotaPlan) -> Dict[str, Any]:
+        return {
+            "id": plan.id,
+            "code": plan.code,
+            "name": plan.name,
+            "scope": plan.scope,
+            "quota_items": plan.quota_items or {},
+            "status": plan.status,
+            "created_at": plan.created_at.isoformat() if plan.created_at else None,
+            "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
+        }
+
+    # ============================================================
+    # 绑定关系管理
+    # ============================================================
+    @staticmethod
+    async def bind(bind_type: str, bind_key: str, plan_id: int, priority: int = 0) -> QuotaPlanBinding:
+        if bind_type not in (
+            QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL,
+            QuotaPlanBinding.BIND_TYPE_ROLE,
+            QuotaPlanBinding.BIND_TYPE_ORGANIZATION,
+        ):
+            raise ValueError(f"非法绑定类型: {bind_type}")
+        plan = await QuotaPlan.get_or_none(id=plan_id)
+        if plan is None:
+            raise ValueError(f"套餐不存在: {plan_id}")
+        if bind_type == QuotaPlanBinding.BIND_TYPE_ORGANIZATION:
+            if plan.scope not in ("org", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定组织")
+            try:
+                bind_key = str(int(bind_key))
+            except (TypeError, ValueError):
+                raise ValueError(f"非法组织 ID: {bind_key}")
+        elif bind_type == QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL:
+            if plan.scope not in ("cus", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定客户等级")
+        elif bind_type == QuotaPlanBinding.BIND_TYPE_ROLE:
+            if plan.scope not in ("usr", "both"):
+                raise ValueError(f"套餐 {plan.code} 适用范围为 {plan.scope}，不能绑定角色")
+        binding = await QuotaPlanBinding.get_or_none(bind_type=bind_type, bind_key=bind_key)
+        if binding:
+            # 幂等：重复绑定更新指向与优先级
+            binding.plan_id = plan_id
+            binding.priority = priority
+            await binding.save()
+            return binding
+        return await QuotaPlanBinding.create(
+            bind_type=bind_type, bind_key=bind_key, plan_id=plan_id, priority=priority
+        )
+
+    @staticmethod
+    async def unbind(binding_id: int) -> bool:
+        binding = await QuotaPlanBinding.get_or_none(id=binding_id)
+        if binding is None:
+            return False
+        await binding.delete()
+        return True
+
+    @staticmethod
+    async def list_bindings(bind_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = QuotaPlanBinding.all()
+        if bind_type:
+            query = query.filter(bind_type=bind_type)
+        bindings = await query.order_by("bind_type", "bind_key")
+        return [
+            {
+                "id": b.id,
+                "bind_type": b.bind_type,
+                "bind_key": b.bind_key,
+                "plan_id": b.plan_id,
+                "priority": b.priority,
+            }
+            for b in bindings
+        ]
+
+    # ============================================================
+    # 主体套餐解析
+    # ============================================================
+    @staticmethod
+    async def resolve_plan(owner_type: str, owner_id: int) -> Optional[QuotaPlan]:
+        if owner_type == "cus":
+            bind_key = await PlanService._customer_level_type(owner_id)
+            bind_type = QuotaPlanBinding.BIND_TYPE_MEMBERSHIP_LEVEL
+            keys = [bind_key] if bind_key else []
+        elif owner_type == "usr":
+            keys = await PlanService._user_role_codes(owner_id)
+            bind_type = QuotaPlanBinding.BIND_TYPE_ROLE
+        elif owner_type == "org":
+            keys = [str(owner_id)]
+            bind_type = QuotaPlanBinding.BIND_TYPE_ORGANIZATION
+        else:
+            return None
+        if not keys:
+            return None
+        bindings = await QuotaPlanBinding.filter(
+            bind_type=bind_type, bind_key__in=keys
+        ).order_by("-priority", "-plan_id").prefetch_related("plan")
+        for binding in bindings:
+            plan = binding.plan
+            if plan and plan.status == "active":
+                return plan
+        return None
+
+    @staticmethod
+    async def _customer_level_type(customer_id: int) -> Optional[str]:
+        """客户当前有效会员等级 level_type；无记录按 regular 兜底（由 resolver 实现）。"""
+        if _resolver is None:
+            return None
+        try:
+            return await _resolver.customer_level_type(customer_id)
+        except Exception as e:
+            logger.warning(f"[quota] 解析客户会员等级失败 customer_id={customer_id}: {e}")
+            return None
+
+    @staticmethod
+    async def _user_role_codes(user_id: int) -> List[str]:
+        """后台用户激活角色 code 集合（由 resolver 实现）。"""
+        if _resolver is None:
+            return []
+        try:
+            return await _resolver.user_role_codes(user_id)
+        except Exception as e:
+            logger.warning(f"[quota] 解析用户角色失败 user_id={user_id}: {e}")
+            return []

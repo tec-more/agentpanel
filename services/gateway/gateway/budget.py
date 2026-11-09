@@ -872,7 +872,7 @@ class GatewayBudgetService:
         if getattr(lease, "status", None) != "active":
             return
         try:
-            from .constants import GATEWAY_EVENT_SOURCE
+            from packages.agentpanel_common.gateway_constants import GATEWAY_EVENT_SOURCE
             from .lease_revoke import revoke_lease_internal
 
             await revoke_lease_internal(

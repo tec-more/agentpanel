@@ -27,9 +27,8 @@ WORKDIR /app
 COPY packages/ ./packages/
 COPY services/__init__.py ./services/__init__.py
 COPY services/orchestration/ ./services/orchestration/
-# 编排鉴权复用网关领域包的常量契约（services.gateway.gateway.constants）
-COPY services/gateway/__init__.py ./services/gateway/__init__.py
-COPY services/gateway/gateway/ ./services/gateway/gateway/
+# 编排不再依赖网关服务目录：网关边界常量已下沉到共享基础包
+# （packages/agentpanel_common/gateway_constants.py），无需复制网关包。
 
 RUN chown -R 10001:10001 /app
 

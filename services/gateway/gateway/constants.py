@@ -1,24 +1,27 @@
-"""网关边界常量（轻量模块，避免业务鉴权模块引入插件依赖）"""
+"""兼容层：网关边界常量唯一来源已下沉到共享基础包。
 
-# 数据面统一前缀；与业务 API（/v1/llm、/v1/harness 等）结构隔离
-GATEWAY_DEPLOY_PREFIX = "/v1/gateway"
+历史上本模块位于 L2 的 ``base/common/gateway/constants.py``，P1 迁入共享包、
+P7 目录整理又随网关领域包迁入服务目录，导致 ``packages.agentpanel_common.log``
+反向依赖 ``services.*``、编排镜像必须复制整个网关包。现已把定义下沉到
+``packages.agentpanel_common.gateway_constants``，本模块仅做 re-export，
+保留 ``services.gateway.gateway.constants`` 导入名以免破坏外部/历史引用。
 
-# 租约虚拟 key 格式：dgw.<lease_id>.<secret>
-GATEWAY_VIRTUAL_KEY_PREFIX = "dgw"
+新代码请直接 import ``packages.agentpanel_common.gateway_constants``。
+"""
+from packages.agentpanel_common.gateway_constants import (  # noqa: F401
+    GATEWAY_DEPLOY_PREFIX,
+    GATEWAY_EVENT_SOURCE,
+    GATEWAY_LOG_COMPONENT,
+    GATEWAY_VIRTUAL_KEY_PREFIX,
+    is_gateway_virtual_key,
+    looks_like_jwt,
+)
 
-# loguru extra 标记：网关日志写入独立 sink（logs/gateway.log）
-GATEWAY_LOG_COMPONENT = "gateway"
-
-# 网关审计事件来源（HarnessAuditEvent.event_source）
-GATEWAY_EVENT_SOURCE = "gateway"
-
-
-def is_gateway_virtual_key(token: str) -> bool:
-    """是否为网关租约虚拟 key（仅做格式判断，不做鉴权）。"""
-    return bool(token) and str(token).strip().startswith(f"{GATEWAY_VIRTUAL_KEY_PREFIX}.")
-
-
-def looks_like_jwt(token: str) -> bool:
-    """粗略识别 JWT（三段式且首段为 base64url 的 eyJ 前缀）。"""
-    parts = str(token or "").strip().split(".")
-    return len(parts) == 3 and parts[0].startswith("eyJ")
+__all__ = [
+    "GATEWAY_DEPLOY_PREFIX",
+    "GATEWAY_VIRTUAL_KEY_PREFIX",
+    "GATEWAY_LOG_COMPONENT",
+    "GATEWAY_EVENT_SOURCE",
+    "is_gateway_virtual_key",
+    "looks_like_jwt",
+]

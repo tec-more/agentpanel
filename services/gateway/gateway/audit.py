@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Request
 
-from .constants import GATEWAY_EVENT_SOURCE
+from packages.agentpanel_common.gateway_constants import GATEWAY_EVENT_SOURCE
 from .logging import gateway_logger
 
 

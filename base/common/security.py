@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from services.gateway.gateway.constants import is_gateway_virtual_key
+from packages.agentpanel_common.gateway_constants import is_gateway_virtual_key
 
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

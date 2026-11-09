@@ -699,7 +699,7 @@ def init_app() -> FastAPI:
         gw_cfg = issuance_config()
         if gateway_enabled():
             if str(gw_cfg.get("deployment")) == "embedded":
-                from services.gateway.gateway.constants import GATEWAY_DEPLOY_PREFIX
+                from packages.agentpanel_common.gateway_constants import GATEWAY_DEPLOY_PREFIX
                 from services.gateway.gateway.app import gateway_app
                 app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
                 print(

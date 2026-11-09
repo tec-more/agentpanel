@@ -6,7 +6,7 @@
 - 启动即 fail-closed 配置校验，且独立入口仅允许 `deployment=standalone`。
 
 P3 T3.2/T3.3：数据面逻辑来自同一服务目录下的网关领域包 `services.gateway.gateway.*`
-（跨进程共享：L2 签发租约/看板、编排鉴权常量也引用该包）。
+（跨进程共享：L2 签发租约/看板；编排已解耦，改引共享基础包的网关边界契约）。
 P3 T3.5：模型凭据走共享 `domain/credential_resolver`，禁止环境变量兜底。
 P3 T3.6：Redis 走共享 `cache.RedisCache`。
 P3 D-P3-2=B：套餐解析注入只读 SQL 版，与 L2 ORM 版逐字段对拍。

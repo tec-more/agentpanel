@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from packages.agentpanel_common.models.harness import HarnessGatewayLease
 from .audit import record_gateway_quota_event
-from .constants import GATEWAY_EVENT_SOURCE
+from packages.agentpanel_common.gateway_constants import GATEWAY_EVENT_SOURCE
 from .lease_auth import invalidate_lease_cache
 
 

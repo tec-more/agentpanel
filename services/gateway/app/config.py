@@ -1,7 +1,7 @@
 """L3 网关数据面配置契约（仅 manifest 默认值 + `GW_*` 环境变量）。
 
 与 `base/common/gateway/config.py` 的数据面部分逐项一致：
-- 默认值来自 `services/l3-gateway/manifest.json` 的 `config.gateway`；
+- 默认值来自 `services/gateway/manifest.json` 的 `config.gateway`；
 - 覆盖来源为 `GW_*` 环境变量（Spec §5.4）；
 - fail-closed 语义不变：`enabled` 时 `fail_closed` 必须为 true、`public_base_url`
   必须 http(s)、provider 白名单非空、TTL/重试/连接池配置合法。
@@ -24,7 +24,7 @@ from packages.agentpanel_common.config import (
 )
 from packages.agentpanel_common.upstream import UpstreamConfig
 
-GATEWAY_MANIFEST = REPO_ROOT / "services" / "l3-gateway" / "manifest.json"
+GATEWAY_MANIFEST = REPO_ROOT / "services" / "gateway" / "manifest.json"
 
 DEFAULTS: Dict[str, Any] = {
     "enabled": True,

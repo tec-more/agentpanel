@@ -95,7 +95,7 @@ T6.6（P6 当次注入，本轮 P7 未重复破坏性注入）：
 
 T6.7（重启语义）：
 
-- 网关租约缓存键 `gw:lease:state:<lease_id>` 位于 Redis，TTL 默认 8s（`services/l3-gateway/app/config.py:41`，限 5–10s）。
+- 网关租约缓存键 `gw:lease:state:<lease_id>` 位于 Redis，TTL 默认 8s（`services/gateway/app/config.py:41`，限 5–10s）。
 - 网关容器重启不会清空 Redis 中的缓存键，旧状态最迟在一个 TTL（≤8s）后自然过期；吊销路径为写穿删除，通常立即失效。
 - 因此“吊销后最多 8s 内仍可能被接受”是已记录的语义边界，不是缺陷。
 

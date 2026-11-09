@@ -89,7 +89,7 @@ agentpanel/
 └─ reports/specs/l3-service-split/    # 本文档与任务清单
 ```
 
-“独立构建”指：`docker build -f services/l3-orchestration/Dockerfile .` 与 `docker build -f services/l3-gateway/Dockerfile .` 不需要先构建整个业务前端；“独立发布”指镜像 `agentpanel-l3-orchestration:<ver>`、`agentpanel-l3-gateway:<ver>` 可单独升版。
+“独立构建”指：`docker build -f services/orchestration/Dockerfile .` 与 `docker build -f services/gateway/Dockerfile .` 不需要先构建整个业务前端；“独立发布”指镜像 `agentpanel-l3-orchestration:<ver>`、`agentpanel-l3-gateway:<ver>` 可单独升版。
 
 ---
 
@@ -131,13 +131,13 @@ agentpanel/
 
 ## 3. 删除边界对照表
 
-图例：**迁 L3** = 代码移到 `services/l3-*`；**留 L2** = 保留在业务仓库；**两边** = 抽共享包，两侧只保留薄封装。
+图例：**迁 L3** = 代码移到 `services/*`；**留 L2** = 保留在业务仓库；**两边** = 抽共享包，两侧只保留薄封装。
 
 ### 3.1 `base/plugins/harness/`
 
 | 模块 | 职责 | 归属 | 处理方式 |
 |---|---|---|---|
-| `server.py` | 编排独立入口（lifespan/自检/uvicorn） | 迁 L3 | 改写为 `services/l3-orchestration/app/main.py`；去掉 plugin_manager |
+| `server.py` | 编排独立入口（lifespan/自检/uvicorn） | 迁 L3 | 改写为 `services/orchestration/app/main.py`；去掉 plugin_manager |
 | `__init__.py` | L2 插件注册与 v1 路由聚合 | 留 L2 | 不再导出 L3 入口 |
 | `manifest.json` | 插件元数据 + `config.gateway/orchestration/runtime` | 留 L2 | 配置迁到环境变量；manifest 只保留 L2 插件元数据与 runtime 配置 |
 | `api/internal/router.py` | L3 服务凭据 whoami/自检 | 迁 L3 | 服务凭据验签中间件下沉共享包 |
@@ -200,7 +200,7 @@ agentpanel/
 | `lease_auth.py` | 迁 L3 | 网关侧验签/缓存；租约签发侧只复用共享 `lease_format` |
 | `logging.py` | 迁 L3 | 日志字段格式与共享 `platform/log` 对齐 |
 | `router.py` | 迁 L3 | `/health`、`/chat/completions`（+新增 `/health/health`） |
-| `server.py` | 迁 L3 | 改写为 `services/l3-gateway/app/main.py` |
+| `server.py` | 迁 L3 | 改写为 `services/gateway/app/main.py` |
 | `service.py` | 迁 L3 | 凭据解析改共享 `credential_resolver` |
 
 ### 3.3 `base/common/upstream/`
@@ -410,7 +410,7 @@ services:
   l3-orchestration:
     build:
       context: ../..
-      dockerfile: services/l3-orchestration/Dockerfile
+      dockerfile: services/orchestration/Dockerfile
     image: agentpanel-l3-orchestration:${TAG:-local}
     restart: unless-stopped
     ports:
@@ -450,7 +450,7 @@ services:
   l3-gateway:
     build:
       context: ../..
-      dockerfile: services/l3-gateway/Dockerfile
+      dockerfile: services/gateway/Dockerfile
     image: agentpanel-l3-gateway:${TAG:-local}
     restart: unless-stopped
     ports:
@@ -666,8 +666,8 @@ L2 业务后端 :9998（宿主进程）
 | 文件 | 归属 | 内容 |
 |---|---|---|
 | `base/plugins/harness/manifest.json` | L2 | 插件元数据 + `routes/models/schemas/permissions`；`config` 仅保留 `hold_ttl_seconds`、`fail_closed`、`lock_runtime_version`、`session_format*`、`model_credential`、`runtime`、`egress`、`approval`，新增 `gateway_issuance`（租约签发：`lease_ttl_seconds`、`renew_ttl_seconds`、`max_lease_ttl_seconds`、`tenant_lease_ttl_seconds`、`max_rpm`、`public_base_url`）。**删除 `config.gateway` 与 `config.orchestration`。** |
-| `services/l3-gateway/manifest.json` | L3 网关 | 服务元数据 + `config.gateway`：数据面全部键（`deployment=standalone`、`enabled`、`host/port`、`public_base_url`、`lease_cache_ttl_seconds`、`fail_closed`、`provider_domain_allowlist`、`allow_loopback`、`strip_request_fields`、上游超时/重试/连接池/TLS、`lease_budget_tokens` 及限额键、`reconciliation`）。不含租约签发 TTL、策略、凭据、管理台配置。 |
-| `services/l3-orchestration/manifest.json` | L3 编排 | 服务元数据 + `config.orchestration`：`enabled/deployment/host/port/public_base_url/mode/write_enabled/l2_internal_base_url/internal_timeout_seconds/internal_allowed_ips/allow_remote_bind/policy_in_l3/reconcile_in_l3/auth_timestamp_window_seconds/l2_service_id/l2_service_secret_env`。 |
+| `services/gateway/manifest.json` | L3 网关 | 服务元数据 + `config.gateway`：数据面全部键（`deployment=standalone`、`enabled`、`host/port`、`public_base_url`、`lease_cache_ttl_seconds`、`fail_closed`、`provider_domain_allowlist`、`allow_loopback`、`strip_request_fields`、上游超时/重试/连接池/TLS、`lease_budget_tokens` 及限额键、`reconciliation`）。不含租约签发 TTL、策略、凭据、管理台配置。 |
+| `services/orchestration/manifest.json` | L3 编排 | 服务元数据 + `config.orchestration`：`enabled/deployment/host/port/public_base_url/mode/write_enabled/l2_internal_base_url/internal_timeout_seconds/internal_allowed_ips/allow_remote_bind/policy_in_l3/reconcile_in_l3/auth_timestamp_window_seconds/l2_service_id/l2_service_secret_env`。 |
 
 读取方式：
 - `base/common/plugin_manager.get_manifest("harness")` **只服务 L2**；
@@ -755,7 +755,7 @@ L2 业务后端 :9998（宿主进程）
 
 ---
 
-## 13. P3 实施规格（L3 网关独立工程 `services/l3-gateway`）
+## 13. P3 实施规格（L3 网关独立工程 `services/gateway`）
 
 > 状态：**已确认（2026-11-08，用户选择 `1B 2A 3A 4A`）**。本节把 P3 的依赖取舍、文件清单、验证与回滚写到可执行粒度；
 > 原则与 P2 同构：搬代码、共享单一来源、L2 全部留 shim、独立入口、配置契约独立；迁移期 L2 / L3 编排 / 网关三者并行可用。
@@ -787,13 +787,13 @@ L2 业务后端 :9998（宿主进程）
 
 ### 13.3 文件清单
 
-**新增 `services/l3-gateway/`（仅入口与配置，运行代码在共享包）**
+**新增 `services/gateway/`（仅入口与配置，运行代码在共享包）**
 
 | 文件 | 内容 |
 |---|---|
-| `run.py` | 与 `services/l3-orchestration/run.py` 同构：注入 `PROJECT_DIR`/`REPO_ROOT` → `from app.main import main` |
+| `run.py` | 与 `services/orchestration/run.py` 同构：注入 `PROJECT_DIR`/`REPO_ROOT` → `from app.main import main` |
 | `app/__init__.py` | — |
-| `app/config.py` | 数据面配置：`DEFAULTS` + `_GATEWAY_ENV_OVERRIDES` + `gateway_config()` + `validate_gateway_config()` + `gateway_upstream_config()` + `lease_cache_ttl_seconds()`；默认值读 `services/l3-gateway/manifest.json`；删除 `issuance_config/runtime_config/reconciliation_config/validate_issuance_config` |
+| `app/config.py` | 数据面配置：`DEFAULTS` + `_GATEWAY_ENV_OVERRIDES` + `gateway_config()` + `validate_gateway_config()` + `gateway_upstream_config()` + `lease_cache_ttl_seconds()`；默认值读 `services/gateway/manifest.json`；删除 `issuance_config/runtime_config/reconciliation_config/validate_issuance_config` |
 | `app/plan_resolver.py` | 网关只读 SQL 套餐解析器（实现共享 `PlanResolver` 协议）：`cus` 查 `customer_membership`/`customer_membership_level`，`usr` 查 `user_role`/`role`；仅用 §4.2 白名单列，异常时与原 ORM 一致返回 `None`/`[]` |
 | `app/main.py` | `load_l3_common` 失败 `SystemExit(2)`；`gateway.runtime.configure(app.config.gateway_config, app.config.gateway_upstream_config, app.config.lease_cache_ttl_seconds)`；`plan_service.configure(app.plan_resolver.SqlPlanResolver())`；lifespan：`RedisCache.configure(_L3_CONFIG.redis)` → `Tortoise.init(shared_model_modules() + gateway_dependency_modules())` → 预热；`build_app()` 校验 `deployment=standalone` |
 | `app/health.py` | 保留 `/health` 形状；新增 `/health/health`（DB `SELECT 1` + Redis `PING`） |
@@ -845,7 +845,7 @@ L2 业务后端 :9998（宿主进程）
 
 ### 13.4 配置契约（网关）
 
-- 默认值来源：`services/l3-gateway/manifest.json` 的 `config.gateway`；覆盖来源：`GW_*`（§5.4 全量）。
+- 默认值来源：`services/gateway/manifest.json` 的 `config.gateway`；覆盖来源：`GW_*`（§5.4 全量）。
 - 硬校验与现有 `validate_gateway_config()` 等价：`fail_closed=true`、`public_base_url` http(s)、`provider_domain_allowlist` 非空、TTL 合法、重试/连接池合法、`GW_ALLOW_ENV_FALLBACK`/`GW_ALLOW_DIRECT_PROVIDER` 必须为 false。
 - DB/Redis 来源：`load_l3_common()`（`DB_*` / `REDIS_*`，支持 `_FILE`）；网关进程**不读** `config.conf`。
 - 凭据解析配置：`defaults=(None,None)`、`env_fallback=False`（与 L2 manifest 现值一致）；不新增环境变量。
@@ -903,7 +903,7 @@ L2 业务后端 :9998（宿主进程）
 
 ### 13.7 回滚（可执行动作）
 
-1. 停新进程：结束 `services/l3-gateway/run.py` 进程（保留代码目录，不删）；
+1. 停新进程：结束 `services/gateway/run.py` 进程（保留代码目录，不删）；
 2. 旧网关仍在 9999 运行则无需动作；若已切换到新进程，重新启动 `-m base.common.gateway.server`。P3 代码尚未提交时，工作区的 `base.common.gateway` 为 shim（行为等价）；若判定 shim 异常，用 `git worktree add --detach <临时目录> 02bc87f` 从基线提交启旧入口（已在 9996 预演）；P3 提交后则用 `git revert <P3提交>` 还原；
 3. 共享 shim 为行为等价层，无需回退 git；如判定 shim 异常：`git switch --  <单个 shim 文件>` 后重启对应进程；
 4. 数据面无需迁移：未新增表/键，仅读现有表；`gw:*` 键格式不变。
@@ -912,8 +912,8 @@ L2 业务后端 :9998（宿主进程）
 
 - T4.11（D-P3-2=B 后的收口）：确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界。
 - T4.12（新增）：L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2），删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth`。
-- P5 前置复核：`services/l3-gateway` 不得出现 `from base` 导入（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型。
-- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步共享包 `packages/agentpanel_common/quota/services/plan_resolver.py`（唯一实现，L2 与网关共用）；改动后必须运行黄金用例 `services/l3-gateway/tests/plan_golden.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补黄金 fixture 并在 §13.6 登记。
+- P5 前置复核：`services/gateway` 不得出现 `from base` 导入（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型。
+- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步共享包 `packages/agentpanel_common/quota/services/plan_resolver.py`（唯一实现，L2 与网关共用）；改动后必须运行黄金用例 `services/gateway/tests/plan_golden.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补黄金 fixture 并在 §13.6 登记。
 
 ## 14. P4 网关计费口径（`usage_record.cost`）
 
@@ -939,7 +939,7 @@ L2 业务后端 :9998（宿主进程）
 - **新增调用点禁止**在 `in_transaction()` 内调用 `PlanService.resolve_plan()` / `SqlPlanResolver`；事务内读取不会被解析器感知，可能读到事务外的旧快照。
 - **如确需在事务内读取未提交数据**：必须先改造解析器为事务感知实现（复用当前事务连接执行同一只读 SQL），补充黄金用例覆盖该场景，并更新本节调用点清单；不得让业务代码直接调用裸 SQL 解析器绕过约束。
 - 解析器只允许 `SELECT`，不得引入任何写路径、`save()` 或事务开启/提交。
-- 修改解析器或套餐规则时，仍须运行 `services/l3-gateway/tests/plan_golden.py`（P1–P14，20/20）。
+- 修改解析器或套餐规则时，仍须运行 `services/gateway/tests/plan_golden.py`（P1–P14，20/20）。
 - 解析优先级（P6 修正）：`quota_plan_binding` 命中优先；未命中时回落到 `quota_account.plan_id`；两者都不存在时保持“未绑定”语义，不合成套餐。
 
 ---
@@ -958,7 +958,7 @@ L2 业务后端 :9998（宿主进程）
 
 ### 16.2 P6 实测与设计假设的两处差异
 
-1. **租约缓存由 Redis 承载，不是进程内存**：键 `gw:lease:state:<lease_id>`，TTL 默认 8s（`services/l3-gateway/app/config.py`，允许 5–10s）。因此网关容器重启不会清空缓存，旧状态最迟在一个 TTL 后自然过期；吊销走写穿删除。该实现比进程内存更好：多实例共享一致视图、重启不丢状态，过期窗口由 TTL 硬约束。
+1. **租约缓存由 Redis 承载，不是进程内存**：键 `gw:lease:state:<lease_id>`，TTL 默认 8s（`services/gateway/app/config.py`，允许 5–10s）。因此网关容器重启不会清空缓存，旧状态最迟在一个 TTL 后自然过期；吊销走写穿删除。该实现比进程内存更好：多实例共享一致视图、重启不丢状态，过期窗口由 TTL 硬约束。
 2. **套餐解析改为“绑定优先 + 回落账户 `plan_id`”**：`PlanService.resolve_plan` 先查 `quota_plan_binding`；未命中时使用 `quota_account.plan_id`；两者都没有才按未绑定处理。修复了“有账户但未绑定”租户被静默不计量的缺口（`packages/agentpanel_common/quota/services/plan_service.py`，覆盖用例 `packages/agentpanel_common/quota/tests/test_resolve_plan.py`）。
 
 ### 16.3 已知限制

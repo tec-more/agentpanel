@@ -11,7 +11,7 @@
 
 客户等级 / 用户角色是环境相关读取，由入口显式注入同一份共享 resolver：
 - L2 启动期：`base.start` 导入时 `configure(SqlPlanResolver())`
-- 网关启动期：`services/l3-gateway/app/main.py` 同样 `configure(SqlPlanResolver())`
+- 网关启动期：`services/gateway/app/main.py` 同样 `configure(SqlPlanResolver())`
 唯一实现见 `plan_resolver.py`。"""
 from typing import Any, Dict, List, Optional
 

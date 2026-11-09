@@ -274,11 +274,11 @@ Start-Process $VENV -ArgumentList 'run.py' -WorkingDirectory $ROOT -WindowStyle 
   -RedirectStandardOutput "$ROOT\logs\l2.out.log" -RedirectStandardError "$ROOT\logs\l2.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9998 -ErrorAction SilentlyContinue)
 
-Start-Process $VENV -ArgumentList 'services\l3-gateway\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
+Start-Process $VENV -ArgumentList 'services\gateway\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\gw.out.log" -RedirectStandardError "$ROOT\logs\gw.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9999 -ErrorAction SilentlyContinue)
 
-Start-Process $VENV -ArgumentList 'services\l3-orchestration\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
+Start-Process $VENV -ArgumentList 'services\orchestration\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\l3.out.log" -RedirectStandardError "$ROOT\logs\l3.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9100 -ErrorAction SilentlyContinue)
 ```

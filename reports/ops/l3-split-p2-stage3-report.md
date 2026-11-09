@@ -9,7 +9,7 @@
 |---|---|---|---|
 | L2 业务后端 | `.venv\Scripts\python.exe run.py` | `0.0.0.0:9998` | 运行中（加载 P2 shim 代码） |
 | L3 网关 | `-m base.common.gateway.server` | `127.0.0.1:9999` | 运行中（本阶段边界外） |
-| L3 编排 | `.venv\Scripts\python.exe services\l3-orchestration\run.py` | `127.0.0.1:9100` | 运行中（P2 新工程） |
+| L3 编排 | `.venv\Scripts\python.exe services\orchestration\run.py` | `127.0.0.1:9100` | 运行中（P2 新工程） |
 
 旧入口 `-m base.plugins.harness.server` 已停用，按“不双跑”处理，未为它恢复 `is_l3` 分支。
 
@@ -19,7 +19,7 @@
 
 | # | 文件 | 现存调用点 | 删除前置条件 | 删除后会断的路径 |
 |---|---|---|---|---|
-| A1 | `base/plugins/harness/server.py` | ops 文档 `reports/ops/redis-enable-runbook.md:107,281`；`base/__init__.py:4` 注释 | 新入口在 9100 连续稳定运行；运维脚本改指 `services/l3-orchestration/run.py`；删除时同步改两处文档引用 | `python -m base.plugins.harness.server` 无法启动；9100 必须由新工程提供 |
+| A1 | `base/plugins/harness/server.py` | ops 文档 `reports/ops/redis-enable-runbook.md:107,281`；`base/__init__.py:4` 注释 | 新入口在 9100 连续稳定运行；运维脚本改指 `services/orchestration/run.py`；删除时同步改两处文档引用 | `python -m base.plugins.harness.server` 无法启动；9100 必须由新工程提供 |
 | A2 | `base/plugins/harness/api/l3/business_router.py`、`write_router.py`、`__init__.py` | 仅 `server.py:34-35` | 先删 A1（否则旧入口启动 `ImportError`） | 旧入口业务读写路由（新工程 `/v1/harness/*` 已覆盖） |
 | A3 | `base/plugins/harness/api/internal/router.py`、`__init__.py` | 仅 `server.py:33` | 先删 A1 | 旧入口 `/internal/v1/harness/*`（新工程同名路径已覆盖） |
 | A4 | `base/plugins/harness/services/l3_client_auth.py` | 仅 A2 两个 router | 先删 A2 | 旧入口客户端凭据校验（新工程 `app/l3_client_auth.py` 已覆盖） |
@@ -50,9 +50,9 @@
 
 1. 共享 `packages/agentpanel_common/domain/policy_service.py` 不再 import `plugin_manager`，审批配置改为 `configure_approval()` 显式注入。
 2. L2 注入点在 `base/plugins/harness/__init__.py:13-16`（`on_startup` 内 `quota_backend.configure_l2()` + `policy_service.configure_l2()`），无 import 副作用。
-3. L3 注入点在 `services/l3-orchestration/app/main.py`（lifespan 内 `quota_backend.configure_l3()`）。
+3. L3 注入点在 `services/orchestration/app/main.py`（lifespan 内 `quota_backend.configure_l3()`）。
 4. 实测：屏蔽 `base.*` 命名空间后导入 L3 全部模块 → `blocked_base_imports: none`，19 条路由正常构建。
-5. `rg "from base\.|import base\.|plugin_manager"` 在 `services/l3-orchestration/` 与 `packages/agentpanel_common/` 仅命中 docstring。
+5. `rg "from base\.|import base\.|plugin_manager"` 在 `services/orchestration/` 与 `packages/agentpanel_common/` 仅命中 docstring。
 
 未闭环项（需决策，本阶段未动）：`base/plugins/__init__.py` 的传递性模块加载与 `plugin_manager` 单例仍服务 L2 插件装配。编排侧已不再触达它；若要求物理移除，需重构 L2 插件注册为显式清单，属独立阶段，不属于 P2 范围。
 

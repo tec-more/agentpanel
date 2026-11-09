@@ -1,6 +1,6 @@
 """L3 编排服务配置与启动校验（fail-closed）
 
-- 配置来源：`services/l3-orchestration/manifest.json` 的 `config.orchestration`，
+- 配置来源：`services/orchestration/manifest.json` 的 `config.orchestration`，
   由 `ORCH_*` 环境变量覆盖；不再经过 `plugin_manager`。
 - 默认只监听回环地址；非回环必须显式 allow_remote_bind=true；
 - 独立入口仅允许 deployment=standalone；
@@ -18,7 +18,7 @@ from packages.agentpanel_common.config import (
 )
 
 PLUGIN_NAME = "harness"
-ORCHESTRATION_MANIFEST = REPO_ROOT / "services" / "l3-orchestration" / "manifest.json"
+ORCHESTRATION_MANIFEST = REPO_ROOT / "services" / "orchestration" / "manifest.json"
 
 DEFAULTS: Dict[str, Any] = {
     "enabled": True,

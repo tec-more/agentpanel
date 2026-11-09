@@ -62,8 +62,8 @@ flowchart TB
 | 服务 | 代码入口 | 容器启动命令 | 端口 | 健康端点 | 职责 |
 |---|---|---|---|---|---|
 | **L2 主应用** | `base/start.py` 建 app → `base/app_wrapper.py` 加 `/api` 前缀 → `run.py` 起 uvicorn | `CMD ["python","run.py"]`（`deploy/l3/Dockerfile.l2:56`） | `9998` | `/health/health`、`/api/health/health` | 租约签发、策略/凭据/出网策略 CRUD、看板与报表、对 L3 暴露内部额度与心跳 API；**唯一执行 aerich 迁移的进程**；`/metrics`（`start.py:733`） |
-| **L3 网关** | `services/l3-gateway/run.py` → `app/main.py` | `CMD ["python","services/l3-gateway/run.py"]` | `9999` | `/health`、`/health/health`、`/health/live` | `dgw.*` 虚拟 key 鉴权、provider 转发 SSE 透传、`usage_record` 记账、预算/并发/额度耗尽预检 |
-| **L3 编排** | `services/l3-orchestration/run.py` → `app/main.py` | 同构；compose 覆盖 command 注入 secret 后 `exec run.py`（`docker-compose.yml:134-137`） | `9100` | `/health/health`、`/health/live`、`/health/ready`、`/health/orchestration` | 会话/run/step 编排、策略评估、审批、审计；额度**不自己写主**，经 L2 内部 API |
+| **L3 网关** | `services/gateway/run.py` → `app/main.py` | `CMD ["python","services/gateway/run.py"]` | `9999` | `/health`、`/health/health`、`/health/live` | `dgw.*` 虚拟 key 鉴权、provider 转发 SSE 透传、`usage_record` 记账、预算/并发/额度耗尽预检 |
+| **L3 编排** | `services/orchestration/run.py` → `app/main.py` | 同构；compose 覆盖 command 注入 secret 后 `exec run.py`（`docker-compose.yml:134-137`） | `9100` | `/health/health`、`/health/live`、`/health/ready`、`/health/orchestration` | 会话/run/step 编排、策略评估、审批、审计；额度**不自己写主**，经 L2 内部 API |
 
 编排的路由前缀：`/v1/harness`（`api/business.py:24` 读、`api/write.py:32` 写）、`/v1/harness/approvals`（`api/approval.py:13`）、`/internal/v1/harness`（`api/internal.py:11`，含 `/whoami`）。`/metrics` 不纳入业务鉴权（`main.py:167-172`）。
 
@@ -74,7 +74,7 @@ flowchart TB
 | `l2` | L2 本地 | 维持 L2 行为；L3 在 `mode != proxy_l3` 时拒绝写（409），避免同一 run 双写 |
 | `proxy_l3`（当前） | L3 编排 | L2 对已迁移编排路径**只代理、不双写**；下游不可达统一 503，不回落本进程 |
 
-校验仅允许这两个值（`services/l3-orchestration/app/config.py:122-123`）。这是**部署级整机二元切换**，没有按比例/按租户切流；切流与回切都是整机行为。
+校验仅允许这两个值（`services/orchestration/app/config.py:122-123`）。这是**部署级整机二元切换**，没有按比例/按租户切流；切流与回切都是整机行为。
 
 ## 4. 共享包 `agentpanel_common` 子系统
 
@@ -116,7 +116,7 @@ sequenceDiagram
   L2-->>C: 响应
 ```
 
-关键实现：`base/plugins/harness/services/orchestration_proxy.py:56-102`（转发与 503 收敛）；L2 内部额度路由 `base/plugins/harness/api/l2_internal/quota_router.py:21`（`prefix=/internal/v1/harness/quota`）；编排侧客户端 `services/l3-orchestration/app/l2_quota_client.py`（超时/5xx → 503）。
+关键实现：`base/plugins/harness/services/orchestration_proxy.py:56-102`（转发与 503 收敛）；L2 内部额度路由 `base/plugins/harness/api/l2_internal/quota_router.py:21`（`prefix=/internal/v1/harness/quota`）；编排侧客户端 `services/orchestration/app/l2_quota_client.py`（超时/5xx → 503）。
 
 **为什么额度要回呼 L2**：让配额写主保持单点，L3 编排持只读 DB 账号 + `information_schema` schema 断言 fail-closed，避免两个进程同时写账本。
 
@@ -217,11 +217,11 @@ PostgreSQL 位于 `host.docker.internal:15432`（Tortoise ORM + asyncpg），Red
 | 编排代理（只代理/503） | `base/plugins/harness/services/orchestration_proxy.py:56-102` |
 | L2 内部额度路由 | `base/plugins/harness/api/l2_internal/quota_router.py:21` |
 | 网关数据面路由 | `packages/agentpanel_common/gateway/router.py:190,200`、`lease_auth.py` |
-| 编排 app 与路由 | `services/l3-orchestration/app/main.py:159-172`、`app/api/*.py` |
-| 额度回呼客户端 | `services/l3-orchestration/app/l2_quota_client.py` |
+| 编排 app 与路由 | `services/orchestration/app/main.py:159-172`、`app/api/*.py` |
+| 额度回呼客户端 | `services/orchestration/app/l2_quota_client.py` |
 | 配额服务与 key | `packages/agentpanel_common/quota/services/quota_service.py:30-32,127-140` |
 | 监控中间件 | `packages/agentpanel_common/l3_metrics.py`、`prometheus.py` |
-| 部署 | `deploy/l3/docker-compose.yml`、`deploy/l3/Dockerfile.l2`、`services/l3-*/Dockerfile` |
+| 部署 | `deploy/l3/docker-compose.yml`、`deploy/l3/Dockerfile.l2`、`services/*/Dockerfile` |
 | 监控配置 | `monitoring/prometheus.yml`、`alert_rules.yml`、`monitoring-deployment.yml` |
 
 ## 12. 维护说明

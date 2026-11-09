@@ -40,7 +40,7 @@
 |---|---|---|---|
 | ✅ T1.1 | 契约与共享包 | 建 `packages/__init__.py`、`packages/agentpanel_common/{__init__,config,log,db}.py`、`masking.py`、`upstream/*`、`gateway/{constants,contracts}.py`、`models/{base,quota,binding,reservation,harness,model_price,service_credential}.py`；共享包内禁止 import `base` | 导入成功；`grep -R "from base\|import base" packages/agentpanel_common` 为空；`ConfigError` 缺失/类型错单测通过 |
 | ✅ T1.2 | 兼容层与 import 修正 | 6 组 `base/*` shim（Spec §12.3）；`base/common/setting.py::get_model_list()` 改指共享模型路径；`base/common/log.py` 改为调用共享 `setup_logging()` | 原 167 处 import 无需改；`HarnessRun.__module__` 为 `packages.agentpanel_common.models.harness`；`describe_model()` 表名不变 |
-| ✅ T1.3 | manifest 拆分 | 三份 manifest（Spec §12.4）；`base/common/gateway/config.py` 拆出 `gateway_config()`（共享 loader，读 `services/l3-gateway/manifest.json` + env）与 `issuance_config()`（L2 manifest `config.gateway_issuance`）；`orchestration_config.py` 改共享 loader；`gateway_lease_service.py` 签发字段改 `issuance_config()` | `grep plugin_manager` 在网关/编排配置路径为空；两入口配置文件互不读取 |
+| ✅ T1.3 | manifest 拆分 | 三份 manifest（Spec §12.4）；`base/common/gateway/config.py` 拆出 `gateway_config()`（共享 loader，读 `services/gateway/manifest.json` + env）与 `issuance_config()`（L2 manifest `config.gateway_issuance`）；`orchestration_config.py` 改共享 loader；`gateway_lease_service.py` 签发字段改 `issuance_config()` | `grep plugin_manager` 在网关/编排配置路径为空；两入口配置文件互不读取 |
 | ✅ T1.4 | L2 启动验证 | `.venv\Scripts\python.exe run.py` → 9998 | `GET /health/health` → `status=healthy`；原有路由/插件加载正常 |
 | ✅ T1.5 | 网关启动验证 | 注入 `DB_*`/`REDIS_*` 后 `-m base.common.gateway.server` → 9999 | `GET /health` → `status=ok`、`deployment=standalone`、`fail_closed=true`；负向缺 `DB_PASSWORD` 退出码 2 |
 | ✅ T1.6 | 编排启动验证 | 注入 `DB_*`/`REDIS_*`/`ORCHESTRATION_SERVICE_SECRET` 后 `-m base.plugins.harness.server` → 9100 | `GET /health/health`、`/health/orchestration` healthy；只读写拒绝自检通过 |
@@ -49,11 +49,11 @@
 
 **阶段出口**：三入口均可独立启动且 `/health` 正常；L2 代理与网关记账、编排预占结算链路全部通过；模型单一来源生效；无 `plugin_manager` 在 L3 配置路径残留。
 
-**P1 不包含（顺延）**：`domain/*` 下沉、`credential_resolver` 抽取（阻塞项 C1）、`pyproject.toml`/editable/wheel 打包、`services/l3-*` 物理目录迁移、Docker。
+**P1 不包含（顺延）**：`domain/*` 下沉、`credential_resolver` 抽取（阻塞项 C1）、`pyproject.toml`/editable/wheel 打包、`services/*` 物理目录迁移、Docker。
 
 ---
 
-## P2 L3 编排独立工程（`services/l3-orchestration`）
+## P2 L3 编排独立工程（`services/orchestration`）
 
 | ID | 任务 | 验收 |
 |---|---|---|
@@ -64,7 +64,7 @@
 | T2.5 | 迁 `l2_quota_client.py`、`l3_client_auth.py`、`l3_touch.py` | 指向 L2 的 reserve/settle/release、touch 成功 |
 | T2.6 | 重写配置：`orchestration_config` → `env.py`；`host=0.0.0.0` + `allow_remote_bind` | fail-closed 单测：缺 secret、非法 host、非 http base_url 均拒绝启动 |
 | T2.7 | 加 `schema_check.py` 启动断言（表/列/最低版本） | 伪造版本 → 启动失败；正常库 → 通过 |
-| T2.8 | 移除 L3 对 `plugin_manager`、`base.plugins.harness.manifest` 的全部依赖 | `grep plugin_manager services/l3-orchestration` 为空 |
+| T2.8 | 移除 L3 对 `plugin_manager`、`base.plugins.harness.manifest` 的全部依赖 | `grep plugin_manager services/orchestration` 为空 |
 | T2.9 | 单测：策略三档、审批联动、额度 503 fail-closed、状态机契约 | 全部通过 |
 | T2.10 | 本地三进程联调：L2(9998) + 新 L3(9100) + 网关(9999) | 现有回归脚本全绿 |
 
@@ -72,7 +72,7 @@
 
 ---
 
-## P3 L3 网关独立工程（`services/l3-gateway`）
+## P3 L3 网关独立工程（`services/gateway`）
 
 > 实施规格：`spec.md` §13（含依赖取舍 G1–G10、决策 D-P3-1..5、验证矩阵 V1–V13、对拍 P1–P14、回滚步骤）。
 > **决策结果（用户已确认）**：D-P3-1=A 共享 Redis client / D-P3-2=B 配额域迁共享+双解析器对拍 / D-P3-3=A llm 模型迁共享 / D-P3-4=A 租约校验与吊销共享化 / D-P3-5=A L2 网关 12 模块全部 shim。
@@ -86,7 +86,7 @@
 | ✅ T3.5 | 抽共享 `domain/credential_resolver.py`；llm 模型迁共享包；L2 `model_credential_service` 改 shim + `configure_l2()` | 网关不 import `base.plugins.harness`；停 L2 仍可转发（假 provider） |
 | ✅ T3.6 | 抽共享 `cache.py`（`RedisCache` + 显式 `configure`），`base/common/cache.py` 改 shim | L2 行为不变；网关不读 `config.conf` |
 | ✅ T3.7 | 抽共享 `domain/lease_auth.py` 与 `domain/lease_revoke.py`；L2 `lease_auth` shim、`gateway_lease_service.revoke_internal` 委托 | L2 签发/吊销路径引用不变；网关去 `base.plugins.harness.services` |
-| ✅ T3.8 | `grep plugin_manager|manifest 旧路径|base.common.gateway` in `services/l3-gateway` | 为空 |
+| ✅ T3.8 | `grep plugin_manager|manifest 旧路径|base.common.gateway` in `services/gateway` | 为空 |
 | ✅ T3.9 | 单测/脚本按 V3–V11：鉴权、白名单、剥离、SSE 逐字节、usage 唯一、预算/并发、Redis 缓存、DB 兜底、审计 | 全部通过，且只用本地假 provider |
 | ✅ T3.10 | 等价对照 V12：同一租约/请求分别打 9990（新）与 9999（旧） | 状态码/响应体/记账字段一致 |
 | ✅ T3.11 | 切换 9999：停旧进程 → 启新入口；报告阶段 1/2/3 | `/health` 正常；`gw:lease:state` 生成；回滚命令可用 |
@@ -126,8 +126,8 @@
 | ID | 任务 | 验收 |
 |---|---|---|
 | T5.1 | `.dockerignore`（排除 `.venv`、`web`、`reports`、`config.conf*`、`.env*`、`secrets/`、`migrations`） | 构建上下文不含敏感文件 |
-| T5.2 | `services/l3-orchestration/Dockerfile`：多阶段、非 root、HEALTHCHECK | 构建成功；`id -u` ≠ 0 |
-| T5.3 | `services/l3-gateway/Dockerfile`：同上 | 同上 |
+| T5.2 | `services/orchestration/Dockerfile`：多阶段、非 root、HEALTHCHECK | 构建成功；`id -u` ≠ 0 |
+| T5.3 | `services/gateway/Dockerfile`：同上 | 同上 |
 | T5.4 | `requirements.lock`：共享包 wheel + 服务依赖精确锁定 | 可离线安装；无编译期依赖 |
 | T5.5 | `deploy/l3/docker-compose.yml`（Spec §6.4）：两服务 + secrets + 固定网段 | `docker compose config` 校验通过 |
 | T5.6 | Redis 网络接入：`agentpanel-net` + `docker network connect agentredis` | 容器内 `PING agentredis` 成功；`aipanel-redis` 无变化 |

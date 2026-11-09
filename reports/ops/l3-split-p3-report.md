@@ -25,9 +25,9 @@
 
 | 验证 | 命令（仓库根目录，`.venv` 解释器） | 结果 |
 |---|---|---|
-| 双解析器对拍 | `.venv\Scripts\python.exe services\l3-gateway\tests\plan_parity.py` | 20/20 PASS |
-| 数据面 V3–V11 | `.venv\Scripts\python.exe services\l3-gateway\tests\verify_gateway.py`（需 9990 宽松实例） | 66/0 |
-| 新旧网关 A/B | `.venv\Scripts\python.exe services\l3-gateway\tests\verify_parity_gateway.py`（`GW_NEW_BASE`/`GW_OLD_BASE`） | 17/0 |
+| 双解析器对拍 | `.venv\Scripts\python.exe services\gateway\tests\plan_parity.py` | 20/20 PASS |
+| 数据面 V3–V11 | `.venv\Scripts\python.exe services\gateway\tests\verify_gateway.py`（需 9990 宽松实例） | 66/0 |
+| 新旧网关 A/B | `.venv\Scripts\python.exe services\gateway\tests\verify_parity_gateway.py`（`GW_NEW_BASE`/`GW_OLD_BASE`） | 17/0 |
 
 关键断言（摘录）：
 
@@ -45,7 +45,7 @@
 
 | 配置项 | 值 | 来源 |
 |---|---|---|
-| 监听 | `127.0.0.1:9999` | `services/l3-gateway/manifest.json` |
+| 监听 | `127.0.0.1:9999` | `services/gateway/manifest.json` |
 | `allow_loopback` | `false` | 同上 / 不设 `GW_ALLOW_LOOPBACK` |
 | `provider_domain_allowlist` | `["api.deepseek.com"]` | 同上 / 不设 `GW_PROVIDER_DOMAIN_ALLOWLIST` |
 | `max_concurrent_requests_per_owner` | `8` | 同上 |
@@ -89,7 +89,7 @@ $env:GW_PORT = '9999'
 Remove-Item Env:GW_ALLOW_LOOPBACK,Env:GW_PROVIDER_DOMAIN_ALLOWLIST,Env:GW_MAX_CONCURRENT_REQUESTS_PER_OWNER,Env:GW_FAIL_CLOSED -ErrorAction SilentlyContinue
 
 New-Item -ItemType Directory -Force -Path (Join-Path $ROOT 'logs') | Out-Null
-Start-Process $VENV -ArgumentList 'services\l3-gateway\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
+Start-Process $VENV -ArgumentList 'services\gateway\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\gw.out.log" -RedirectStandardError "$ROOT\logs\gw.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9999 -ErrorAction SilentlyContinue)
 ```
@@ -206,7 +206,7 @@ git -C $ROOT worktree prune
 
 P3 之后还有 P4（L2 残留边界删除）。回滚必须分**两步**，不能一次把 P3、P4 混在一起 revert：
 
-1. **先 revert P4**：撤销 P4 各组提交（哈希区间 `dd06288..HEAD`，git revert 会自动按时间倒序逐个应用）。此步完成后回到 P3 末态：新工程 `services/l3-gateway` 与 `services/l3-orchestration` 仍在，L2 网关兼容层恢复，三个服务可继续以 P3 方式运行。
+1. **先 revert P4**：撤销 P4 各组提交（哈希区间 `dd06288..HEAD`，git revert 会自动按时间倒序逐个应用）。此步完成后回到 P3 末态：新工程 `services/gateway` 与 `services/orchestration` 仍在，L2 网关兼容层恢复，三个服务可继续以 P3 方式运行。
 2. **再 revert P3**：撤销 P3 的 4 个提交（区间 `02bc87f..dd06288`），回到 P3 前基线 `02bc87f`。
 
 ```powershell
@@ -215,7 +215,7 @@ $ROOT = 'd:\programs\fastapi\agentpanel'
 # 第 1 步：revert P4（区间形式等价于按时间倒序逐提交 revert）
 git -C $ROOT revert --no-commit dd06288..HEAD
 git -C $ROOT diff --stat dd06288   # 预期：无输出（完全回到 P3 末态）
-# 此时重启仍用 P3 入口：services/l3-gateway/run.py、services/l3-orchestration/run.py
+# 此时重启仍用 P3 入口：services/gateway/run.py、services/orchestration/run.py
 
 # 第 2 步：revert P3（4 个提交，区间内含 185f3c1/1245ce4/e005ab6/dd06288）
 git -C $ROOT revert --no-commit 02bc87f..dd06288
@@ -280,7 +280,7 @@ Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDir
 |---|---|---|
 | T4.11 | 确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界 | `rg "base.common.quota.services"` 仅剩 shim 自身 |
 | T4.12 | L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2）；删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth` | 删除后 9998 启动 + 租约签发用例通过 |
-| P5 前置 | `services/l3-gateway` 不得出现 `from base` / `import base`（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型 | `rg "^(from\|import) base" services/l3-gateway` 无匹配；容器镜像构建通过 |
+| P5 前置 | `services/gateway` 不得出现 `from base` / `import base`（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型 | `rg "^(from\|import) base" services/gateway` 无匹配；容器镜像构建通过 |
 
 ### 7.2 双解析器漂移防护（强制要求）
 
@@ -289,13 +289,13 @@ Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDir
 | 侧 | 文件 | 类 |
 |---|---|---|
 | L2（ORM） | `base/common/quota/services/plan_resolver.py` | `L2PlanResolver` |
-| 网关（只读 SQL） | `services/l3-gateway/app/plan_resolver.py` | `SqlPlanResolver` |
+| 网关（只读 SQL） | `services/gateway/app/plan_resolver.py` | `SqlPlanResolver` |
 
 强制流程：
 
 1. 修改共享规则或任一解析器后，必须执行：
    ```powershell
-   .venv\Scripts\python.exe services\l3-gateway\tests\plan_parity.py
+   .venv\Scripts\python.exe services\gateway\tests\plan_parity.py
    ```
    要求 **P1–P14 全 PASS**（20/20）；任一分支不一致即视为阻断，不得上线；
 2. PR/提交说明中注明“双解析器已对拍”；

@@ -21,8 +21,8 @@
 ## manifest 三拆
 
 - [x] L2 `manifest.json` 含 `gateway_issuance`，不再含 `gateway` / `orchestration`
-- [x] `services/l3-gateway/manifest.json` 只含数据面配置
-- [x] `services/l3-orchestration/manifest.json` 只含编排配置
+- [x] `services/gateway/manifest.json` 只含数据面配置
+- [x] `services/orchestration/manifest.json` 只含编排配置
 - [x] 网关/编排配置路径无 `plugin_manager` 引用
 
 ## 入口与健康

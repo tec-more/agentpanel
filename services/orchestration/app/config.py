@@ -2,7 +2,7 @@
 
 与 P1 `base/plugins/harness/services/orchestration_config.py` 的默认值、
 `ORCH_*` 覆盖项与 fail-closed 校验规则逐项一致；区别只有两点：
-- 不再读取 `services/l3-orchestration/manifest.json`；
+- 不再读取 `services/orchestration/manifest.json`；
 - 不再 import `plugin_manager`（C4 在 L3 侧彻底消除）。
 
 必填缺失/类型非法由入口捕获 `ConfigError` 后以退出码 2 终止。

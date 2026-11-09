@@ -1,4 +1,4 @@
-"""L3 网关独立服务入口（services/l3-gateway）。
+"""L3 网关独立服务入口（services/gateway）。
 
 与旧入口 `base/common/gateway/server.py` 的行为契约一致：
 - 端口 9999（本地骨架用 `GW_PORT` 覆盖）、`/health` 形状不变；

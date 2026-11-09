@@ -19,7 +19,7 @@
 - V4/V10 会临时拉起 9991/9992 实例，仅本地、用完即杀
 
 用法（仓库根目录）：
-    python services/l3-gateway/tests/verify_gateway.py
+    python services/gateway/tests/verify_gateway.py
 """
 import asyncio
 import configparser
@@ -429,7 +429,7 @@ async def with_temp_gateway(port: int, extra: Dict[str, Any],
                             action: Callable[[str], Any], label: str) -> None:
     log = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".log")
     proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "services" / "l3-gateway" / "run.py")],
+        [sys.executable, str(ROOT / "services" / "gateway" / "run.py")],
         cwd=str(ROOT), env=gateway_env(port, **extra), stdout=log, stderr=subprocess.STDOUT,
     )
     base = f"http://127.0.0.1:{port}"

@@ -690,7 +690,7 @@ def init_app() -> FastAPI:
         print(f"[警告] 无法注册 Harness 内部路由: {e}")
 
     # 内部网关数据面：deployment 配置决定部署形态，切换不改代码。
-    # - standalone（默认）：由 `services/l3-gateway/run.py` 作为 L3 独立进程服务，
+    # - standalone（默认）：由 `services/gateway/run.py` 作为 L3 独立进程服务，
     #   业务 API 不挂载 /v1/gateway；
     # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
     #   作为可选退回方式。

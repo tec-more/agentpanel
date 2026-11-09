@@ -24,7 +24,7 @@
 
 ### 1.1 提交与删除范围
 
-`33b9883 refactor(l3): 旧编排入口下线，9100 改由 services/l3-orchestration 提供`
+`33b9883 refactor(l3): 旧编排入口下线，9100 改由 services/orchestration 提供`
 
 ```
 D base/plugins/harness/server.py
@@ -42,9 +42,9 @@ M reports/ops/redis-enable-runbook.md
 
 实际执行顺序：
 
-1. 在 **9101** 启动 `services/l3-orchestration/run.py`（同一份新代码，仅换端口），检查健康与 OpenAPI。
+1. 在 **9101** 启动 `services/orchestration/run.py`（同一份新代码，仅换端口），检查健康与 OpenAPI。
 2. 停止旧 9100 进程（`base/plugins/harness/server.py` 入口）。
-3. 在 **9100** 启动新入口 `services/l3-orchestration/run.py`。
+3. 在 **9100** 启动新入口 `services/orchestration/run.py`。
 4. 立即验证 9100 路由、L2→9100 代理行为。
 
 复核时重跑了第 1 步（9101 预演），输出：
@@ -169,7 +169,7 @@ _runtime.configure(
 )
 ```
 
-网关进程在 `services/l3-gateway/app/main.py` 也有同名 `_configure_shared_runtime()`，注入 `gateway_config` / `gateway_upstream_config` / `lease_cache_ttl_seconds` 与 `SqlPlanResolver`。
+网关进程在 `services/gateway/app/main.py` 也有同名 `_configure_shared_runtime()`，注入 `gateway_config` / `gateway_upstream_config` / `lease_cache_ttl_seconds` 与 `SqlPlanResolver`。
 
 ### 2.5 验证方式
 
@@ -207,7 +207,7 @@ GW_PORT=9999
 - `base/plugins/harness/services/orchestration_config.py`：默认 `mode=proxy_l3`，校验仅允许 `l2/proxy_l3`
 - `base/plugins/harness/services/orchestration_proxy.py`：仅 `proxy_l3` 启用代理/跳过 L2 本地鉴权
 - `base/plugins/harness/services/service_auth.py`：写主判断（`mode=proxy_l3` 才允许写）
-- `services/l3-orchestration/app/config.py`、`app/auth.py`：独立编排进程固定 `proxy_l3` 写主
+- `services/orchestration/app/config.py`、`app/auth.py`：独立编排进程固定 `proxy_l3` 写主
 - `base/plugins/harness/api/l2_internal/quota_router.py`：`primary` 判定
 
 ---
@@ -248,8 +248,8 @@ PLUGIN_ORDER_NOW=audit,customer,product,sales,crm,harness,llm,mail
 ```
 D base/common/quota/services/plan_resolver.py        (47 行，L2 ORM 版)
 D base/common/quota/services/plan_service.py         (11 行，L2 shim)
-R services/l3-gateway/app/plan_resolver.py -> packages/agentpanel_common/quota/services/plan_resolver.py
-R services/l3-gateway/tests/plan_parity.py  -> services/l3-gateway/tests/plan_golden.py
+R services/gateway/app/plan_resolver.py -> packages/agentpanel_common/quota/services/plan_resolver.py
+R services/gateway/tests/plan_parity.py  -> services/gateway/tests/plan_golden.py
 ```
 
 当前路径检查：
@@ -257,8 +257,8 @@ R services/l3-gateway/tests/plan_parity.py  -> services/l3-gateway/tests/plan_go
 ```
 base/common/quota/services/plan_resolver.py      -> False
 base/common/quota/services/plan_service.py       -> False
-services/l3-gateway/app/plan_resolver.py         -> False
-services/l3-gateway/tests/plan_parity.py         -> False
+services/gateway/app/plan_resolver.py         -> False
+services/gateway/tests/plan_parity.py         -> False
 ```
 
 口径说明：`plan_parity.py` 在 git 里表现为 **rename 后重写** 为 `plan_golden.py`，不是单纯删除文件；旧路径已不存在。
@@ -274,7 +274,7 @@ services/l3-gateway/tests/plan_parity.py         -> False
 | `base/common/quota/services/__init__.py` | `plan_service.PlanService` |
 | `base/common/quota/services/org_quota_service.py` | `plan_service.PlanService` |
 | `base/plugins/agent/services/execution_service.py` | `plan_service.PlanService` |
-| `services/l3-gateway/app/main.py` | `plan_resolver.SqlPlanResolver` |
+| `services/gateway/app/main.py` | `plan_resolver.SqlPlanResolver` |
 
 对已删除模块的残留引用：
 
@@ -286,7 +286,7 @@ grep "base.common.quota.services.(plan_service|plan_resolver)" -> 0 命中
 
 ### 5.3 黄金用例实测
 
-本次重新执行 `services/l3-gateway/tests/plan_golden.py`：
+本次重新执行 `services/gateway/tests/plan_golden.py`：
 
 ```
 PASS P1 无绑定(org): null

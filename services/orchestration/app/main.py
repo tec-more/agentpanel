@@ -1,4 +1,4 @@
-"""L3 编排独立服务入口（services/l3-orchestration）。
+"""L3 编排独立服务入口（services/orchestration）。
 
 与 P1 `base/plugins/harness/server.py` 的行为契约一致：
 - 端口 9100、`/health/*` 与 `/internal/v1/harness/*` 路径不变；

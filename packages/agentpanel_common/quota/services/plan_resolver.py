@@ -2,9 +2,9 @@
 
 原网关只读 SQL 版迁入共享包，L2 与网关共用同一份实现：
 - L2 启动期显式 `plan_service.configure(SqlPlanResolver())`
-- 网关启动期同样显式注入（`services/l3-gateway/app/main.py`）
+- 网关启动期同样显式注入（`services/gateway/app/main.py`）
 
-语义冻结（spec §13.6，黄金用例见 `services/l3-gateway/tests/plan_golden.py`）：
+语义冻结（spec §13.6，黄金用例见 `services/gateway/tests/plan_golden.py`）：
 - cus：customer_membership(is_active) LEFT JOIN customer_membership_level，取 level_type
   - 无记录 / expire_time 已过（naive 视为 UTC）/ 等级缺失 → "regular"；异常 → None
 - usr：user_role → role，取 is_active 角色 code，按 role.id 升序；异常 → []

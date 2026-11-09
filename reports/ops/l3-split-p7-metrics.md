@@ -19,10 +19,10 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 | 文件 | 变更 |
 |---|---|
 | `packages/agentpanel_common/l3_metrics.py` | **新增**。共享 registry 上的 L3 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
-| `services/l3-gateway/app/main.py` | 挂载中间件 + `/metrics`，注入 DB/Redis 健康探针 |
-| `services/l3-orchestration/app/main.py` | 同上 |
+| `services/gateway/app/main.py` | 挂载中间件 + `/metrics`，注入 DB/Redis 健康探针 |
+| `services/orchestration/app/main.py` | 同上 |
 | `packages/agentpanel_common/gateway/lease_auth.py` | `_get_cached_lease()` 记录 hit/miss/unavailable/error |
-| `services/l3-orchestration/app/l2_quota_client.py` | `_post()` 观测包装，记录 reserve/settle/release 成败与异常类型 |
+| `services/orchestration/app/l2_quota_client.py` | `_post()` 观测包装，记录 reserve/settle/release 成败与异常类型 |
 | `monitoring/prometheus.yml` | 新增 `l3-gateway` / `l3-orchestration` 两个抓取 job |
 | `monitoring/alert_rules.yml` | 新增 `l3_split_alerts` 组 10 条规则，对齐灰度方案 R1–R6 |
 | `monitoring/monitoring-deployment.yml` | 挂载 `alert_rules.yml`（此前未挂载，规则实际未加载）；prometheus 加 `host.docker.internal:host-gateway`；node_exporter 宿主端口 `9100→9101` |

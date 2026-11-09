@@ -42,8 +42,8 @@ COPY run.py /app/run.py
 COPY base/ /app/base/
 COPY packages/ /app/packages/
 # L2 的 gateway/orchestration 配置读取 services/*/manifest.json（不复制运行代码）
-COPY services/l3-orchestration/manifest.json /app/services/l3-orchestration/manifest.json
-COPY services/l3-gateway/manifest.json /app/services/l3-gateway/manifest.json
+COPY services/orchestration/manifest.json /app/services/orchestration/manifest.json
+COPY services/gateway/manifest.json /app/services/gateway/manifest.json
 
 RUN chown -R 10001:10001 /app/base /app/packages /app/run.py /app/services /app/logs /app/storage
 

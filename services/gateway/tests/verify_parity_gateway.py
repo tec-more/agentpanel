@@ -14,7 +14,7 @@
   不擅自重启 9999。
 
 用法（仓库根目录）：
-    python services/l3-gateway/tests/verify_parity_gateway.py
+    python services/gateway/tests/verify_parity_gateway.py
 """
 import asyncio
 import hashlib

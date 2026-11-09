@@ -2,7 +2,7 @@
 
 > 对应 Spec：`reports/specs/l3-service-split/spec.md` 第 12 章（P1 实施规格）
 > 对应任务：`tasks.md` T1.1–T1.8
-> 范围声明：只做搬运 + 兼容 + 配置契约 + 三入口验证；不含 `domain/*` 下沉、`credential_resolver` 抽取、打包、`services/l3-*` 物理迁移、Docker。
+> 范围声明：只做搬运 + 兼容 + 配置契约 + 三入口验证；不含 `domain/*` 下沉、`credential_resolver` 抽取、打包、`services/*` 物理迁移、Docker。
 
 ---
 
@@ -59,8 +59,8 @@
 | 文件 | 归属 | config 内容 |
 |---|---|---|
 | `base/plugins/harness/manifest.json` | L2 | 保留 `hold_ttl_seconds/fail_closed/lock_runtime_version/session_format*/model_credential/runtime/egress/approval`，新增 `gateway_issuance`（租约签发、TTL、RPM、域名白名单、回环、对账）；删除 `gateway` 与 `orchestration` |
-| `services/l3-gateway/manifest.json` | L3 网关 | `config.gateway` 数据面全量键 |
-| `services/l3-orchestration/manifest.json` | L3 编排 | `config.orchestration` 全量键 |
+| `services/gateway/manifest.json` | L3 网关 | `config.gateway` 数据面全量键 |
+| `services/orchestration/manifest.json` | L3 编排 | `config.orchestration` 全量键 |
 
 - 网关：`gateway_config()` = DEFAULTS + L3 manifest + `GW_*` 环境变量；L2 签发路径 `issuance_config()` = DEFAULTS + L2 manifest。
 - 编排：`orchestration_config()` = DEFAULTS + L3 manifest + `ORCH_*` 环境变量。
@@ -128,4 +128,4 @@
 ## 11. 遗留（不属 P1 范围）
 
 - 验证期间创建的一次运行产生了 1 条 `quota_reservation`（hold `orch:hr_917a...`，因步骤载荷 422 未完成结算）；L2 的「配额对账/悬挂预占清理」定时任务会按 TTL 回收。
-- `services/l3-*` 目录目前只有 `manifest.json`，代码仍在 `base/` 下（P2/P3 物理迁移）。
+- `services/*` 目录目前只有 `manifest.json`，代码仍在 `base/` 下（P2/P3 物理迁移）。

@@ -3,7 +3,7 @@
 
 - `issuance_config()`：L2 专用，读 `base/plugins/harness/manifest.json` 的
   `config.gateway_issuance`（租约签发 / 出网策略 / 启停）。
-- `gateway_config()`：网关数据面配置，读 `services/l3-gateway/manifest.json` 的
+- `gateway_config()`：网关数据面配置，读 `services/gateway/manifest.json` 的
   `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不经过 plugin_manager**。
 - `configure_shared_runtime()`：由 L2 启动期显式调用，把配置/上游/租约缓存 TTL
   provider 注入 `packages.agentpanel_common.gateway.runtime`。
@@ -25,7 +25,7 @@ from packages.agentpanel_common.config import (
 from packages.agentpanel_common.upstream import UpstreamConfig
 
 PLUGIN_NAME = "harness"
-GATEWAY_MANIFEST = REPO_ROOT / "services" / "l3-gateway" / "manifest.json"
+GATEWAY_MANIFEST = REPO_ROOT / "services" / "gateway" / "manifest.json"
 
 # 网关对账默认阈值（L2 执行对账）
 RECONCILE_DEFAULTS: Dict[str, Any] = {

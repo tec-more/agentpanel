@@ -65,7 +65,7 @@ services:
   l3-gateway:
     build:
       context: ../..
-      dockerfile: services/l3-gateway/Dockerfile
+      dockerfile: services/gateway/Dockerfile
     image: agentpanel-l3-gateway:${TAG:-local}
     restart: unless-stopped
     ports:
@@ -102,7 +102,7 @@ services:
   l3-orchestration:
     build:
       context: ../..
-      dockerfile: services/l3-orchestration/Dockerfile
+      dockerfile: services/orchestration/Dockerfile
     image: agentpanel-l3-orchestration:${TAG:-local}
     restart: unless-stopped
     ports:
@@ -134,7 +134,7 @@ services:
     command:
       - /bin/sh
       - -c
-      - 'export ORCHESTRATION_SERVICE_SECRET="$$(cat /run/secrets/orchestration_service_secret)"; exec python services/l3-orchestration/run.py'
+      - 'export ORCHESTRATION_SERVICE_SECRET="$$(cat /run/secrets/orchestration_service_secret)"; exec python services/orchestration/run.py'
     networks:
       agentpanel-net:
         ipv4_address: 172.28.0.10

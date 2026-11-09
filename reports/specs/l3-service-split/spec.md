@@ -522,7 +522,7 @@ docker network connect agentpanel-net agentredis
 
 1. `docker compose ps` 两个服务均为 `healthy`；
 2. `GET http://127.0.0.1:9100/health/health` → `status=healthy`、`checks.redis.status=healthy`、`checks.database.status=healthy`；
-3. `GET http://127.0.0.1:9999/health` → `status=ok`、`deployment=standalone`、`fail_closed=true`；建议新增 `/health/health` 并校验 DB/Redis 子项（网关当前 `/health` 不含 redis 检查，属实现项）；
+3. `GET http://127.0.0.1:9999/health` → `status=ok`、`deployment=standalone`、`fail_closed=true`；**已实现** `GET /health/health` 并校验 database/redis 子项（原“网关 `/health` 不含 redis 检查”为 P1 前状态）；
 4. `GET http://127.0.0.1:9100/health/orchestration` → 只读写拒绝 + `service_credential` 可读。
 
 ### 8.2 依赖连通
@@ -545,7 +545,7 @@ docker network connect agentpanel-net agentredis
 14. 镜像内无 `config.conf`/`.env`/`secrets`：`docker run --rm --entrypoint sh <image> -c 'find / -maxdepth 4 \( -name config.conf -o -name ".env*" -o -name "*secret*" \)'` → 空（`/run/secrets` 只在运行时挂载）；
 15. `docker history --no-trunc <image> | Select-String 'requirepass|SERVICE_SECRET|password'` → 空；
 16. `docker port` → `127.0.0.1:9999` / `127.0.0.1:9100`，无 `0.0.0.0`；
-17. 重启网关容器 → 8s 内旧租约缓存消失；吊销租约在 8s 内仍可能被接受（记录为已知语义，不是缺陷）；
+17. 重启网关容器：租约缓存实际存放在 Redis（`gw:lease:state:<id>`，TTL 默认 8s），重启不会清空键，旧状态最迟在一个 TTL 后自然过期；吊销为写穿删除，通常立即生效。吊销租约在 ≤8s 内仍可能被接受（记录为已知语义，不是缺陷）；
 18. `docker stop` L2（宿主进程）→ L3 写接口 503、读接口与网关转发仍可用（符合 fail-closed 设计）。
 
 ---
@@ -940,4 +940,29 @@ L2 业务后端 :9998（宿主进程）
 - **如确需在事务内读取未提交数据**：必须先改造解析器为事务感知实现（复用当前事务连接执行同一只读 SQL），补充黄金用例覆盖该场景，并更新本节调用点清单；不得让业务代码直接调用裸 SQL 解析器绕过约束。
 - 解析器只允许 `SELECT`，不得引入任何写路径、`save()` 或事务开启/提交。
 - 修改解析器或套餐规则时，仍须运行 `services/l3-gateway/tests/plan_golden.py`（P1–P14，20/20）。
+- 解析优先级（P6 修正）：`quota_plan_binding` 命中优先；未命中时回落到 `quota_account.plan_id`；两者都不存在时保持“未绑定”语义，不合成套餐。
+
+---
+
+## 16. 实施状态与 P6/P7 结论（2026-11-09）
+
+### 16.1 阶段状态
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| P0–P3 | 完成 | 基线冻结、共享包、L3 编排/网关独立工程均已落地 |
+| P4 | 完成 | L2 删除边界与内部 API 收口（本文件 §3） |
+| P5 | 完成 | 两镜像 + compose 交付；三容器接管 `9998/9999/9100` |
+| P6 | 完成 | T6.1–T6.8 全部通过，报告：`reports/ops/l3-split-acceptance.md` |
+| P7 | 部分完成 | T7.1–T7.3 完成；T7.4（监控指标）未实现；T7.5（删除开关与旧代码）未开始。演练记录：`reports/ops/l3-split-p7-report.md` |
+
+### 16.2 P6 实测与设计假设的两处差异
+
+1. **租约缓存由 Redis 承载，不是进程内存**：键 `gw:lease:state:<lease_id>`，TTL 默认 8s（`services/l3-gateway/app/config.py`，允许 5–10s）。因此网关容器重启不会清空缓存，旧状态最迟在一个 TTL 后自然过期；吊销走写穿删除。该实现比进程内存更好：多实例共享一致视图、重启不丢状态，过期窗口由 TTL 硬约束。
+2. **套餐解析改为“绑定优先 + 回落账户 `plan_id`”**：`PlanService.resolve_plan` 先查 `quota_plan_binding`；未命中时使用 `quota_account.plan_id`；两者都没有才按未绑定处理。修复了“有账户但未绑定”租户被静默不计量的缺口（`packages/agentpanel_common/quota/services/plan_service.py`，覆盖用例 `packages/agentpanel_common/quota/tests/test_resolve_plan.py`）。
+
+### 16.3 已知限制
+
+端口仅回环、`web_fetch`/`web_search` 可绕网关直连、DSH 原生审批无终端应答者、L3 无 `/metrics` 与告警、灰度仅为部署级二元切换、`prepare-secrets.ps1` 生成的 `.env` 仍写旧端口——详见 `reports/ops/l3-split-acceptance.md` §8。
+
 

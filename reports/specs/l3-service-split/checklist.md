@@ -46,3 +46,22 @@
 
 - [x] `reports/ops/l3-split-p1-report.md`（搬运清单 / shim 落点 / import 变更面 / 验证证据 / C1–C4 建议 / 回滚方式）
 - [x] `tasks.md` T1.1–T1.8 勾选
+
+## P6 验收清单（2026-11-09，实测）
+
+- [x] 三容器 healthy；`9998/health/health`、`9999/health` + `/health/health`、`9100/health/health` + `/health/orchestration` 全 200
+- [x] PG 只读（写探测被拒）、Redis 别名 `agentredis`、schema 正向通过、负向（`ORCH_SCHEMA_MIN_VERSION=2`）启动失败
+- [x] L2→L3 代理读、停编排 503、租约→网关、预占/结算链路
+- [x] G1-A/B/C 20 并发：单预留、单结算、单释放
+- [x] 非 root（uid=10001）、端口仅回环、镜像无配置/密钥、层扫描无明文
+- [x] 故障注入 fail-closed（P6 当次注入）
+- [x] 重启语义写入验收：租约缓存由 Redis 承载（`gw:lease:state:*`，TTL≤8s）
+- [x] `reports/ops/l3-split-acceptance.md` 落盘
+
+## P7 文档、灰度与回滚演练
+
+- [x] T7.1 `reports/ops/l3-split-p7-runbook.md`
+- [x] T7.2 回滚演练 A（容器旧端口）与 B（宿主三进程）：均实测并恢复三容器 healthy
+- [x] T7.3 `reports/ops/l3-split-p7-grayscale.md`（保留期/阈值/责任人）
+- [ ] T7.4 监控/告警指标：L3 网关/编排无 `/metrics`，5xx/预占失败/缓存命中未暴露（未实现）
+- [ ] T7.5 收口：灰度开关与旧编排代码未删除，架构图未更新（未开始）

@@ -18,6 +18,6 @@ services:
       - ./out:/out
       # 只读挂载共享包真实出网白名单实现，供只读校验，不修改业务代码。
       - ../../services/gateway/common/service.py:/opt/project_gateway_service.py:ro
-      - ../../packages/agentpanel_common/upstream/egress.py:/opt/project_gateway_egress.py:ro
+      - ../../packages/common/upstream/egress.py:/opt/project_gateway_egress.py:ro
     environment:
       FAKE_PROVIDER_PORT: "18080"

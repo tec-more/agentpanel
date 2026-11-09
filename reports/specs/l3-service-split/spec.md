@@ -4,7 +4,7 @@
 > 前序：`reports/specs/harness-orchestration-split/spec.md`（L3 逻辑拆分，已完成）。
 > 本文解决其遗留问题：L3 仍以 `base/plugins/harness`、`base/common/gateway` 的形式寄生在业务仓库，无法独立构建/发布。
 >
-> **路径同步说明（2026-11-09）**：本文写作时的规划路径为 `packages/agentpanel_common/gateway/*`；同日目录整理先把该包整包迁入 `services/gateway/gateway/`，随后又二次改名为 `services/gateway/common/`（导入名 `services.gateway.common.*`），服务目录也去掉 `l3` 前缀。文中所有路径表述已机械同步为当前布局，但「（新）」「已存在」等时态描述仍属于当时的规划语境；**实际落地位置与依赖方向以 `reports/architecture/as-built-architecture-2026-11-09.md` 和代码为准**。
+> **路径同步说明（2026-11-09）**：本文写作时的规划路径为 `packages/agentpanel_common/gateway/*`（当时包名，保留原字面量）；同日目录整理先把该包整包迁入 `services/gateway/gateway/`，随后又二次改名为 `services/gateway/common/`（导入名 `services.gateway.common.*`），服务目录也去掉 `l3` 前缀；同日 18:26 共享包再由 `packages/agentpanel_common/` 改名为 `packages/common/`，导入名 `packages.agentpanel_common.*` → `packages.common.*`。文中除本行历史包名外的路径表述已机械同步为当前布局，但「（新）」「已存在」等时态描述仍属于当时的规划语境；**实际落地位置与依赖方向以 `reports/architecture/as-built-architecture-2026-11-09.md` 和代码为准**。
 
 ## 0. 目标与非目标
 
@@ -60,9 +60,9 @@
 agentpanel/
 ├─ base/                              # L2 业务后端（保留运行代码，见 §3 删除边界）
 ├─ packages/
-│  └─ agentpanel_common/              # 共享包：模型/平台/契约/upstream/域服务（单一来源）
+│  └─ common/              # 共享包：模型/平台/契约/upstream/域服务（单一来源）
 │     ├─ pyproject.toml
-│     ├─ agentpanel_common/
+│     ├─ common/
 │     │  ├─ env.py                    # 环境变量配置（不读 config.conf）
 │     │  ├─ db.py                     # Tortoise 配置工厂 + 模型注册表
 │     │  ├─ platform/                 # log / exceptions / response / cache / health / masking / security
@@ -101,7 +101,7 @@ agentpanel/
 
 | 方案 | 优点 | 缺点 | 结论 |
 |---|---|---|---|
-| 抽公共包 `agentpanel_common` | 单一来源；版本可锁；模型/契约不漂移 | 需一次性抽包 + L2 兼容层 | **推荐** |
+| 抽公共包 `common` | 单一来源；版本可锁；模型/契约不漂移 | 需一次性抽包 + L2 兼容层 | **推荐** |
 | 复制 `base/common` 到 L3 | 见效快 | 双份模型，表结构变更必然漂移；不可接受 | 拒绝 |
 | git subtree/submodule | 复用仓库历史 | 同步复杂，Windows 协作易出错 | 暂不采用 |
 
@@ -123,8 +123,8 @@ agentpanel/
 
 ### 2.3 模型漂移防护（必须全部落地）
 
-1. **单一来源**：模型类只在 `packages/agentpanel_common/agentpanel_common/models/`；L2 的 `base/plugins/harness/models/harness.py` 等改为 re-export shim，禁止再定义表。
-2. **版本锁定**：共享包版本 `agentpanel_common==x.y.z`；两个 L3 镜像与 L2 的 `requirements.lock` 锁定精确版本；CI 拒绝“未升版却改模型”的 PR。
+1. **单一来源**：模型类只在 `packages/common/models/`；L2 的 `base/plugins/harness/models/harness.py` 等改为 re-export shim，禁止再定义表。
+2. **版本锁定**：共享包版本 `common==x.y.z`（规划中的独立发行包名；当前以仓库内 `packages.common` 形式存在，未独立发布）；两个 L3 镜像与 L2 的 `requirements.lock` 锁定精确版本；CI 拒绝“未升版却改模型”的 PR。
 3. **schema 契约文件**：生成 `contracts/db_schema.json`（表名 + 关键列 + 类型 + 索引），由共享包测试对比 `Tortoise.describe_model()`；任一侧模型与契约不一致即失败。
 4. **启动断言（fail-closed）**：L3 启动查询 `information_schema.columns`，校验所需表/列存在且类型兼容；不一致直接退出（不进入半可用状态）。L3 **不执行**任何 DDL/DML 迁移。
 5. **迁移单一执行方**：只有 L2 跑迁移（§4）；L3 镜像内不包含 `migrations/` 与 `aerich`。
@@ -209,7 +209,7 @@ agentpanel/
 
 | 模块 | 归属 | 处理方式 |
 |---|---|---|
-| `__init__.py` / `client.py` / `config.py` / `egress.py` | 两边 | 整体迁共享包 `agentpanel_common/upstream`；L2 LLM 插件与 L3 网关共用同一实现，禁止复制 |
+| `__init__.py` / `client.py` / `config.py` / `egress.py` | 两边 | 整体迁共享包 `common/upstream`；L2 LLM 插件与 L3 网关共用同一实现，禁止复制 |
 
 ### 3.4 `mode=proxy_l3` 与 `start.py` 挂载
 
@@ -623,8 +623,8 @@ L2 业务后端 :9998（宿主进程）
 
 ### 12.1 共享包路径与导入方式
 
-- 目录：`packages/agentpanel_common/`；新增 `packages/__init__.py` 使其成为仓库根下的可导入命名空间。
-- 导入名：`packages.agentpanel_common.*`（仓库根在 `sys.path`，`python run.py` 与 `python -m base...` 均成立）。
+- 目录：`packages/common/`；新增 `packages/__init__.py` 使其成为仓库根下的可导入命名空间。
+- 导入名：`packages.common.*`（仓库根在 `sys.path`，`python run.py` 与 `python -m base...` 均成立）。
 - 共享包内**禁止**出现 `from base` / `import base`；L2 通过 `base/*` 同路径 shim 反向兼容。
 - 不引入 `pyproject.toml`/editable install（P1 用仓库根路径导入；P5 容器化时再打包 wheel）。
 
@@ -647,7 +647,7 @@ L2 业务后端 :9998（宿主进程）
 
 ### 12.3 兼容层（同路径 re-export，禁止再定义表/逻辑）
 
-以下文件改为薄 shim（`from packages.agentpanel_common.X import *` 或显式导出）：
+以下文件改为薄 shim（`from packages.common.X import *` 或显式导出）：
 
 1. `base/common/masking.py`
 2. `base/common/upstream/__init__.py`、`client.py`、`config.py`、`egress.py`
@@ -660,7 +660,7 @@ L2 业务后端 :9998（宿主进程）
 `base/common/setting.py::get_model_list()` 中把
 `base.common.quota.models.quota|binding|reservation`、
 `base.plugins.harness.models.harness|model_price|service_credential`
-替换为对应 `packages.agentpanel_common.models.*`。`core` 与其它插件模型扫描逻辑保持不变。
+替换为对应 `packages.common.models.*`。`core` 与其它插件模型扫描逻辑保持不变。
 `aerich`/迁移目录若有模型路径引用一并核对（`pyproject.toml`、`migrations/`）。
 
 ### 12.4 manifest 三拆
@@ -673,7 +673,7 @@ L2 业务后端 :9998（宿主进程）
 
 读取方式：
 - `base/common/plugin_manager.get_manifest("harness")` **只服务 L2**；
-- 新增 `packages/agentpanel_common/config.py::load_manifest(path)`（简单 JSON 读取 + 进程内缓存），L3 两个入口各自读自己的 manifest；
+- 新增 `packages/common/config.py::load_manifest(path)`（简单 JSON 读取 + 进程内缓存），L3 两个入口各自读自己的 manifest；
 - L3 配置 = 自己的 manifest 默认值 ← 环境变量覆盖（§12.5），不再经过 `plugin_manager`；
 - L2 租约签发改读 `base/common/gateway/config.py::issuance_config()`（来自 L2 manifest `config.gateway_issuance`）；`gateway_lease_service.py` 中 `gateway_config()` 的 6 个签发字段全部改走 `issuance_config()`。
 
@@ -742,7 +742,7 @@ L2 业务后端 :9998（宿主进程）
 
 ### 12.9 验证步骤（每阶段完成即报告）
 
-1. **共享包与兼容层**：`.venv\Scripts\python.exe -c "import packages.agentpanel_common.models.harness as m; print(m.HarnessRun.__module__)"` → 输出 `packages.agentpanel_common.models.harness`；`python -c "import base.plugins.harness.models.harness"` 仍成功且类对象相同。
+1. **共享包与兼容层**：`.venv\Scripts\python.exe -c "import packages.common.models.harness as m; print(m.HarnessRun.__module__)"` → 输出 `packages.common.models.harness`；`python -c "import base.plugins.harness.models.harness"` 仍成功且类对象相同。
 2. **模型注册**：Tortoise `describe_model()` 表名与拆分前一致（抽查 `harness_gateway_lease`/`usage_record`/`quota_reservation`）。
 3. **L2 启动**：`python run.py`（9998）→ `GET /health/health` 返回 `status=healthy`（database/redis 子项）。
 4. **网关启动**：先注入 `DB_*`/`REDIS_*`，`python -m base.common.gateway.server`（9999）→ `GET /health` 返回 `status=ok`、`deployment=standalone`、`fail_closed=true`。
@@ -774,7 +774,7 @@ L2 业务后端 :9998（宿主进程）
 | G6 | `budget.py` | `base.common.quota.metrics`（Prometheus 计数） | 可 | 随 D-P3-2：A 保留；B 迁共享 |
 | G7 | `budget.py::maybe_auto_revoke` | `base.plugins.harness.services.gateway_lease_service.revoke_internal` | 可 | 吊销核心迁共享 `domain/lease_revoke.py`；L2 委托 |
 | G8 | `lease_auth.py` | `base.common.gateway.config.{gateway_config,lease_cache_ttl_seconds}` | 可 | 共享 `domain/lease_auth.py` 改为注入 config provider；L2 shim 注入 `issuance_config` |
-| G9 | `service.py` / `router.py` / `budget.py` | `base.common.upstream` | 已是 shim | 直接改共享 `packages.agentpanel_common.upstream` |
+| G9 | `service.py` / `router.py` / `budget.py` | `base.common.upstream` | 已是 shim | 直接改共享 `packages.common.upstream` |
 | G10 | `auth.py` / `budget.py` | `base.common.gateway.constants` | 已是 shim | 直接改共享 `services.gateway.common.constants` |
 
 ### 13.2 决策结果（用户已确认 `1B 2A 3A 4A`）
@@ -816,20 +816,20 @@ L2 业务后端 :9998（宿主进程）
 
 | 文件 | 来源/说明 |
 |---|---|
-| `packages/agentpanel_common/prometheus.py`（新） | `base/common/prometheus.py` 迁入 |
-| `packages/agentpanel_common/quota/metrics.py`（新） | `base/common/quota/metrics.py` 迁入，import 改共享 prometheus |
-| `packages/agentpanel_common/quota/services/quota_service.py`（新） | `base/common/quota/services/quota_service.py` 迁入，import 改共享 cache/errors/metrics/models |
-| `packages/agentpanel_common/quota/services/plan_service.py`（新） | 同文件迁入；新增 `PlanResolver` 协议与 `configure(resolver)`；`_customer_level_type`/`_user_role_codes` 委托注入解析器（未注入时返回 `None`/`[]`，与原异常分支一致） |
+| `packages/common/prometheus.py`（新） | `base/common/prometheus.py` 迁入 |
+| `packages/common/quota/metrics.py`（新） | `base/common/quota/metrics.py` 迁入，import 改共享 prometheus |
+| `packages/common/quota/services/quota_service.py`（新） | `base/common/quota/services/quota_service.py` 迁入，import 改共享 cache/errors/metrics/models |
+| `packages/common/quota/services/plan_service.py`（新） | 同文件迁入；新增 `PlanResolver` 协议与 `configure(resolver)`；`_customer_level_type`/`_user_role_codes` 委托注入解析器（未注入时返回 `None`/`[]`，与原异常分支一致） |
 
 **共享包：模型与域（D-P3-3=A / D-P3-4=A）**
 
 | 文件 | 来源/说明 |
 |---|---|
-| `packages/agentpanel_common/models/llm_{enums,provider,model,api_key}.py`（新） | `base/plugins/llm/models/*` 原样迁入；表名/字段/属性不变 |
-| `packages/agentpanel_common/domain/credential_resolver.py`（新） | 解析逻辑迁入；`configure(defaults, env_fallback, env_names)`；不 import `base`/`plugin_manager` |
-| `packages/agentpanel_common/domain/lease_auth.py` | 见上（亦可归入 gateway 包，择一保持单一来源） |
-| `packages/agentpanel_common/domain/lease_revoke.py`（新） | `revoke_internal` 核心：共享 `HarnessGatewayLease` 更新 + `invalidate_lease_cache` + `HarnessAuditService` |
-| `packages/agentpanel_common/db.py` | `gateway_dependency_modules()` = 共享 llm 模型（只读凭据解析用）；**不再注册** `base.core.users.models.*`（套餐解析走只读 SQL） |
+| `packages/common/models/llm_{enums,provider,model,api_key}.py`（新） | `base/plugins/llm/models/*` 原样迁入；表名/字段/属性不变 |
+| `packages/common/domain/credential_resolver.py`（新） | 解析逻辑迁入；`configure(defaults, env_fallback, env_names)`；不 import `base`/`plugin_manager` |
+| `packages/common/domain/lease_auth.py` | 见上（亦可归入 gateway 包，择一保持单一来源） |
+| `packages/common/domain/lease_revoke.py`（新） | `revoke_internal` 核心：共享 `HarnessGatewayLease` 更新 + `invalidate_lease_cache` + `HarnessAuditService` |
+| `packages/common/db.py` | `gateway_dependency_modules()` = 共享 llm 模型（只读凭据解析用）；**不再注册** `base.core.users.models.*`（套餐解析走只读 SQL） |
 
 **L2 shim / 委托（全部行为不变）**
 
@@ -915,7 +915,7 @@ L2 业务后端 :9998（宿主进程）
 - T4.11（D-P3-2=B 后的收口）：确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界。
 - T4.12（新增）：L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2），删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth`。
 - P5 前置复核：`services/gateway` 不得出现 `from base` 导入（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型。
-- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步共享包 `packages/agentpanel_common/quota/services/plan_resolver.py`（唯一实现，L2 与网关共用）；改动后必须运行黄金用例 `services/gateway/tests/plan_golden.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补黄金 fixture 并在 §13.6 登记。
+- **套餐规则漂移防护（1B 强制）**：套餐规则改动必须同步共享包 `packages/common/quota/services/plan_resolver.py`（唯一实现，L2 与网关共用）；改动后必须运行黄金用例 `services/gateway/tests/plan_golden.py`，要求 P1–P14 全 PASS（20/20）；新增套餐分支必须补黄金 fixture 并在 §13.6 登记。
 
 ## 14. P4 网关计费口径（`usage_record.cost`）
 
@@ -930,12 +930,12 @@ L2 业务后端 :9998（宿主进程）
 
 ## 15. 套餐解析器事务约束（唯一 SQL 实现）
 
-`packages/agentpanel_common/quota/services/plan_resolver.py` 通过 `tortoise.connections.get("postgres").execute_query_dict` 直接执行只读 SQL，**不参与调用方已打开的 `in_transaction()` 事务上下文**。
+`packages/common/quota/services/plan_resolver.py` 通过 `tortoise.connections.get("postgres").execute_query_dict` 直接执行只读 SQL，**不参与调用方已打开的 `in_transaction()` 事务上下文**。
 
 - **当前调用点（均不在事务内，符合约束）**：
-  - `packages/agentpanel_common/quota/services/quota_service.py:215`
-  - `packages/agentpanel_common/quota/services/quota_service.py:258`
-  - `packages/agentpanel_common/quota/services/quota_service.py:1113`
+  - `packages/common/quota/services/quota_service.py:215`
+  - `packages/common/quota/services/quota_service.py:258`
+  - `packages/common/quota/services/quota_service.py:1113`
   - `services/gateway/common/budget.py:290`
   - `base/plugins/agent/services/execution_service.py:174`
 - **新增调用点禁止**在 `in_transaction()` 内调用 `PlanService.resolve_plan()` / `SqlPlanResolver`；事务内读取不会被解析器感知，可能读到事务外的旧快照。
@@ -961,7 +961,7 @@ L2 业务后端 :9998（宿主进程）
 ### 16.2 P6 实测与设计假设的两处差异
 
 1. **租约缓存由 Redis 承载，不是进程内存**：键 `gw:lease:state:<lease_id>`，TTL 默认 8s（`services/gateway/app/config.py`，允许 5–10s）。因此网关容器重启不会清空缓存，旧状态最迟在一个 TTL 后自然过期；吊销走写穿删除。该实现比进程内存更好：多实例共享一致视图、重启不丢状态，过期窗口由 TTL 硬约束。
-2. **套餐解析改为“绑定优先 + 回落账户 `plan_id`”**：`PlanService.resolve_plan` 先查 `quota_plan_binding`；未命中时使用 `quota_account.plan_id`；两者都没有才按未绑定处理。修复了“有账户但未绑定”租户被静默不计量的缺口（`packages/agentpanel_common/quota/services/plan_service.py`，覆盖用例 `packages/agentpanel_common/quota/tests/test_resolve_plan.py`）。
+2. **套餐解析改为“绑定优先 + 回落账户 `plan_id`”**：`PlanService.resolve_plan` 先查 `quota_plan_binding`；未命中时使用 `quota_account.plan_id`；两者都没有才按未绑定处理。修复了“有账户但未绑定”租户被静默不计量的缺口（`packages/common/quota/services/plan_service.py`，覆盖用例 `packages/common/quota/tests/test_resolve_plan.py`）。
 
 ### 16.3 已知限制
 

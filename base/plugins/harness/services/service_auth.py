@@ -16,8 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Request
 
-from packages.agentpanel_common.gateway_constants import is_gateway_virtual_key, looks_like_jwt
-from packages.agentpanel_common.security import build_signature, signature_payload
+from packages.common.gateway_constants import is_gateway_virtual_key, looks_like_jwt
+from packages.common.security import build_signature, signature_payload
 from base.plugins.harness.services.orchestration_config import (
     auth_timestamp_window_seconds,
     internal_allowed_ips,
@@ -72,7 +72,7 @@ def _rejected_token_kind(request: Request) -> Optional[str]:
 
 
 def _signature_payload(timestamp: str, method: str, path: str, body: bytes) -> str:
-    """兼容保留：实现位于共享包 `agentpanel_common.security`。"""
+    """兼容保留：实现位于共享包 `common.security`。"""
     return signature_payload(timestamp, method, path, body)
 
 

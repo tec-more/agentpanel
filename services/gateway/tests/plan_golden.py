@@ -1,6 +1,6 @@
 """套餐解析器黄金用例（P4 E/T4.11 方案 A）。
 
-唯一实现：`packages/agentpanel_common/quota/services/plan_resolver.py`（L2 与网关共用）。
+唯一实现：`packages/common/quota/services/plan_resolver.py`（L2 与网关共用）。
 原双解析器对拍（`plan_parity.py`）退役，本文件保留同一组 fixture，改为对唯一实现的
 行为断言（20 个黄金断言，覆盖 spec §13.6 P1–P14）。
 
@@ -22,14 +22,14 @@ sys.path.insert(0, ROOT)
 
 from tortoise import Tortoise
 
-from packages.agentpanel_common.config import load_l3_common
-from packages.agentpanel_common.db import (
+from packages.common.config import load_l3_common
+from packages.common.db import (
     build_tortoise_orm,
     shared_model_modules,
     stabilize_shared_model_fields,
 )
-from packages.agentpanel_common.quota.services import plan_service
-from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver
+from packages.common.quota.services import plan_service
+from packages.common.quota.services.plan_resolver import SqlPlanResolver
 
 PREFIX = "p4golden_"
 

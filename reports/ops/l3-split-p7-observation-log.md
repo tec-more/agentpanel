@@ -538,3 +538,71 @@ runbook 新增 §4.1 记录命令与**别名在 L2 容器重建后会丢失、�
 口径，`rate()` 跨 18:06 窗口注意）；非切流模式变更、未回切、**不重置计时**：
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
 F3（监控辅助组件 / 外部通知）、F5（settle 0 播种）、F6（五项准入）仍未闭环。
+
+### 11.10 共享包改名 `packages/agentpanel_common` → `packages/common`（2026-11-09 18:26–18:37 +0800）
+
+用户「agentpanel_common 名称改为common」，经选项确认落点 `packages/common/`、运行态「重建并切换」。
+**只改包名与导入名，运行时标识全部不变**：compose 服务名 `l2/l3-gateway/l3-orchestration`、
+容器/镜像名 `agentpanel-l3-*`、manifest `name`、Prometheus 6 job / 14 规则、指标标签、巡检白名单、
+观察期起算时间。
+
+范围：`git mv packages/agentpanel_common packages/common`（50 文件由 git 识别为 rename 保留历史）；
+全仓 **117 文件 / 338 处** bytes 级替换三类路径写法（`packages.agentpanel_common` /
+`packages/agentpanel_common` / `packages\agentpanel_common`）与裸包名，避免全库 CRLF 被改。
+刻意跳过 `.workbuddy` 工作日志、`deploy/harness-linux-verify/out*/` 原始证据、运行数据与敏感配置；
+三份 Dockerfile 均为整目录 `COPY packages/ /app/packages/`，COPY 行无需改。
+历史语义保留：架构文档 §12 变更记录表前/后两列恢复为当时的 `packages/agentpanel_common/...`
+字面量并新增一行本次改名；`spec.md` 路径同步说明保留当时包名；包 `__init__.py` 补三个 `common` 的区分说明。
+
+静态验证：833 个 `.py` 语法 0 失败；`packages/common` 对 `services.*` / `base.*` 反向 import **0**；
+旧名残留仅 3 处刻意保留的历史说明；本地 `packages.common.*` 5 个模块导入 OK；
+Linux 验证链 stub 模块链改为 `packages.common.*` 后出网白名单 **5 用例全绿**。
+
+构建 / 切换：首次 `docker compose build` 因 daocloud `node:20-alpine` 元数据 502 失败
+（另两服务被 CANCELED），**单次重试 L2 成功**（瞬时故障，未改 Dockerfile、未换基础镜像），
+随后 gateway / orchestration 构建成功；`up -d --force-recreate --wait` 三容器 healthy。
+按 runbook §4.1 立刻重跑 `docker network connect --alias agentpanel-l2 app_default agentpanel-l3-l2-1`，
+8080 `/health/health` 200 healthy、harness 401、`/panel` 200（别名未丢）。
+三容器内 `/app/packages` 只剩 `common`，`packages.common` 的 6 个模块全部导入 OK、
+`packages.agentpanel_common` 已不存在（三个进程用同一绝对导入名，避免模块身份分叉）。
+
+复核（18:37）：7 个端点符合基线、`mode=proxy_l3` / `write_enabled=true`；
+巡检 **PASS 16/16 (P16/F0/W0/S0) @18:37:06**（`used 基线对比` 3 键与起算基线一致、非预期告警 PASS）；
+`promtool test rules` SUCCESS；3 个 L3 job up、2 组 14 规则、AM active=2（白名单内辅助组件 down）。
+**未执行 `--append`**，§3 当日行仍保留 17:43 的 PASS 证据，本次结论以本节登记。
+
+**观察期影响**：三容器重建使进程内 Counter **第 5 次**归零
+（15:50 / 16:08 / 16:30 / 18:06 / 18:35），`rate()` 跨 18:35 窗口注意；
+非切流模式变更、未回切、**不重置计时**：起算 13:33:40 +0800，
+最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
+未改 `mode`、未删旧代码、未动计量数据、未读敏感配置、未提前收口。
+F3 / F5 / F6 仍未闭环；本批变更**尚未提交**。
+
+### 11.11 18:39–18:45 用户「修复老坑」→ 8080 网络别名持久化
+
+**问题**：F1 修复时 `docker network connect --alias agentpanel-l2 app_default ...` 是容器级临时状态，
+L2 每次 `--force-recreate` 后别名丢失、8080 退回 502，需手工重连（runbook §4.1 曾两次实证）。
+
+**方案（用户选项确认）**：把别名写进 compose 声明，不改外部仓库、不改运行态 nginx 配置：
+- `deploy/l3/docker-compose.yml`：l2 `networks: [agentpanel-net]` → map，追加
+  `app_default.aliases: [agentpanel-l2]`；顶层补 `app_default: external: true`；文件头「依赖前置」加第 4 条。
+- 新增 `deploy/l3/docker-compose.standalone.yml`：无 legacy 栈时用 `!reset null` 按键删除
+  l2 与顶层 networks 的 `app_default` 键，移除跨项目硬依赖（未选「nginx 走宿主端口」/「nginx 接入 L3 网络」两方案）。
+- 未改端口、compose 服务名、容器/镜像名、Prometheus job、告警规则、manifest name；`aipanel-nginx` 未重启。
+
+**验收**：`docker compose config --format json` 默认配置 l2 两网络且 alias 正确；standalone 叠加后
+l2 与顶层只剩 `agentpanel-net`（`!reset` 用在顶层整个 map 曾误删网络，改按键 `!reset null` 后通过）。
+先 `docker network disconnect app_default agentpanel-l3-l2-1` → `8080/health/health` 超时（老坑复现）；
+再 `up -d --no-deps --force-recreate --wait l2` → `app_default.aliases` 自动含 `agentpanel-l2`，
+三容器 healthy（网关/编排 **未重建**，Up 9 minutes）。
+
+**复核（18:45）**：8080 health 200 healthy / harness **401** / `/panel` 200；9998/9999/9100 均 200；
+`mode=proxy_l3`、`write_enabled=true`；L2 容器内 `packages.common.*` 3 模块导入 OK；
+巡检 **PASS 16/16 (P16/F0/W0/S0) @18:45:12**（`used` 基线未动）、`promtool test rules` SUCCESS。
+
+**观察期影响**：仅 L2 重建，进程内 Counter **第 6 次**归零
+（15:50 / 16:08 / 16:30 / 18:06 / 18:35 / 18:44），`rate()` 跨 18:44 窗口注意；
+非切流模式变更、未回切、**不重置计时**：起算 13:33:40 +0800，
+最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
+未改 `mode`、未删旧代码、未动计量数据、未读敏感配置、未执行 `--append`（§3 当日仍保留 17:43 行）、未提前收口。
+F3 / F5 / F6 仍未闭环；本批变更**尚未提交**。

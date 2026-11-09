@@ -6,7 +6,7 @@
 - 运行用户：`verifier`（UID 10001，非 root）
 - 模型：**未调用真实 provider**。`DEEPSEEK_BASE_URL=http://127.0.0.1:18080/v1` 指向容器内假 provider，key 为占位值 `sk-agentpanel-verify-placeholder`
 - 网络：主验证容器 `--network none`，仅 loopback；另跑一次联网对照容器（仅 web_fetch 域名策略）
-- 业务代码：未修改；仅只读挂载 `services/gateway/common/service.py` 与 `packages/agentpanel_common/upstream/egress.py` 调用真实 `assert_egress_allowed`
+- 业务代码：未修改；仅只读挂载 `services/gateway/common/service.py` 与 `packages/common/upstream/egress.py` 调用真实 `assert_egress_allowed`
 
 ## 结论速览
 
@@ -129,7 +129,7 @@ docker run --rm --name agentpanel-dsh-egress `
 - 上述输出是本次运行的**唯一原始事件流**；`run.ps1` 通过 `-v out:/out` 挂载，重新运行会**直接覆盖**现有文件。需要保留历史时请先提交或另存目录。
 - `out-network/environment.json` 与 `out-network/results.json` 中的 `network_mode_expected: "none"` 是 `run_all.py` 写死的元数据，**与联网对照容器的实际网络模式不符**（该次运行为默认 bridge、无 `--network none`）。联网可达性判定请以 `out-network/results.json` 的 `allowlisted_http_status: [401]` / `non_allowlisted_http_status: [200]` 与对应 transcript 为准，不要依据该元数据字段。
 - 输出不含凭据：假 provider 请求记录已剥离 `Authorization`，占位 key 未写入任何输出文件。
-- 2026-11-09 目录整理后，网关 `service.py` 先从 `packages/agentpanel_common/gateway/` 迁入 `services/gateway/gateway/`，同日又改名为 `services/gateway/common/`；`docker-compose.yml`、`run.ps1`、`README.md` 与本文的挂载路径已同步更新，**重跑请使用 `services/gateway/common/service.py`**。`out*/` 内原始证据记录的是 2026-11-07 运行时的旧路径字面量，属于历史快照，未改写且不影响结论。`scripts/gateway_allowlist_check.py` 的 stub 模块链已改为 `services.gateway.common.*` + `packages.agentpanel_common.*` 两级，本地复跑 5 个出网白名单用例仍全部符合预期。
+- 2026-11-09 目录整理后，网关 `service.py` 先从 `packages/common/gateway/` 迁入 `services/gateway/gateway/`，同日又改名为 `services/gateway/common/`；`docker-compose.yml`、`run.ps1`、`README.md` 与本文的挂载路径已同步更新，**重跑请使用 `services/gateway/common/service.py`**。`out*/` 内原始证据记录的是 2026-11-07 运行时的旧路径字面量，属于历史快照，未改写且不影响结论。`scripts/gateway_allowlist_check.py` 的 stub 模块链已改为 `services.gateway.common.*` + `packages.common.*` 两级，本地复跑 5 个出网白名单用例仍全部符合预期。
 
 ## 构建环境说明
 

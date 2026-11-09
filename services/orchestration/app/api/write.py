@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.http import success_response
-from packages.agentpanel_common.domain.schemas import (
+from packages.common.domain.schemas import (
     ActionEvaluate,
     EventBatch,
     RunComplete,
@@ -18,11 +18,11 @@ from packages.agentpanel_common.domain.schemas import (
     StepEvent,
 )
 from app import auth as service_auth
-from packages.agentpanel_common.domain.audit_service import HarnessAuditService
-from packages.agentpanel_common.domain.event_service import HarnessEventService
+from packages.common.domain.audit_service import HarnessAuditService
+from packages.common.domain.event_service import HarnessEventService
 from app.l3_client_auth import require_harness_client_readonly
-from packages.agentpanel_common.domain.policy_service import HarnessPolicyService
-from packages.agentpanel_common.domain.run_service import (
+from packages.common.domain.policy_service import HarnessPolicyService
+from packages.common.domain.run_service import (
     HarnessRunService,
     run_to_dict,
     session_to_dict,

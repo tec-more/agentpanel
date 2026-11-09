@@ -11,10 +11,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.http import success_response
-from packages.agentpanel_common.models.harness import HarnessRun, HarnessSession, HarnessStep
+from packages.common.models.harness import HarnessRun, HarnessSession, HarnessStep
 from app import auth as service_auth
 from app.l3_client_auth import require_harness_client_readonly
-from packages.agentpanel_common.domain.run_service import (
+from packages.common.domain.run_service import (
     TERMINAL_STATUSES,
     run_to_dict,
     session_to_dict,

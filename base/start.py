@@ -19,8 +19,8 @@ import asyncio
 # 1) 共享缓存绑定 L2 Redis 配置；2) 共享套餐服务注入唯一 SQL 解析器；
 # 3) 共享网关运行时注入 L2 的配置/上游/租约缓存 TTL provider。
 import base.common.cache  # noqa: F401,E402
-from packages.agentpanel_common.quota.services import plan_service as _shared_plan_service  # noqa: E402
-from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver  # noqa: E402
+from packages.common.quota.services import plan_service as _shared_plan_service  # noqa: E402
+from packages.common.quota.services.plan_resolver import SqlPlanResolver  # noqa: E402
 
 _shared_plan_service.configure(SqlPlanResolver())
 from base.plugins.harness.services.gateway_config import configure_shared_runtime  # noqa: E402
@@ -699,7 +699,7 @@ def init_app() -> FastAPI:
         gw_cfg = issuance_config()
         if gateway_enabled():
             if str(gw_cfg.get("deployment")) == "embedded":
-                from packages.agentpanel_common.gateway_constants import GATEWAY_DEPLOY_PREFIX
+                from packages.common.gateway_constants import GATEWAY_DEPLOY_PREFIX
                 from services.gateway.common.app import gateway_app
                 app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
                 print(

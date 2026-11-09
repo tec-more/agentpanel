@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request, status
 
-from packages.agentpanel_common.security import client_ip as _client_ip, hash_secret
+from packages.common.security import client_ip as _client_ip, hash_secret
 from app.readonly_db import get_readonly_db
 
 

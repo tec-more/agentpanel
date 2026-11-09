@@ -66,7 +66,7 @@
 | T4.12 | `base/common/gateway/*` shim | L2 无 `base.common.gateway` 运行引用；`gateway_lease_service` 只依赖 `issuance_config` 与共享 `lease_auth` |
 
 > 目录改名后的现状：`services/gateway/common/` 是网关领域包（**运行代码，不在删除范围**）；
-> `packages/agentpanel_common/` 是跨进程共享内核（**不在删除范围**）。
+> `packages/common/` 是跨进程共享内核（**不在删除范围**）。
 > 不要按旧文档里的 `services/l3-gateway` / `services/l3-orchestration` 路径去找文件。
 
 ### 2.3 配置与部署

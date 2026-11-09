@@ -124,9 +124,9 @@ def generate_migration_filename(
 
 
 def _patch_asyncpg_for_gaussdb():
-    """兼容层：实际补丁由共享包 `packages.agentpanel_common.db` 提供（单一来源）。"""
+    """兼容层：实际补丁由共享包 `packages.common.db` 提供（单一来源）。"""
     try:
-        from packages.agentpanel_common.db import patch_asyncpg_reset
+        from packages.common.db import patch_asyncpg_reset
 
         patch_asyncpg_reset()
         print("[DB] asyncpg reset补丁已应用(GaussDB兼容)")

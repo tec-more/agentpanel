@@ -13,7 +13,7 @@
 """
 from typing import Any, Dict, List
 
-from packages.agentpanel_common.config import (
+from packages.common.config import (
     REPO_ROOT,
     ConfigError,
     EnvOverride,
@@ -22,7 +22,7 @@ from packages.agentpanel_common.config import (
     manifest_section,
     read_env_value,
 )
-from packages.agentpanel_common.upstream import UpstreamConfig
+from packages.common.upstream import UpstreamConfig
 
 GATEWAY_MANIFEST = REPO_ROOT / "services" / "gateway" / "manifest.json"
 

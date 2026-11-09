@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.http import success_response
 from app.l3_client_auth import require_harness_client_readonly
-from packages.agentpanel_common.domain.approval_service import HarnessApprovalService
-from packages.agentpanel_common.domain.schemas import ApprovalDecide, ApprovalRequest
+from packages.common.domain.approval_service import HarnessApprovalService
+from packages.common.domain.schemas import ApprovalDecide, ApprovalRequest
 
 approval_router = APIRouter(prefix="/approvals", tags=["Harness-审批"])
 

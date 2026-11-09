@@ -20,7 +20,7 @@ from loguru import logger
 from base.common.quota.models.binding import QuotaPlanBinding
 from base.common.quota.models.quota import QuotaAccount, QuotaPlan, UsageRecord
 from base.common.quota.models.reservation import QuotaReservation
-from packages.agentpanel_common.quota.services.plan_service import PlanService
+from packages.common.quota.services.plan_service import PlanService
 from base.common.quota.services.quota_service import QuotaService, month_bounds
 
 ACTIVE_HOLD_STATUSES = ("active", "partial")

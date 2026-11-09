@@ -9,7 +9,7 @@
 """
 from typing import Any, Dict, List
 
-from packages.agentpanel_common.config import (
+from packages.common.config import (
     ConfigError,
     EnvOverride,
     apply_env_overrides,

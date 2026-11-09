@@ -122,4 +122,4 @@ GET 9998/api/v1/harness/runs/nope -> 401
 - `reports/specs/l3-service-split/checklist.md`（追加 P6 验收清单与 P7 状态）
 
 未改（T7.1–T7.3 与演练阶段）：业务逻辑代码、`deploy/l3/docker-compose.yml`、`deploy/l3/.env`、secrets。
-T7.4 另行新增 `packages/agentpanel_common/l3_metrics.py`，并在两服务入口、租约缓存、额度客户端与 `monitoring/` 中加入观测旁路（未改业务分支），见 `l3-split-p7-metrics.md` §2。
+T7.4 另行新增 `packages/common/l3_metrics.py`，并在两服务入口、租约缓存、额度客户端与 `monitoring/` 中加入观测旁路（未改业务分支），见 `l3-split-p7-metrics.md` §2。

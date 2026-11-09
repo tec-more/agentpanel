@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Request
 
-from packages.agentpanel_common.gateway_constants import GATEWAY_EVENT_SOURCE
+from packages.common.gateway_constants import GATEWAY_EVENT_SOURCE
 from .logging import gateway_logger
 
 
@@ -16,7 +16,7 @@ async def record_gateway_auth_reject(
 ) -> None:
     """记录鉴权拒绝事件；只记原因与凭据类型，绝不落 token 本身。"""
     try:
-        from packages.agentpanel_common.domain.audit_service import HarnessAuditService
+        from packages.common.domain.audit_service import HarnessAuditService
 
         await HarnessAuditService.record(
             "gateway.auth_rejected",
@@ -54,7 +54,7 @@ async def record_gateway_quota_event(
 ) -> None:
     """额度拒绝/流式截断/吊销事件；不写 prompt/正文，只留额度元数据。"""
     try:
-        from packages.agentpanel_common.domain.audit_service import HarnessAuditService
+        from packages.common.domain.audit_service import HarnessAuditService
 
         payload = {"lease_id": lease_id, "reason": reason}
         if detail:

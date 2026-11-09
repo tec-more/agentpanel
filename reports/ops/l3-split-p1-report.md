@@ -6,11 +6,11 @@
 
 ---
 
-## 1. 搬走了什么（`packages/agentpanel_common`）
+## 1. 搬走了什么（`packages/common`）
 
 | 分类 | 新路径 | 原路径 | 说明 |
 |---|---|---|---|
-| 模型基类 | `packages/agentpanel_common/models/base.py` | `base/common/model.py` | `BaseModel`/`TimestampMixin`；去掉 `base.common.setting` 依赖，`DATETIME_FORMAT` 内置常量 |
+| 模型基类 | `packages/common/models/base.py` | `base/common/model.py` | `BaseModel`/`TimestampMixin`；去掉 `base.common.setting` 依赖，`DATETIME_FORMAT` 内置常量 |
 | 额度模型 | `models/quota.py`、`models/binding.py`、`models/reservation.py` | `base/common/quota/models/*` | 表名/类名未改 |
 | Harness 模型 | `models/harness.py`、`models/model_price.py`、`models/service_credential.py` | `base/plugins/harness/models/*` | 表名/类名未改 |
 | 脱敏 | `masking.py` | `base/common/masking.py` | 零依赖，原样搬运 |
@@ -20,7 +20,7 @@
 | 配置契约 | `config.py` | 新增 | `ConfigError`/`coerce`/`_FILE` 读取/`L2Config`/`L3CommonConfig`/manifest loader |
 | DB | `db.py` | 新增 | 模型模块清单、`build_tortoise_orm()`、`init_db/close_db`、asyncpg 补丁、共享字段稳定化 |
 
-共享包共 20 个文件；`grep -R "from base\|import base" packages/agentpanel_common` 为空（无反向依赖）。
+共享包共 20 个文件；`grep -R "from base\|import base" packages/common` 为空（无反向依赖）。
 
 ## 2. 留了什么（`base/`）
 
@@ -33,14 +33,14 @@
 
 | # | 落点 | 转发目标 |
 |---|---|---|
-| 1 | `base/common/masking.py` | `packages.agentpanel_common.masking` |
-| 2 | `base/common/upstream/__init__.py`、`client.py`、`config.py`、`egress.py`（4 文件） | `packages.agentpanel_common.upstream.*` |
+| 1 | `base/common/masking.py` | `packages.common.masking` |
+| 2 | `base/common/upstream/__init__.py`、`client.py`、`config.py`、`egress.py`（4 文件） | `packages.common.upstream.*` |
 | 3 | `base/common/gateway/constants.py` | `services.gateway.common.constants`（并转发 `contracts`） |
-| 4 | `base/common/model.py` | `packages.agentpanel_common.models.base` |
-| 5 | `base/common/quota/models/{quota,binding,reservation}.py`（3 文件） | `packages.agentpanel_common.models.*` |
-| 6 | `base/plugins/harness/models/{harness,model_price,service_credential}.py`（3 文件） | `packages.agentpanel_common.models.*` |
+| 4 | `base/common/model.py` | `packages.common.models.base` |
+| 5 | `base/common/quota/models/{quota,binding,reservation}.py`（3 文件） | `packages.common.models.*` |
+| 6 | `base/plugins/harness/models/{harness,model_price,service_credential}.py`（3 文件） | `packages.common.models.*` |
 
-**结论：既有 `from base...` 的 import 一个都没改** —— 引用上述 shim 目标的 import 语句共 **167 处 / 145 个文件**，全部经兼容层继续生效。模型类 `__module__` 变为 `packages.agentpanel_common.models.*`，表名/字段不变。
+**结论：既有 `from base...` 的 import 一个都没改** —— 引用上述 shim 目标的 import 语句共 **167 处 / 145 个文件**，全部经兼容层继续生效。模型类 `__module__` 变为 `packages.common.models.*`，表名/字段不变。
 
 ## 4. import 变更数量
 
@@ -101,7 +101,7 @@
 ## 8. 过程中发现并处理的问题（Spec 未覆盖）
 
 1. **asyncpg `UNLISTEN` 兼容补丁只在 L2**
-   L2 的 `base/common/database.py` 有一套 GaussDB/openGauss 补丁；L3 入口从未加载，编排只读池释放连接时报 `FeatureNotSupportedError: UNLISTEN statement is not yet supported`，启动自检失败。已把补丁移入 `packages/agentpanel_common/db.py::patch_asyncpg_reset()`（单一来源），L2 改为调用共享实现，行为不变。
+   L2 的 `base/common/database.py` 有一套 GaussDB/openGauss 补丁；L3 入口从未加载，编排只读池释放连接时报 `FeatureNotSupportedError: UNLISTEN statement is not yet supported`，启动自检失败。已把补丁移入 `packages/common/db.py::patch_asyncpg_reset()`（单一来源），L2 改为调用共享实现，行为不变。
 2. **`base/__init__.py` 的 eager import 破坏入口独立性**
    原文件 eager import `start/core/cli`，任何 `import base.common.x` 都会把 L2 装配拖进 L3 进程（并导致多进程抢同一日志文件）。已清空，保留 docstring。
 3. **Tortoise 抽象基类字段浅共享（新增风险）**

@@ -19,24 +19,24 @@ from typing import AsyncIterator, Tuple
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from packages.agentpanel_common.cache import RedisCache, configure as configure_cache
-from packages.agentpanel_common.config import ConfigError, load_l3_common
-from packages.agentpanel_common.db import (
+from packages.common.cache import RedisCache, configure as configure_cache
+from packages.common.config import ConfigError, load_l3_common
+from packages.common.db import (
     build_tortoise_orm,
     gateway_dependency_modules,
     shared_model_modules,
     stabilize_shared_model_fields,
 )
-from packages.agentpanel_common.domain import credential_resolver
+from packages.common.domain import credential_resolver
 from services.gateway.common import runtime as gateway_runtime
 from services.gateway.common.router import gateway_data_router
-from packages.agentpanel_common.l3_metrics import (
+from packages.common.l3_metrics import (
     L3HttpMetricsMiddleware,
     make_metrics_endpoint,
     mark_service,
 )
-from packages.agentpanel_common.quota.services import plan_service
-from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver
+from packages.common.quota.services import plan_service
+from packages.common.quota.services.plan_resolver import SqlPlanResolver
 
 from app import health as health_module
 from app.config import (

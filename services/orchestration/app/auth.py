@@ -1,6 +1,6 @@
 """L3 编排内部认证：只接受服务凭据，不接受用户 JWT / 网关租约 key / 匿名。
 
-签名协议与 L2 共用 `packages.agentpanel_common.security`。
+签名协议与 L2 共用 `packages.common.security`。
 """
 import asyncio
 import hmac
@@ -11,12 +11,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Request
 
-from packages.agentpanel_common.domain.audit_service import HarnessAuditService
-from packages.agentpanel_common.gateway_constants import (
+from packages.common.domain.audit_service import HarnessAuditService
+from packages.common.gateway_constants import (
     is_gateway_virtual_key,
     looks_like_jwt,
 )
-from packages.agentpanel_common.security import build_signature, signature_payload
+from packages.common.security import build_signature, signature_payload
 
 from app.config import (
     auth_timestamp_window_seconds,
@@ -72,7 +72,7 @@ def _rejected_token_kind(request: Request) -> Optional[str]:
 
 
 def _signature_payload(timestamp: str, method: str, path: str, body: bytes) -> str:
-    """兼容保留：实现位于共享包 `agentpanel_common.security`。"""
+    """兼容保留：实现位于共享包 `common.security`。"""
     return signature_payload(timestamp, method, path, body)
 
 

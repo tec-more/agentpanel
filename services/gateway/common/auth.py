@@ -2,7 +2,7 @@
 from fastapi import HTTPException, Request
 
 from .audit import record_gateway_auth_reject
-from packages.agentpanel_common.gateway_constants import (
+from packages.common.gateway_constants import (
     GATEWAY_VIRTUAL_KEY_PREFIX,
     is_gateway_virtual_key,
     looks_like_jwt,

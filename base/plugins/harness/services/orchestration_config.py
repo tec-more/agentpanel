@@ -8,7 +8,7 @@
 """
 from typing import Any, Dict, List
 
-from packages.agentpanel_common.config import (
+from packages.common.config import (
     REPO_ROOT,
     ConfigError,
     EnvOverride,

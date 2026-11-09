@@ -1,7 +1,7 @@
 """
 Harness 模型凭据解析服务（L2 兼容层）
 
-解析逻辑已迁至共享 `packages.agentpanel_common.domain.credential_resolver`（P3 C1/T3.5）。
+解析逻辑已迁至共享 `packages.common.domain.credential_resolver`（P3 C1/T3.5）。
 本文件保留：
 - L2 管理端只读列表 `list_configured()`（CRUD/掩码读留在 L2）；
 - `configure_l2()`：从 harness manifest 惰性注入默认主体 / env fallback / 环境变量名。
@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional
 from base.common.masking import fingerprint, mask_secret
 from base.common.plugin_manager import get_plugin_manager
 from base.plugins.llm.models.api_key import LLMApiKey
-from packages.agentpanel_common.domain import credential_resolver as _shared
-from packages.agentpanel_common.domain.credential_resolver import (  # noqa: F401（对外契约）
+from packages.common.domain import credential_resolver as _shared
+from packages.common.domain.credential_resolver import (  # noqa: F401（对外契约）
     LLM_SERVICE_TYPE,
     ModelCredential,
     ModelCredentialNotConfigured,

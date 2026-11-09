@@ -127,7 +127,7 @@ D base/common/gateway/service.py
 | `base/plugins/harness/api/v1/dashboard_router.py` | `gateway.budget.GatewayBudgetService` → 共享包 |
 | `base/plugins/harness/services/dashboard_service.py` | 同上 |
 | `base/plugins/harness/services/gateway_lease_service.py` | `lease_auth/audit/budget/logging/lease_revoke` → 共享包；`issuance_config` 改从本地 `gateway_config` 导入（5 处减为 4 处） |
-| `base/plugins/harness/services/service_auth.py` | `gateway.constants` → 共享包；签名工具 → `agentpanel_common.security` |
+| `base/plugins/harness/services/service_auth.py` | `gateway.constants` → 共享包；签名工具 → `common.security` |
 | `base/start.py` | 删除 `import base.common.gateway.*`；新增共享套餐注入与 `configure_shared_runtime()`（5 处减为 2 处）；embedded 挂载仍用 `services.gateway.common.app` |
 | `base/plugins/harness/__init__.py` | 删除 shim 再导出（-1），改为本地 `gateway_config.validate_issuance_config` |
 | `base/plugins/harness/services/egress_policy_service.py` | 删除 shim 引用（-1），改为本地 `gateway_config.issuance_config/upstream_allowlist` |
@@ -151,8 +151,8 @@ L2 导入期（`base/start.py` L18–L31）：
 
 ```python
 import base.common.cache
-from packages.agentpanel_common.quota.services import plan_service as _shared_plan_service
-from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver
+from packages.common.quota.services import plan_service as _shared_plan_service
+from packages.common.quota.services.plan_resolver import SqlPlanResolver
 _shared_plan_service.configure(SqlPlanResolver())
 from base.plugins.harness.services.gateway_config import configure_shared_runtime
 configure_shared_runtime()
@@ -248,7 +248,7 @@ PLUGIN_ORDER_NOW=audit,customer,product,sales,crm,harness,llm,mail
 ```
 D base/common/quota/services/plan_resolver.py        (47 行，L2 ORM 版)
 D base/common/quota/services/plan_service.py         (11 行，L2 shim)
-R services/gateway/app/plan_resolver.py -> packages/agentpanel_common/quota/services/plan_resolver.py
+R services/gateway/app/plan_resolver.py -> packages/common/quota/services/plan_resolver.py
 R services/gateway/tests/plan_parity.py  -> services/gateway/tests/plan_golden.py
 ```
 
@@ -316,7 +316,7 @@ EXIT=0
 
 ### 5.4 写路径 / 事务语义是否有变化
 
-`packages/agentpanel_common/quota/services/plan_resolver.py` 只有两次只读查询：
+`packages/common/quota/services/plan_resolver.py` 只有两次只读查询：
 
 ```python
 conn = connections.get("postgres")

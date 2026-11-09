@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 from tortoise.transactions import in_transaction
 
-from packages.agentpanel_common.cache import RedisCache
+from packages.common.cache import RedisCache
 from .runtime import gateway_config
-from packages.agentpanel_common.quota.metrics import inc_gateway_quota_reject, inc_gateway_quota_truncate
-from packages.agentpanel_common.models.quota import QuotaAccount
-from packages.agentpanel_common.quota.services.plan_service import PlanService
-from packages.agentpanel_common.quota.services.quota_service import (
+from packages.common.quota.metrics import inc_gateway_quota_reject, inc_gateway_quota_truncate
+from packages.common.models.quota import QuotaAccount
+from packages.common.quota.services.plan_service import PlanService
+from packages.common.quota.services.quota_service import (
     ACTIVE_OWNERS_KEY,
     QuotaService,
     current_period,
@@ -467,7 +467,7 @@ class GatewayBudgetService:
     @classmethod
     async def _grant_db(cls, lease, owner: OwnerQuota, budget: float, prompt: int, cap: int,
                         requested: int, min_allow: int) -> BudgetGrant:
-        from packages.agentpanel_common.models.harness import HarnessGatewayBudget
+        from packages.common.models.harness import HarnessGatewayBudget
 
         allowance = min(cap, requested)
         try:
@@ -649,7 +649,7 @@ class GatewayBudgetService:
     @classmethod
     async def _settle_db(cls, lease, grant: BudgetGrant, actual: float, truncated: bool,
                          over_budget: bool, *, use_reservation: bool) -> Dict[str, Any]:
-        from packages.agentpanel_common.models.harness import HarnessGatewayBudget
+        from packages.common.models.harness import HarnessGatewayBudget
 
         async with in_transaction() as conn:
             row = await HarnessGatewayBudget.filter(
@@ -708,7 +708,7 @@ class GatewayBudgetService:
 
     @classmethod
     async def _release_db(cls, lease, grant: BudgetGrant, *, use_reservation: bool) -> None:
-        from packages.agentpanel_common.models.harness import HarnessGatewayBudget
+        from packages.common.models.harness import HarnessGatewayBudget
 
         reserved = float(grant.reserved_tokens) if use_reservation else 0.0
         try:
@@ -761,7 +761,7 @@ class GatewayBudgetService:
             except Exception as exc:
                 logger.warning(f"[gateway-budget] Redis 并发计数失败，降级 DB: {exc}")
 
-        from packages.agentpanel_common.models.harness import HarnessGatewayConcurrency
+        from packages.common.models.harness import HarnessGatewayConcurrency
 
         try:
             async with in_transaction() as conn:
@@ -815,7 +815,7 @@ class GatewayBudgetService:
             except Exception as exc:
                 logger.warning(f"[gateway-budget] Redis 并发释放失败，降级 DB: {exc}")
 
-        from packages.agentpanel_common.models.harness import HarnessGatewayConcurrency
+        from packages.common.models.harness import HarnessGatewayConcurrency
 
         try:
             async with in_transaction() as conn:
@@ -840,7 +840,7 @@ class GatewayBudgetService:
                 return
             except Exception as exc:
                 logger.warning(f"[gateway-budget] Redis 拒绝计数失败，落 DB: {exc}")
-        from packages.agentpanel_common.models.harness import HarnessGatewayBudget
+        from packages.common.models.harness import HarnessGatewayBudget
 
         try:
             async with in_transaction() as conn:
@@ -872,7 +872,7 @@ class GatewayBudgetService:
         if getattr(lease, "status", None) != "active":
             return
         try:
-            from packages.agentpanel_common.gateway_constants import GATEWAY_EVENT_SOURCE
+            from packages.common.gateway_constants import GATEWAY_EVENT_SOURCE
             from .lease_revoke import revoke_lease_internal
 
             await revoke_lease_internal(
@@ -917,7 +917,7 @@ class GatewayBudgetService:
             except Exception as exc:
                 logger.warning(f"[gateway-budget] Redis 快照失败，落 DB: {exc}")
 
-        from packages.agentpanel_common.models.harness import HarnessGatewayBudget
+        from packages.common.models.harness import HarnessGatewayBudget
 
         row = await HarnessGatewayBudget.get_or_none(lease_id=lease.lease_id)
         account = await QuotaAccount.get_or_none(
@@ -976,7 +976,7 @@ class GatewayBudgetService:
                              owner_type: Optional[str] = None,
                              owner_id: Optional[int] = None,
                              active_only: bool = True, limit: int = 50) -> Dict[str, Any]:
-        from packages.agentpanel_common.models.harness import HarnessGatewayLease
+        from packages.common.models.harness import HarnessGatewayLease
 
         query = HarnessGatewayLease.all()
         if client_id:

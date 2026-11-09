@@ -12,13 +12,13 @@
 
 P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 `/metrics`，仅有 Docker HEALTHCHECK 与 `/health*`；5xx、预占失败、租约缓存命中未暴露，无告警规则。灰度方案 §4 因此只能靠日志人工统计 R2/R4。
 
-仓库其实已有共享 Prometheus 基础设施（`packages/agentpanel_common/prometheus.py` 的 registry、HTTP 指标、`metrics_endpoint`），L2 在 `base/start.py:729-734` 挂载；L3 两个 `build_app()` 从未挂载，也未接入业务埋点。本阶段复用该 registry，不新建第二套指标系统。
+仓库其实已有共享 Prometheus 基础设施（`packages/common/prometheus.py` 的 registry、HTTP 指标、`metrics_endpoint`），L2 在 `base/start.py:729-734` 挂载；L3 两个 `build_app()` 从未挂载，也未接入业务埋点。本阶段复用该 registry，不新建第二套指标系统。
 
 ## 2. 实现
 
 | 文件 | 变更 |
 |---|---|
-| `packages/agentpanel_common/l3_metrics.py` | **新增**。共享 registry 上的 L3 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
+| `packages/common/l3_metrics.py` | **新增**。共享 registry 上的 L3 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
 | `services/gateway/app/main.py` | 挂载中间件 + `/metrics`，注入 DB/Redis 健康探针 |
 | `services/orchestration/app/main.py` | 同上 |
 | `services/gateway/common/lease_auth.py` | `_get_cached_lease()` 记录 hit/miss/unavailable/error |

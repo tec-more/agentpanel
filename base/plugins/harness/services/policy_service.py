@@ -1,10 +1,10 @@
-"""兼容 shim：实现已迁至共享包 `packages.agentpanel_common.domain.policy_service`。
+"""兼容 shim：实现已迁至共享包 `packages.common.domain.policy_service`。
 
 L2 在启动生命周期内通过 `configure_l2()` 把 manifest 读取器显式注入共享实现，
 共享包因此不再依赖 `plugin_manager`（C4）。
 """
-from packages.agentpanel_common.domain.policy_service import *  # noqa: F401,F403
-from packages.agentpanel_common.domain.policy_service import configure_approval
+from packages.common.domain.policy_service import *  # noqa: F401,F403
+from packages.common.domain.policy_service import configure_approval
 
 PLUGIN_NAME = "harness"
 

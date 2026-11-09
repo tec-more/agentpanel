@@ -6,8 +6,8 @@ from typing import Any, List, Optional, Literal
 from pathlib import Path
 
 # P1：共享包为配置解析与模型的唯一来源（L2 仅保留 config.conf 读取入口）
-from packages.agentpanel_common.config import load_l2_config, read_env_value
-from packages.agentpanel_common.db import shared_model_modules
+from packages.common.config import load_l2_config, read_env_value
+from packages.common.db import shared_model_modules
 
 
 def get_discovered_plugins() -> List[str]:
@@ -117,7 +117,7 @@ def get_model_list() -> List[str]:
 	] + ['aerich.models']
 	return model_list
 
-# 数据库配置（与 L3 共用 packages.agentpanel_common.config 的解析代码）
+# 数据库配置（与 L3 共用 packages.common.config 的解析代码）
 # 环境变量优先（L2 容器化 / L3 env-only 均复用同一套字段名）；配置文件仅作默认值。
 _L2_CONFIG = load_l2_config()
 db_host: str = read_env_value("DB_HOST", "str", default=_L2_CONFIG.db_host)

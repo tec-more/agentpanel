@@ -14,13 +14,13 @@ from typing import AsyncIterator, Tuple
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from packages.agentpanel_common.config import ConfigError, load_l3_common
-from packages.agentpanel_common.db import (
+from packages.common.config import ConfigError, load_l3_common
+from packages.common.db import (
     build_tortoise_orm,
     shared_model_modules,
     stabilize_shared_model_fields,
 )
-from packages.agentpanel_common.l3_metrics import (
+from packages.common.l3_metrics import (
     L3HttpMetricsMiddleware,
     make_metrics_endpoint,
     mark_service,

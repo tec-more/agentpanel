@@ -10,7 +10,7 @@ from typing import Any, Dict
 from fastapi import APIRouter
 from starlette.responses import JSONResponse
 
-from packages.agentpanel_common.config import L3CommonConfig
+from packages.common.config import L3CommonConfig
 
 router = APIRouter()
 

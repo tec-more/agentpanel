@@ -28,7 +28,7 @@ COPY packages/ ./packages/
 COPY services/__init__.py ./services/__init__.py
 COPY services/orchestration/ ./services/orchestration/
 # 编排不再依赖网关服务目录：网关边界常量已下沉到共享基础包
-# （packages/agentpanel_common/gateway_constants.py），无需复制网关包。
+# （packages/common/gateway_constants.py），无需复制网关包。
 
 RUN chown -R 10001:10001 /app
 

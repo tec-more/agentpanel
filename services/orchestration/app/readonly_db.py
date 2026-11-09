@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import asyncpg
 
-from packages.agentpanel_common.config import DbConfig
+from packages.common.config import DbConfig
 
 _readonly_db: Optional["ReadonlyDatabase"] = None
 

@@ -1,0 +1,22 @@
+# 可选叠加文件：无 legacy compose 项目 `app`（app_default 网络不存在）时使用。
+#
+# 用法（注意两个 -f 都要带，env-file 仍需指定）：
+#   docker compose -f deploy/l3/docker-compose.yml \
+#     -f deploy/l3/docker-compose.standalone.yml \
+#     --env-file deploy/l3/.env up -d
+#
+# 效果：移除 l2 对 app_default 的依赖以及顶层的 external 声明，
+#       三容器只在 agentpanel-net 内运行；宿主 8080 入口此时不存在，
+#       直接访问 9998 / 9999 / 9100。
+#
+# 说明：默认 compose 声明 app_default 是为了让 8080 的 agentpanel-l2 别名
+#       在容器重建后自动恢复（runbook §4.1）。只有 legacy nginx 栈整体下线
+#       且不需要 8080 时才需要本叠加文件。
+
+services:
+  l2:
+    networks:
+      app_default: !reset null
+
+networks:
+  app_default: !reset null

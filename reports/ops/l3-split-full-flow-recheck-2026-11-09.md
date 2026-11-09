@@ -14,7 +14,7 @@
 
 | 层 | 检测对象 | 手段 |
 |---|---|---|
-| 构建 | `services/gateway`、`services/orchestration`、`packages/agentpanel_common`、4 份 Dockerfile | AST 解析、import 方向、COPY 契约 |
+| 构建 | `services/gateway`、`services/orchestration`、`packages/common`、4 份 Dockerfile | AST 解析、import 方向、COPY 契约 |
 | 配置 | `deploy/l3/docker-compose.yml`、`.env` 端口契约、secrets 存在性、nginx 路由、监控栈配置 | 文件核对（敏感内容不读取） |
 | 运行态 | 14 个容器、端口发布、健康端点 | `docker ps/inspect`、HTTP GET |
 | 业务链路 | L2 代理、编排写主闸门、只读库、配额 Redis 基线 | 只读探测 + 代码约束核对 |
@@ -32,8 +32,8 @@
 | 检查 | 结果 |
 |---|---|
 | Python 语法（`services`/`packages`/`base`/`monitoring`/`deploy/l3/scripts`） | 829 个 `.py` 全部 `ast.parse` 通过，语法错误 0 |
-| 共享包依赖方向 | `packages/agentpanel_common` 对 `services.*` / `base.*` 的反向 import **0**（已排除 `from .base import` 这类相对导入） |
-| 目录布局 | `services/gateway/common/`（网关领域包）、`services/orchestration/app/`、`packages/agentpanel_common/`（跨进程内核）；无 `services/l3-gateway`、`services/l3-orchestration` 实体目录 |
+| 共享包依赖方向 | `packages/common` 对 `services.*` / `base.*` 的反向 import **0**（已排除 `from .base import` 这类相对导入） |
+| 目录布局 | `services/gateway/common/`（网关领域包）、`services/orchestration/app/`、`packages/common/`（跨进程内核）；无 `services/l3-gateway`、`services/l3-orchestration` 实体目录 |
 | 常量单一来源 | `gateway_constants.py` 定义，`services/gateway/common/constants.py` 仅 re-export；L2/网关/编排三处均 import 共享包，编排 Dockerfile 已无需 COPY 网关包 |
 | Dockerfile | `Dockerfile.l2` / `services/{gateway,orchestration}/Dockerfile` / `deploy/app/Dockerfile` 的 COPY 边界与当前目录一致；L3 两镜像 `read_only` + `/tmp` tmpfs、非 root 用户、HEALTHCHECK 齐备 |
 | 悬空引用 | 运行代码中无旧路径 import；仅 1 处测试文件注释残留（见 F4） |
@@ -105,7 +105,7 @@ aipanel-app / aipanel-nginx / aipanel-dsh / aipanel-redis  Up 2 days（legacy，
 | **F2** | 中 | **L2 容器前端产物版本滞后** | `deploy/l3/Dockerfile.l2` 只 COPY `run.py`/`base`/`packages`/`services` 片段，**未 COPY 当前 `web/dist`**；容器内 `/app/web/dist/index.html` 来自基础镜像 `aipanel-app@sha256:aaac04f3…`（11-05 构建）。sha256：容器 `3717b5a4…` ≠ 宿主 `acc16e92…`。`/panel` 返回 200，但是旧页面 | `deploy/app/Dockerfile` 有 web-builder 阶段覆盖 dist，L3 的 L2 镜像没有等价契约；前端源码变更后新 L2 容器不会同步。建议在 `Dockerfile.l2` 增加 `COPY web/dist/ /app/web/dist/` 并在构建时确认版本一致；**涉及镜像重建，需授权** |
 | **F3** | 低 | **监控栈不完整，存在常驻噪声告警** | `pushgateway` / `node_exporter` 未启动，Prometheus 两个 target down，2 条 `ServiceUnavailable` 持续 firing，被巡检 `EXPECTED_FIRING_JOBS` 白名单忽略；`alertmanager.yml` 只有本地 webhook 落盘 | 白名单会削弱「非预期告警」判据的灵敏度；外部短信/邮件值班渠道仍未接入（观察日志 §6 第 1 项）。建议运维启动辅助组件或把两个 job 从 scrape 配置移除，并明确外部通知渠道或书面接受边界 |
 | **F4** | 低 | 文档残留旧路径 | `services/gateway/tests/plan_golden.py:8` 用法注释仍写 `.venv\Scripts\python.exe services\l3-gateway\tests\plan_golden.py` | 不影响运行（仅注释），复制粘贴会失败。建议改为 `services\gateway\tests\`，属低风险文档修正，仍需授权后执行 |
-| **F5** | 低 | settle 用 0 播种 used 缓存 | `packages/agentpanel_common/quota/services/quota_service.py:763` 与 `:794` `await redis.set(used_key, 0, ex=ttl)` | 与 17:20 的 `used` 缓存键 WARN 相关；读取不写回、settle 可能从 0 起算。收口后改进项，观察期内不改业务代码 |
+| **F5** | 低 | settle 用 0 播种 used 缓存 | `packages/common/quota/services/quota_service.py:763` 与 `:794` `await redis.set(used_key, 0, ex=ttl)` | 与 17:20 的 `used` 缓存键 WARN 相关；读取不写回、settle 可能从 0 起算。收口后改进项，观察期内不改业务代码 |
 | **F6** | 流程 | 收口准入未满足 | §5 五项全未勾选、第 2 周 G1 未做、三方未签、`config.conf` 线下核对未完成 | **T7.5 不得提前执行**；保留 `mode` 开关与旧代码，按灰度方案 §2 顺延 |
 
 > 结论口径：F1/F2 属于「交付/发布契约」缺口，F3/F4/F5 属于外围完善项，F6 是流程状态而非缺陷。**当前 `proxy_l3` 业务链路本身自洽、可运行、可观测、可留痕**，没有发现双写、回落、凭据失效或计量真账偏差。
@@ -168,7 +168,7 @@ aipanel-app / aipanel-nginx / aipanel-dsh / aipanel-redis  Up 2 days（legacy，
 
 配套文档：本仓库 `deploy/nginx/conf.d/agentpanel.conf` 头部加 F1 说明（**保留 `app:9998` upstream 值**，因为该文件属 legacy 单体栈，改值会让本仓库默认部署无法解析；混用两套部署才是原问题）；`reports/ops/l3-split-p7-runbook.md` 新增 §4.1 记录命令、验证基线与持久化警告。
 
-> **持久化注意**：网络别名是容器级临时状态，**L2 容器一旦重建就会丢失**，8080 会退回 502。重建后须重跑 §4.1 第 1 步。刻意不把 `app_default` 写进 `deploy/l3/docker-compose.yml`，避免三容器部署硬依赖另一套 legacy compose 的网络。
+> **持久化注意（18:44 已修复，见 §6.5）**：原网络别名是容器级临时状态，L2 重建会丢失、8080 退回 502。现已把 `app_default` external 网络与 `agentpanel-l2` alias 写进 `deploy/l3/docker-compose.yml`，`--force-recreate l2` 自动恢复，不再需要手工命令；无 legacy 栈时用 `docker-compose.standalone.yml` 叠加移除跨项目依赖。
 
 ### 6.3 F4：注释旧路径（已修复）
 
@@ -180,3 +180,19 @@ aipanel-app / aipanel-nginx / aipanel-dsh / aipanel-redis  Up 2 days（legacy，
 - 未改 `mode`、未删旧代码、未动计量数据、未读敏感配置内容、未提前收口、**不重置计时**（起算 13:33:40 / 最早收口 2026-11-23 13:33:40 不变）。
 - F3（pushgateway / node_exporter 未启动、外部值班通知渠道）、F5（`_settle_redis_counters` 0 播种）、F6（五项准入未满足）仍未闭环，按原报告建议处理。
 - legacy `aipanel-app` / `aipanel-nginx` / `dsh` / `redis` 容器保持运行，未停止、未删除；8080 已不再把流量送给 unhealthy 的旧单体。
+
+### 6.5 18:39–18:45 补记：F1 网络别名持久化（「老坑」修复）
+
+| 项 | 结果 |
+|---|---|
+| 根因 | `docker network connect --alias agentpanel-l2 app_default` 是容器级状态，L2 `--force-recreate` 后别名丢失 → 8080 退回 502 |
+| 修复 | `deploy/l3/docker-compose.yml` 的 l2 `networks` 增加 `app_default.aliases: [agentpanel-l2]`，顶层声明 `app_default: external: true`；不改外部仓库、不改运行态 nginx 配置 |
+| 降级 | 新增 `deploy/l3/docker-compose.standalone.yml`，用 `!reset null` 按键删除两处 `app_default`，供无 legacy 栈环境叠加 |
+| 配置校验 | 默认 config：l2 = `{agentpanel-net, app_default(alias)}`；standalone config：l2 与顶层只剩 `agentpanel-net` |
+| 故障复现 | `docker network disconnect app_default agentpanel-l3-l2-1` → `8080/health/health` 超时 |
+| 自动恢复 | `up -d --no-deps --force-recreate --wait l2` → `app_default.aliases` 自动含 `agentpanel-l2`，三容器 healthy，网关/编排未重建 |
+| 复核 | 8080 200 healthy / harness 401 / `/panel` 200；巡检 PASS 16/16 @18:45:12；promtool SUCCESS；`mode=proxy_l3`；计量基线未动 |
+
+> `!reset` 用在顶层整个 `networks:` map 会误删 `agentpanel-net`（Compose 报 `undefined network`），必须按 `键: !reset null` 写法。
+
+观察期：仅 L2 重建，Counter **第 6 次**归零（15:50 / 16:08 / 16:30 / 18:06 / 18:35 / 18:44），`rate()` 跨 18:44 窗口注意；**不重置计时**，起算 13:33:40 / 最早收口 2026-11-23 13:33 不变。F3 / F5 / F6 仍未闭环，T7.5 不得提前执行。

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
-from packages.agentpanel_common.domain.quota_errors import QuotaError, QuotaReservationConflict
+from packages.common.domain.quota_errors import QuotaError, QuotaReservationConflict
 from app.config import orchestration_config
 from app.auth import build_signature
 
@@ -101,7 +101,7 @@ async def _post_impl(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 def _inc_quota_operation(action: str, result: str, reason: str = "") -> None:
     """T7.4 观测旁路：埋点失败不得影响额度调用。"""
     try:
-        from packages.agentpanel_common.l3_metrics import inc_quota_operation
+        from packages.common.l3_metrics import inc_quota_operation
 
         inc_quota_operation(action, result, reason)
     except Exception:

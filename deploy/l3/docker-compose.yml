@@ -11,6 +11,8 @@
 #   1. docker network create --subnet 172.28.0.0/16 agentpanel-net
 #   2. docker network connect agentpanel-net agentredis   # 热接入，不重启容器
 #   3. 执行 deploy/l3/scripts/prepare-secrets.ps1 生成本地 secrets 与 .env
+#   4. 宿主 8080 入口需要 legacy 项目 `app` 的 app_default 网络（external）；
+#      不需要 8080 时改用 docker-compose.standalone.yml 叠加，见 runbook §4.1
 #
 # 迁移不随容器启动执行；需要迁移时单独运行一次性任务（见 P5 runbook）。
 
@@ -51,7 +53,14 @@ services:
         mode: 0444
       - db_password
       - redis_password
-    networks: [agentpanel-net]
+    # agentpanel-net: L3 内部网络（编排固定 IP 172.28.0.10、agentredis、l2 服务名解析）
+    # app_default: 对外 8080 nginx 所在网络。别名由 compose 声明，容器重建后自动恢复，
+    #   不再依赖手工 `docker network connect --alias agentpanel-l2`（见 runbook §4.1）。
+    networks:
+      agentpanel-net: {}
+      app_default:
+        aliases:
+          - agentpanel-l2
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -148,6 +157,10 @@ services:
 
 networks:
   agentpanel-net:
+    external: true
+  # 由另一仓库的 legacy compose 项目 `app` 创建（aipanel-nginx / 宿主 8080）。
+  # 8080 入口存在时该网络必然存在；无 legacy 栈时叠加 docker-compose.standalone.yml。
+  app_default:
     external: true
 
 secrets:

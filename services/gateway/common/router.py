@@ -25,7 +25,7 @@ from .budget import (
 )
 from .runtime import gateway_config, gateway_upstream_config
 from .logging import gateway_logger
-from packages.agentpanel_common.upstream import client as upstream_client
+from packages.common.upstream import client as upstream_client
 
 gateway_data_router = APIRouter(tags=["Gateway-数据面"])
 

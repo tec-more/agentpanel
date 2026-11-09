@@ -100,28 +100,54 @@ docker network inspect agentpanel-net --format '{{range .Containers}}{{.Name}} {
 - `agentredis` 必须在该网络内，网关/编排才能解析 `agentredis:6379`。
 - 若 `agentpanel-net` 不存在或冲突，先停止容器，再重建网络；`agentredis` 可热接入。
 
-### 4.1 对外 nginx 入口（F1，2026-11-09 18:07 修复）
+### 4.1 对外 nginx 入口（F1 18:07 修复；别名 18:44 持久化）
 
-运行中的 `aipanel-nginx`（宿主 8080）由**另一个目录**的 compose 管理，配置挂载自
+运行中的 `aipanel-nginx`（宿主 8080）由**另一个目录**的 compose 项目 `app` 管理，配置挂载自
 `D:\programs\fastapi\aipaneladmin\deploy\nginx\conf.d\aipanel.conf`，其 upstream 曾指向
-legacy `app:9998`（该容器 DB 未初始化、harness 路由 404）。已改为指向新 L2：
+legacy `app:9998`（该容器 DB 未初始化、harness 路由 404）。已改为 `server agentpanel-l2:9998;`
+并 `nginx -t && nginx -s reload` 生效；外部配置备份为 `aipanel.conf.bak-20261109-1807`。
 
-```powershell
-# 1) 把新 L2 容器热接入 nginx 所在网络并设别名（不重启任何容器）
-docker network connect --alias agentpanel-l2 app_default agentpanel-l3-l2-1
-# 2) 已把 upstream 改为 server agentpanel-l2:9998; 并 nginx -t && nginx -s reload
-docker exec aipanel-nginx nginx -t
-docker exec aipanel-nginx nginx -s reload
+**别名已持久化**：`agentpanel-l2` 不再是手工 `docker network connect` 的容器级临时状态，
+而是写进 `deploy/l3/docker-compose.yml` 的 compose 声明：
+
+```yaml
+services:
+  l2:
+    networks:
+      agentpanel-net: {}
+      app_default:
+        aliases: [agentpanel-l2]
+networks:
+  agentpanel-net:
+    external: true
+  app_default:            # 由 legacy 项目 app 创建
+    external: true
 ```
 
-验证基线：`8080/health/health` = 200 healthy、`8080/api/v1/harness/runs/nope` = **401**
-（代理链路正常，不是 404/503）、`8080/panel` = 200。
+因此 `up -d --force-recreate l2` 会自动把新容器接入 `app_default` 并带上别名。
+18:44 验收：先 `docker network disconnect app_default agentpanel-l3-l2-1` 复现 8080 超时，
+再 `up -d --no-deps --force-recreate --wait l2`，`docker inspect` 显示 `app_default.aliases`
+自动含 `agentpanel-l2`，8080 立即恢复 200 healthy / harness 401 / `/panel` 200，巡检 PASS 16/16。
+**重建后不再需要任何手工网络命令。**
 
-> **重要**：`docker network connect` 的别名是容器级临时状态，**每次 `up -d --force-recreate l2`
-> 或重建 L2 容器后都会丢失**，8080 会退回 502。重建后必须重新执行上面第 1 步
-> （可用 `docker inspect agentpanel-l3-l2-1 --format '{{json .NetworkSettings.Networks}}'`
-> 确认 `app_default` 下仍有 `agentpanel-l2` 别名）。该别名刻意不写进
-> `deploy/l3/docker-compose.yml`，避免三容器部署硬依赖另一套 legacy compose 的网络。
+验证基线：
+
+```powershell
+docker inspect agentpanel-l3-l2-1 --format '{{json .NetworkSettings.Networks}}'
+# app_default.aliases 必须含 agentpanel-l2
+# 8080/health/health 200 healthy；8080/api/v1/harness/runs/nope 401；8080/panel 200
+```
+
+**无 legacy 栈时**：默认 compose 把 `app_default` 声明为 external，网络不存在会导致 `up -d` 失败。
+不需要 8080 时叠加 `docker-compose.standalone.yml`（用 `!reset null` 按键删除 l2 与顶层
+networks 的 `app_default` 键，已用 `config --format json` 验证合并结果）：
+
+```powershell
+docker compose -f deploy/l3/docker-compose.yml -f deploy/l3/docker-compose.standalone.yml `
+  --env-file deploy/l3/.env up -d
+```
+
+叠加后三容器只在 `agentpanel-net` 内，直接访问 `9998/9999/9100`。
 
 ## 5. 密钥轮换
 

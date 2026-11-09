@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from base.common.quota.errors import QuotaError, QuotaReservationConflict
 from base.common.quota.services.quota_service import QuotaService
-from packages.agentpanel_common.domain import quota_backend as _shared
-from packages.agentpanel_common.domain.quota_backend import QuotaUnavailable
+from packages.common.domain import quota_backend as _shared
+from packages.common.domain.quota_backend import QuotaUnavailable
 
 
 async def reserve(

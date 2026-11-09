@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | B1 | `base/plugins/harness/services/orchestration_proxy.py` | `api/v1/session_router.py`（5 处）、`run_router.py`（8 处）、`policy_router.py`（1 处） | `orchestration.mode` 不再为 `proxy_l3`，且 L2 这些路由改为直连/只读后 | L2 启动 `ImportError`，管理台迁移期读写全部不可用 |
 | B2 | `base/plugins/harness/services/orchestration_config.py` | `service_auth.py:21-24`（`auth_timestamp_window_seconds` / `internal_allowed_ips` / `write_enabled` / `orchestration_config`）、`orchestration_proxy.py:9` | L2 内部额度/心跳 API 不再验服务凭据，或改读共享配置 | L2 内部 API 验签失败、代理无法读取下游地址 |
-| B3 | `base/plugins/harness/services/readonly_db.py` | `service_auth.py:27,147`（验签读 `service_credential`） | `service_auth` 改用共享只读连接（`packages.agentpanel_common` 内）后 | L2 `/internal/v1/harness/quota*`、`touch` 验签 500 |
+| B3 | `base/plugins/harness/services/readonly_db.py` | `service_auth.py:27,147`（验签读 `service_credential`） | `service_auth` 改用共享只读连接（`packages.common` 内）后 | L2 `/internal/v1/harness/quota*`、`touch` 验签 500 |
 | B4 | `base/plugins/harness/services/service_auth.py` | L2 内部额度/心跳路由依赖 | 内部 API 下线或迁出后 | L3→L2 额度调用 401 |
 | B5 | `base/plugins/harness/services/quota_backend.py` | 共享分派器（`on_startup` 注入） | 共享 `quota_backend` 改为直连实现后 | L2 额度预占/结算 503（`额度后端未初始化`） |
 | B6 | `base/plugins/harness/api/v1/approval_router.py` | L2 管理台审批查询/处理 | 管理台审批迁移到独立前端服务后 | 管理台审批页 404（L3 仅覆盖创建/决策/待办） |
@@ -48,11 +48,11 @@
 
 已闭环项：
 
-1. 共享 `packages/agentpanel_common/domain/policy_service.py` 不再 import `plugin_manager`，审批配置改为 `configure_approval()` 显式注入。
+1. 共享 `packages/common/domain/policy_service.py` 不再 import `plugin_manager`，审批配置改为 `configure_approval()` 显式注入。
 2. L2 注入点在 `base/plugins/harness/__init__.py:13-16`（`on_startup` 内 `quota_backend.configure_l2()` + `policy_service.configure_l2()`），无 import 副作用。
 3. L3 注入点在 `services/orchestration/app/main.py`（lifespan 内 `quota_backend.configure_l3()`）。
 4. 实测：屏蔽 `base.*` 命名空间后导入 L3 全部模块 → `blocked_base_imports: none`，19 条路由正常构建。
-5. `rg "from base\.|import base\.|plugin_manager"` 在 `services/orchestration/` 与 `packages/agentpanel_common/` 仅命中 docstring。
+5. `rg "from base\.|import base\.|plugin_manager"` 在 `services/orchestration/` 与 `packages/common/` 仅命中 docstring。
 
 未闭环项（需决策，本阶段未动）：`base/plugins/__init__.py` 的传递性模块加载与 `plugin_manager` 单例仍服务 L2 插件装配。编排侧已不再触达它；若要求物理移除，需重构 L2 插件注册为显式清单，属独立阶段，不属于 P2 范围。
 

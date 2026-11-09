@@ -31,15 +31,15 @@
 
 ---
 
-## P1 共享包抽取（`packages/agentpanel_common`）
+## P1 共享包抽取（`packages/common`）
 
 > P1 范围为 Spec §12 已冻结版本：**只做搬运 + 兼容 + manifest 三拆 + 配置契约 + 三入口验证**；
 > `domain/*`、`credential_resolver`、`pyproject.toml/wheel` 推迟到 P2/P3/P5（Spec §12.2、§12.8）。
 
 | ID | 阶段 | 任务（精确文件见 Spec §12） | 验收（每阶段完成即报告） |
 |---|---|---|---|
-| ✅ T1.1 | 契约与共享包 | 建 `packages/__init__.py`、`packages/agentpanel_common/{__init__,config,log,db}.py`、`masking.py`、`upstream/*`、`gateway/{constants,contracts}.py`、`models/{base,quota,binding,reservation,harness,model_price,service_credential}.py`；共享包内禁止 import `base` | 导入成功；`grep -R "from base\|import base" packages/agentpanel_common` 为空；`ConfigError` 缺失/类型错单测通过 |
-| ✅ T1.2 | 兼容层与 import 修正 | 6 组 `base/*` shim（Spec §12.3）；`base/common/setting.py::get_model_list()` 改指共享模型路径；`base/common/log.py` 改为调用共享 `setup_logging()` | 原 167 处 import 无需改；`HarnessRun.__module__` 为 `packages.agentpanel_common.models.harness`；`describe_model()` 表名不变 |
+| ✅ T1.1 | 契约与共享包 | 建 `packages/__init__.py`、`packages/common/{__init__,config,log,db}.py`、`masking.py`、`upstream/*`、`gateway/{constants,contracts}.py`、`models/{base,quota,binding,reservation,harness,model_price,service_credential}.py`；共享包内禁止 import `base` | 导入成功；`grep -R "from base\|import base" packages/common` 为空；`ConfigError` 缺失/类型错单测通过 |
+| ✅ T1.2 | 兼容层与 import 修正 | 6 组 `base/*` shim（Spec §12.3）；`base/common/setting.py::get_model_list()` 改指共享模型路径；`base/common/log.py` 改为调用共享 `setup_logging()` | 原 167 处 import 无需改；`HarnessRun.__module__` 为 `packages.common.models.harness`；`describe_model()` 表名不变 |
 | ✅ T1.3 | manifest 拆分 | 三份 manifest（Spec §12.4）；`base/common/gateway/config.py` 拆出 `gateway_config()`（共享 loader，读 `services/gateway/manifest.json` + env）与 `issuance_config()`（L2 manifest `config.gateway_issuance`）；`orchestration_config.py` 改共享 loader；`gateway_lease_service.py` 签发字段改 `issuance_config()` | `grep plugin_manager` 在网关/编排配置路径为空；两入口配置文件互不读取 |
 | ✅ T1.4 | L2 启动验证 | `.venv\Scripts\python.exe run.py` → 9998 | `GET /health/health` → `status=healthy`；原有路由/插件加载正常 |
 | ✅ T1.5 | 网关启动验证 | 注入 `DB_*`/`REDIS_*` 后 `-m base.common.gateway.server` → 9999 | `GET /health` → `status=ok`、`deployment=standalone`、`fail_closed=true`；负向缺 `DB_PASSWORD` 退出码 2 |

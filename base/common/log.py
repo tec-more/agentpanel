@@ -1,7 +1,7 @@
 """L2 日志入口：实现已迁至共享包，这里只注入 L2 配置（对外 API 不变）。"""
 from base.common.setting import settings
-from packages.agentpanel_common import log as _shared_log
-from packages.agentpanel_common.log import (  # noqa: F401
+from packages.common import log as _shared_log
+from packages.common.log import (  # noqa: F401
     InterceptHandler,
     cleanup_logging,
     json_formatter,

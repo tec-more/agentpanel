@@ -1,13 +1,13 @@
-# P1 验收清单（`packages/agentpanel_common` 抽取 / manifest 三拆 / 配置契约）
+# P1 验收清单（`packages/common` 抽取 / manifest 三拆 / 配置契约）
 
 ## 共享包与兼容层
 
-- [x] `packages/agentpanel_common` 可导入，且包内无 `from base` / `import base`
+- [x] `packages/common` 可导入，且包内无 `from base` / `import base`
 - [x] `masking`、`upstream/*`、`gateway/{constants,contracts}`、`models/*`（6 个模型模块 + base）已迁入共享包
 - [x] 6 组兼容 shim（13 个文件）全部落在原路径，`import *` 单来源转发
 - [x] 引用 shim 目标的 167 处 import / 145 个文件无需修改即可运行
 - [x] `base/common/setting.py::get_model_list()` 改指共享模型路径，模型单一来源
-- [x] `HarnessRun` 等模型 `__module__` 为 `packages.agentpanel_common.models.*`，表名不变
+- [x] `HarnessRun` 等模型 `__module__` 为 `packages.common.models.*`，表名不变
 
 ## 配置契约
 

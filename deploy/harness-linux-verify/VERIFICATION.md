@@ -119,10 +119,16 @@ docker run --rm --name agentpanel-dsh-egress `
   agentpanel-dsh-verify:0.1.5rc1
 ```
 
-原始证据：
+原始证据（**已纳入版本控制**，2026-11-09 起随仓库保留）：
 
 - `out/results.json`、`out/transcript_*.json`、`out/fake_provider_requests.jsonl`
 - `out-network/results.json`、`out-network/transcript_*.json`
+
+证据使用注意：
+
+- 上述输出是本次运行的**唯一原始事件流**；`run.ps1` 通过 `-v out:/out` 挂载，重新运行会**直接覆盖**现有文件。需要保留历史时请先提交或另存目录。
+- `out-network/environment.json` 与 `out-network/results.json` 中的 `network_mode_expected: "none"` 是 `run_all.py` 写死的元数据，**与联网对照容器的实际网络模式不符**（该次运行为默认 bridge、无 `--network none`）。联网可达性判定请以 `out-network/results.json` 的 `allowlisted_http_status: [401]` / `non_allowlisted_http_status: [200]` 与对应 transcript 为准，不要依据该元数据字段。
+- 输出不含凭据：假 provider 请求记录已剥离 `Authorization`，占位 key 未写入任何输出文件。
 
 ## 构建环境说明
 

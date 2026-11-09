@@ -86,3 +86,8 @@ migrations/models/
 deploy/l3/secrets/
 deploy/l3/.env
 !deploy/l3/.env.example
+
+# Linux 容器验证原始证据：有意纳入版本控制，请勿在此添加 out*/ 忽略规则。
+# deploy/harness-linux-verify/out/ 与 out-network/ 是 VERIFICATION.md 与
+# reports/ops/l3-split-acceptance.md §8 结论的唯一原始事件流（不含凭据）。
+# 注意：.dockerignore 里的 out*/ 只用于排除镜像构建上下文，与 git 忽略无关。

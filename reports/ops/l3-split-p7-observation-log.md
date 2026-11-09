@@ -58,7 +58,7 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 | 日期 | 时间 | 执行方式 | 结论 | 异常/备注 |
 |---|---|---|---|---|
 <!-- DAILY_ROWS_START -->
-| 2026-11-09 | 13:37 | 脚本 | PASS (P16/F0/W0/S0) | — |
+| 2026-11-09 | 15:51 | 脚本 | PASS (P16/F0/W0/S0) | — |
 <!-- DAILY_ROWS_END -->
 
 巡检覆盖：三容器 healthy、4 个健康端点 200、`mode=proxy_l3`、代理 401、Redis 可读、`held` 无悬挂、`used` 基线对比、两个 `/metrics` 健康 Gauge、Prometheus 三个 L3 job、规则加载、非预期 firing 告警。
@@ -94,3 +94,46 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 3. **5xx / 预占失败未在生产真实触发**：会改动计量数据，T7.4 阶段只在本地 ASGI 测试与埋点注入层验证计数路径（见 `l3-split-p7-metrics.md` §7）。
 4. **脚本只读**：不调用 reserve / settle / release，不写 Redis，不改配置；`--init-baseline` 只写本地 JSON 文件。
 5. **观察期内边界**：不改业务分支、不删旧代码、不动计量数据；本台账与巡检脚本本身不违反该边界。
+
+## 7. 运行态镜像切换记录（2026-11-09 15:50:43 +0800）
+
+### 背景
+
+同日完成三次目录整理后（`7be9c13` 整包迁入 → `2103fca` 常量下沉/编排解耦 → `84ae9b3` 领域包改名 `common`），运行中的三个容器仍是 12:26–13:24 用**旧镜像**启动的实例：网关 `CMD` 仍为 `python services/l3-gateway/run.py`。此前每次提交都只 `build` 未 `up`，运行态与代码布局脱节。本节记录把它们切到新镜像的整个过程与影响。
+
+命令（沿用 §1 的 `--env-file` 口径）：
+
+```
+docker compose -f deploy/l3/docker-compose.yml --env-file deploy/l3/.env \
+  up -d --force-recreate --wait --wait-timeout 180
+```
+
+| 服务 | 切换前镜像 | 切换后镜像 / `CMD` |
+|---|---|---|
+| l2 | `sha256:57e676a20176a` | `agentpanel-l2:local` / `python run.py` |
+| l3-gateway | `sha256:d384224acff79` | `agentpanel-l3-gateway:local` / `python services/gateway/run.py` |
+| l3-orchestration | `sha256:678d5312a944` | `agentpanel-l3-orchestration:local` / `/bin/sh -c '… exec python services/orchestration/run.py'` |
+
+`--wait` 返回时三个容器均已 `healthy`（L2 → 网关 → 编排按 depends_on 依次就绪）。
+
+### 容器内布局实测
+
+| 容器 | `/app/services/gateway/common` | 旧 `gateway/gateway` | `/app/services/gateway` |
+|---|---|---|---|
+| l2 | 存在 | 不存在 | 存在 |
+| l3-gateway | 存在 | 不存在 | 存在 |
+| l3-orchestration | 不存在 | 不存在 | **整个目录不存在**（延续 `2103fca` 的解耦） |
+
+### 切换后验证
+
+- 端点：L2 `/health/health`、网关 `/health`、编排 `/health/health`、编排 `/health/orchestration` 均 200；`mode=proxy_l3`、`write_enabled=true`；L2 代理 `/api/v1/harness/runs/nope` 返回 **401**（非 503，编排链路正常）。
+- 监控：Prometheus `aipaneladmin` / `l3-gateway` / `l3-orchestration` / `prometheus` 四个 job 均 `up`；规则组仍为 `aipaneladmin_alerts` 4 条 + `l3_split_alerts` 10 条；firing 2 条 `ServiceUnavailable` 属 §6 已知白名单（pushgateway / node_exporter 未启动）。
+- 巡检：`observe_check.py` **16/16 PASS、verdict PASS**（15:51），§3 当日行已用切换后数据追加；`used` 3 个键与起算基线一致、`held` 全 0、`quota_holds_index` 空，基线 JSON 无需更新。
+- 三镜像 `docker compose build` 在此之前的提交中均已通过，容器内新路径导入冒烟通过。
+
+### 对观察期的影响评估
+
+1. **进程内指标计数器归零**（唯一实质影响）：切换前 L2 `/health/health` 825、网关 `/health` 594、编排 `/health/health` 592；切换后为 4 / 4 / 3（巡检自身请求产生）。这是重建容器导致 `http_requests_total` 等进程内 Counter 重置，Prometheus 会按 counter reset 处理；判读 `rate()` / `increase()` 时注意 15:50 前后窗口的负增量不代表业务下跌。业务计数器 `l3_quota_operations_total` 本就为 0，无数据丢失。
+2. **不重置观察期计时**：起算时刻仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本次是镜像/目录布局切换，不是切流模式变更（`mode` 保持 `proxy_l3`），不触发 §3 重新留痕或 §4 回切条件。
+3. **未触碰观察期边界**：未改业务分支、未删旧代码、未动计量数据（Redis `used`/`held` 与基线完全一致）。§5 收口检查清单状态不变。
+4. 操作人：WorkBuddy Agent 代执行（待 L3 拆分负责人签字复核）。

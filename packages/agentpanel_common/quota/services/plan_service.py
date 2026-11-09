@@ -5,7 +5,9 @@
   → 绑定；无会员记录时按 "regular" 兜底
 - usr：用户全部激活角色 code → 绑定集合，priority 大者优先，并列取 plan_id 大者
 - org：客户组织 ID 直接命中 bind_type=organization
-- 未命中绑定：返回 None（不计量不拦截，看板 plan=null）
+- 绑定与账户套餐：绑定命中且套餐 active 时优先；未命中绑定则回落到
+  `quota_account.plan_id` 指向的 active 套餐
+- 两种来源都不存在：返回 None（不计量不拦截，看板 plan=null）
 
 客户等级 / 用户角色是环境相关读取，由入口显式注入同一份共享 resolver：
 - L2 启动期：`base.start` 导入时 `configure(SqlPlanResolver())`
@@ -16,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from ...models.binding import QuotaPlanBinding
-from ...models.quota import QuotaPlan
+from ...models.quota import QuotaAccount, QuotaPlan
 
 VALID_SCOPES = ("cus", "usr", "org", "both")
 
@@ -200,15 +202,25 @@ class PlanService:
             bind_type = QuotaPlanBinding.BIND_TYPE_ORGANIZATION
         else:
             return None
-        if not keys:
-            return None
-        bindings = await QuotaPlanBinding.filter(
-            bind_type=bind_type, bind_key__in=keys
-        ).order_by("-priority", "-plan_id").prefetch_related("plan")
-        for binding in bindings:
-            plan = binding.plan
-            if plan and plan.status == "active":
-                return plan
+        if keys:
+            bindings = await QuotaPlanBinding.filter(
+                bind_type=bind_type, bind_key__in=keys
+            ).order_by("-priority", "-plan_id").prefetch_related("plan")
+            for binding in bindings:
+                plan = binding.plan
+                if plan and plan.status == "active":
+                    return plan
+        return await PlanService._account_plan(owner_type, owner_id)
+
+    @staticmethod
+    async def _account_plan(owner_type: str, owner_id: int) -> Optional[QuotaPlan]:
+        """回落来源：账户自身 plan_id 指向的 active 套餐。"""
+        account = await QuotaAccount.filter(
+            owner_type=owner_type, owner_id=owner_id
+        ).prefetch_related("plan").first()
+        plan = account.plan if account else None
+        if plan and plan.status == "active":
+            return plan
         return None
 
     @staticmethod

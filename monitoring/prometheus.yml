@@ -4,8 +4,10 @@ global:
 
 alerting:
   alertmanagers:
+    # T7.4 后续：告警规则求值后送入 Alertmanager（monitoring-deployment.yml 的
+    # alertmanager 服务）。此前该列表为空，规则只求值、不外发。
     - static_configs:
-        - targets:
+        - targets: ['alertmanager:9093']
 
 rule_files:
   - "alert_rules.yml"

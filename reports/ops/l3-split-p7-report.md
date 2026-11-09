@@ -4,7 +4,7 @@
 - 范围：`reports/specs/l3-service-split/tasks.md` T7.1–T7.5
 - 前提：P6 验收通过（`l3-split-acceptance.md`）；回滚手册 `port-switch-9998-9999-9100.md` §2
 - 原则：不改业务逻辑代码；演练前后校验 `org:14` / `usr:4` 的 `used` 不变
-- 后续补充：本报告落盘后同日补齐 T7.4（只加观测旁路、不改业务分支），详见 `reports/ops/l3-split-p7-metrics.md`；下表 T7.4 状态已同步
+- 后续补充：本报告落盘后同日补齐 T7.4（只加观测旁路、不改业务分支），详见 `reports/ops/l3-split-p7-metrics.md`；下表 T7.4 状态已同步。16:46 又在监控旁路接入 Alertmanager 并修复 `prepare-secrets.ps1` 端口遗留（同文件 §8），未改业务代码、未提前收口
 
 ## 1. P7 条目状态
 

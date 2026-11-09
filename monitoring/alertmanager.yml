@@ -1,0 +1,31 @@
+# T7.4 后续：L3 拆分观察期告警通知链路。
+# 告警由 prometheus.yml 的 alerting.alertmanagers 送入本实例，规则见 alert_rules.yml。
+#
+# 通知渠道：默认 webhook 指向本机 9094 的验证接收器（占位）。运维接入正式渠道时，
+# 修改下方 url 后执行 `docker compose -f monitoring/monitoring-deployment.yml restart alertmanager`。
+# 注意：本镜像为 alertmanager 0.34.2，不支持 --config.expand-env，配置文件中不可写 ${VAR}。
+# 未启动接收器时告警仍会在 Alertmanager 内持久化并可在 UI 查询，但外发投递会失败并在
+# Alertmanager 日志留痕——这是「书面接受」的边界，见 reports/ops/l3-split-p7-metrics.md §7.2。
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default-webhook
+  group_by: ['alertname', 'job']
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: default-webhook
+    webhook_configs:
+      - url: 'http://host.docker.internal:9094/alerts'
+        send_resolved: true
+        max_alerts: 20
+
+# 同一 alertname + job 已有 critical 时抑制对应的 warning，避免重复打扰。
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: ['alertname', 'job']

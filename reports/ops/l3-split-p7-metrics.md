@@ -108,8 +108,55 @@ curl.exe "http://127.0.0.1:9090/api/v1/targets?state=active"
 ## 7. 已知限制
 
 1. **5xx 与预占/结算失败未在生产真实触发**：会改动计量数据，故只在本地 ASGI 测试与埋点函数注入层面验证计数路径；告警表达式通过 promtool 与 Prometheus 实求值验证。
-2. **监控栈只启动了 `prometheus` 单服务**：`pushgateway` / `node_exporter` 等未启动，在 targets 中显示 `down`/`unknown`，不影响 L3 三个 job；本次也未配置 Alertmanager（`alerting.alertmanagers` 为空），**告警规则会被求值但不会向外发送通知**。接入 Alertmanager 与通知渠道属于后续运维事项。
+2. **辅助组件未启动**：`pushgateway` / `node_exporter` 在 targets 中显示 `down`/`unknown`，不影响 L3 三个 job；其 `ServiceUnavailable` 持续 firing 属预期（巡检判 PASS）。Alertmanager 已于 2026-11-09 16:46 接入，告警可送达并经 webhook receiver 投递，但**默认 URL 是本地验证占位、正式通知渠道仍待运维配置**，见 §8 / §8.3。
 3. **标签冲突**：`prometheus.yml` 给两个 job 加了外部 `service` 标签，而 `l3_health_check_status` / `l3_service_info` 自带同名标签，Prometheus 按标准行为把后者重命名为 `exported_service`；告警规则统一使用 `job` 标签，不受影响。
 4. **两个 L3 进程共享指标定义**：编排也暴露恒 0 的租约缓存计数器、网关也暴露恒 0 的额度计数器；按 `job` 过滤即可。
 5. **R5/R7 仍靠人工**：见 §4 末。
 6. **保留期未开始计时**：T7.5 需 T7.4 补齐（已完成）且连续 14 天无 P1 故障、阈值未触发、G1 抽查通过后才能执行；本次未删除任何旧代码或灰度开关。
+
+---
+
+## 8. Alertmanager 接入（2026-11-09 16:46–16:49 +0800，观察期内补齐）
+
+T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部在监控旁路，未改三个 L3 业务进程、
+未改 `mode`、未改业务分支、未删旧代码。操作人：WorkBuddy Agent 代执行（待运维复核）。
+
+### 8.1 变更清单
+
+| 文件 | 内容 |
+|---|---|
+| `monitoring/alertmanager.yml`（新增） | route 按 `alertname`/`job` 分组（`group_wait=10s`、`group_interval=30s`、`repeat_interval=4h`）；receiver `default-webhook`；`send_resolved: true`；critical 抑制同组 warning |
+| `monitoring/monitoring-deployment.yml` | 新增 `alertmanager` 服务（9093:9093、`alertmanager_data` volume、`host.docker.internal:host-gateway`） |
+| `monitoring/prometheus.yml` | `alerting.alertmanagers` 由空 targets 改为 `alertmanager:9093` |
+| `deploy/l3/scripts/prepare-secrets.ps1` | 顺带修复 `.env` 端口遗留：`19999/19100` → `9999/9100`（与 compose 头部、运行 `.env` 一致） |
+
+镜像 `prom/alertmanager:latest`（0.34.2）直连 docker.io 超时，经 daocloud / quay 加速源拉取
+后本地 tag 复用；该版本**不支持 `--config.expand-env`**（`amtool check-config` 会把 `${VAR}`
+判为非法 URL），因此 webhook URL 写成固定值，正式渠道需编辑 `monitoring/alertmanager.yml`
+后重启服务，不使用环境变量插值。
+
+### 8.2 验证（6/6 判据通过）
+
+| 判据 | 证据 |
+|---|---|
+| 配置静态校验 | `promtool check config`（14 条规则）、`amtool check-config` 均 SUCCESS；`docker compose config --quiet` OK |
+| Prometheus → Alertmanager | `/api/v1/alertmanagers`：`activeAlertmanagers=[http://alertmanager:9093/api/v2/alerts]`、`droppedAlertmanagers=[]`；SIGHUP 热重载，Prometheus 容器未重启（`Up 3 hours`） |
+| 真实规则告警送达 AM | `/api/v2/alerts`：2 条 `ServiceUnavailable`（`job=node_exporter` / `pushgateway`，state=active，`generatorURL` 指向 Prometheus） |
+| AM → receiver（真实告警） | AM 日志 16:47:23 `Notify success ... aggrGroup={alertname="ServiceUnavailable", job="node_exporter"} attempts=8 numAlerts=1` |
+| AM → receiver（探针） | 临时本地 webhook（9094）收到 `firing` + `resolved` 两个 POST，`receiver=default-webhook`，payload 含 `groupLabels`/`alerts` |
+| 恢复核验 | 巡检 **16/16 PASS @16:49:40**；3 个 L3 job up、14 条规则加载、三业务容器 healthy、`mode=proxy_l3` |
+
+首次端到端脚本把 webhook payload 当作数组解析（实际是含 `alerts` 字段的对象）而报错，
+未产生结论；重跑改用「AM 内真实告警 + 探针投递」两段判据，如实登记，不把重跑伪装成首次全绿。
+另：`job=pushgateway` 组因验证接收器关闭过早，首次投递重试 9 次后被取消，属验证脚本时序问题，
+非系统缺陷；`repeat_interval=4h`，该组下次通知在 4h 后或状态变化时。
+
+### 8.3 仍存在边界（需运维决策，收口前需补齐或书面接受）
+
+- 默认 webhook URL 为 `http://host.docker.internal:9094/alerts`（本地验证接收器占位），
+  **未接入正式通知渠道**。未启动接收器时，告警仍在 Alertmanager 内持久化、可在 9093 UI/API
+  查询，但外发投递会失败并在 AM 日志留痕；接入正式渠道需改一行 URL 后重启 AM 服务。
+- `pushgateway` / `node_exporter` 未启动，`ServiceUnavailable` 持续 firing 属预期。
+- R5（重复结算 / `used` 多加 / 预占悬挂）与 R7（`used`/`held` 一致性）仍靠人工 G1 抽查。
+- Prometheus 为 SIGHUP 热重载，未重启容器、未清 TSDB；规则求值与抓取可能出现 <15s 的窗口
+  间隙，不影响 14 天观察期计时（计时基于灰度切换与业务进程，非监控组件）。

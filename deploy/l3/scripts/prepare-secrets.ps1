@@ -131,14 +131,16 @@ $l2ConfigPath = Join-Path $secretsDir 'l2_config.conf'
 [System.IO.File]::WriteAllLines($l2ConfigPath, $l2Lines, (New-Object System.Text.UTF8Encoding($false)))
 
 # .env：compose 变量插值（不含密钥）
+# 端口与 deploy/l3/docker-compose.yml 头部约定保持一致：网关 9999 / 编排 9100。
+# 旧端口 19999 / 19100 仅用于 port-switch-9998-9999-9100.md 记载的回滚场景。
 $envContent = @(
     "# 由 deploy/l3/scripts/prepare-secrets.ps1 生成；禁止入库",
     "DB_NAME=$dbName",
     "DB_USER=$dbUser",
     "TAG=local",
     "GW_PROVIDER_DOMAIN_ALLOWLIST=api.deepseek.com",
-    "GW_PUBLIC_BASE_URL=http://127.0.0.1:19999",
-    "ORCH_PUBLIC_BASE_URL=http://127.0.0.1:19100"
+    "GW_PUBLIC_BASE_URL=http://127.0.0.1:9999",
+    "ORCH_PUBLIC_BASE_URL=http://127.0.0.1:9100"
 ) -join "`n"
 [System.IO.File]::WriteAllText($envFile, $envContent + "`n", (New-Object System.Text.UTF8Encoding($false)))
 

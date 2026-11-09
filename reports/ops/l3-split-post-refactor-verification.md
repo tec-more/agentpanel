@@ -97,7 +97,7 @@
 ### 7.2 其它
 
 - 两处旧路径字面量仅存在于 docstring（`common/constants.py:4`、`common/__init__.py:8`），用于说明「先 `gateway/gateway/` 后改名 `common/`」的时间线，不影响导入。
-- `pushgateway` / `node_exporter` 未起、Alertmanager 未配置（规则求值但不会外发通知）仍为 P7 已知限制，见验收报告 §8.4。
+- `pushgateway` / `node_exporter` 未起仍为 P7 已知限制，见验收报告 §8.4；Alertmanager 已于 16:46 接入（规则可送达并经 webhook 投递，正式通知渠道待运维配置），见 `l3-split-p7-metrics.md` §8。
 - 15:50 容器切换造成进程内 Counter 归零，Prometheus 按 counter reset 处理；`rate()` / `increase()` 在 15:50 前后窗口需人工注意，已在 `l3-split-p7-observation-log.md` §7 登记。
 
 ## 8. 首次验证时未执行的项（16:04 已授权补验，结果见 §10）

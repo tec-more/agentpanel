@@ -965,6 +965,6 @@ L2 业务后端 :9998（宿主进程）
 
 ### 16.3 已知限制
 
-端口仅回环、`web_fetch`/`web_search` 可绕网关直连、DSH 原生审批无终端应答者、灰度仅为部署级二元切换、`prepare-secrets.ps1` 生成的 `.env` 仍写旧端口——详见 `reports/ops/l3-split-acceptance.md` §8。原「L3 无 `/metrics` 与告警」缺口已由 T7.4 补齐，但重复结算/`used` 一致性与预占悬挂仍需人工 G1 抽查，且尚未接 Alertmanager（详见 `reports/ops/l3-split-p7-metrics.md` §7）。
+端口仅回环、`web_fetch`/`web_search` 可绕网关直连、DSH 原生审批无终端应答者、灰度仅为部署级二元切换——详见 `reports/ops/l3-split-acceptance.md` §8。`prepare-secrets.ps1` 的 `.env` 旧端口遗留已于 2026-11-09 16:44 修复（`9999/9100`）。原「L3 无 `/metrics` 与告警」缺口已由 T7.4 补齐，Alertmanager 亦于同日 16:46 接入（默认 receiver 为本地占位，正式通知渠道待运维配置，详见 `reports/ops/l3-split-p7-metrics.md` §8）；但重复结算/`used` 一致性与预占悬挂仍需人工 G1 抽查。
 
 

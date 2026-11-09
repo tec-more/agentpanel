@@ -29,7 +29,7 @@ docker network connect agentpanel-net agentredis
 powershell -ExecutionPolicy Bypass -File deploy/l3/scripts/prepare-secrets.ps1
 ```
 
-> **已知遗留**：`prepare-secrets.ps1` 生成的 `deploy/l3/.env` 仍写 `GW_PUBLIC_BASE_URL=http://127.0.0.1:19999`、`ORCH_PUBLIC_BASE_URL=http://127.0.0.1:19100`。重新生成后必须手动改为 `http://127.0.0.1:9999`、`http://127.0.0.1:9100`，否则租约/健康响应中的 `base_url` 会与实际监听不一致（脚本本身未在本阶段修改）。
+> **已修复（2026-11-09 16:44）**：`prepare-secrets.ps1` 生成的 `deploy/l3/.env` 曾写 `GW_PUBLIC_BASE_URL=http://127.0.0.1:19999`、`ORCH_PUBLIC_BASE_URL=http://127.0.0.1:19100`，需手动改为 `9999/9100`；脚本现已直接生成现行端口，与 `deploy/l3/docker-compose.yml` 头部约定一致，重新生成 secrets 不再需要手改。若按 `port-switch-9998-9999-9100.md` 回滚到旧端口，仍需按该文档临时调整这两个值。
 
 ## 2. 启停与健康
 

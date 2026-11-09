@@ -73,4 +73,4 @@
 - [x] 收口前：T7.5 执行预案、五项准入状态/证据/责任人、三方签字栏已建立（`l3-split-t75-closeout-plan.md`、台账 §5 / §5.1）；**属准备项，不等于准入项通过，五项 checkbox 仍未勾**
 - [ ] 收口前：连续 14 天无 P1 故障、§4 阈值未触发、G1 抽查通过（台账 §5）
 
-已知缺口：Alertmanager 未配置，告警只求值不外发；监控栈仅 prometheus 单服务常驻，`pushgateway`/`node_exporter` down 属预期。二者均记入台账 §6，列为后续 P1 待办，不影响本阶段收口判定的硬项。
+已知缺口（2026-11-09 16:46 更新）：Alertmanager 已接入，告警可送达并经 webhook receiver 投递（6/6 判据通过，见 `l3-split-p7-metrics.md` §8）；**默认 URL 为本地验证占位，正式通知渠道仍待运维提供或书面接受**。监控栈 `pushgateway`/`node_exporter` 未启动、对应 down 属预期。二者仍记入台账 §6，不影响本阶段收口判定的硬项。

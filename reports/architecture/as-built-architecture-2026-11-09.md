@@ -195,7 +195,7 @@ PostgreSQL 位于 `host.docker.internal:15432`（Tortoise ORM + asyncpg），Red
 - L3 网关与编排 `read_only: true` + `/tmp` tmpfs；编排 `depends_on: l2: service_healthy`。
 - 4 个 secrets（`deploy/l3/secrets/`，不入库）：`db_password`、`redis_password`、`orchestration_service_secret`、`l2_config`（挂为 `/app/config.conf`，mode 0444）。配置通过 `*_FILE` 读取。
 - `RUN_DB_MIGRATIONS: "false"`，迁移不随容器启动执行，需一次性任务单独跑。
-- `prepare-secrets.ps1` 生成的 `.env` 仍写旧端口 `19999/19100`（第 140-141 行），重建 secrets 后需手工改为 `9999/9100`——已知遗留缺陷。
+- `prepare-secrets.ps1` 生成的 `.env` 仍写旧端口 `19999/19100`（第 140-141 行），重建 secrets 后需手工改为 `9999/9100`——as-built 时点的已知遗留缺陷（**2026-11-09 16:44 已修复为直接生成现行端口，见 `reports/ops/l3-split-p7-metrics.md` §8.1；本节保留基线快照原文**）。
 
 ## 8. 可观测（T7.4 之后）
 

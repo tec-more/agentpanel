@@ -58,7 +58,7 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 | 日期 | 时间 | 执行方式 | 结论 | 异常/备注 |
 |---|---|---|---|---|
 <!-- DAILY_ROWS_START -->
-| 2026-11-09 | 16:31 | 脚本 | PASS (P16/F0/W0/S0) | — |
+| 2026-11-09 | 16:49 | 脚本 | PASS (P16/F0/W0/S0) | — |
 <!-- DAILY_ROWS_END -->
 
 巡检覆盖：三容器 healthy、4 个健康端点 200、`mode=proxy_l3`、代理 401、Redis 可读、`held` 无悬挂、`used` 基线对比、两个 `/metrics` 健康 Gauge、Prometheus 三个 L3 job、规则加载、非预期 firing 告警。
@@ -113,7 +113,7 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 
 ## 6. 巡检口径与已知缺口
 
-1. **Alertmanager 未配置**：`monitoring/monitoring-deployment.yml` 的 `alerting.alertmanagers` 为空，规则会求值但不会外发通知。每日巡检会拉取 `/api/v1/alerts` 的 firing 列表写入结论，但值班仍需主动查看 Prometheus 告警页；接入通知渠道列为 P1 待办。
+1. **Alertmanager 已接入、通知渠道仍待定**（2026-11-09 16:46，见 §10 与 `l3-split-p7-metrics.md` §8）：`prometheus.yml` 的 `alerting.alertmanagers` 指向 `alertmanager:9093`，规则告警可送达 AM 并经 webhook receiver 投递；但默认 URL 为本地验证占位 `http://host.docker.internal:9094/alerts`，**正式通知渠道待运维提供或书面接受**。每日巡检仍会拉取 `/api/v1/alerts` 的 firing 列表写入结论；接入正式渠道列为 P1 待办。
 2. **监控栈仅 prometheus 单服务常驻**：`pushgateway` / `node_exporter` 未启动，二者 `down` 及对应 `ServiceUnavailable` firing 已列入巡检白名单（`EXPECTED_FIRING_JOBS`），不计为非预期告警。若 9090 不可达，Prometheus 相关项记 WARN/SKIP 而非 FAIL，此时必须人工查看告警页并在备注登记。
 3. **5xx / 预占失败未在生产真实触发**：会改动计量数据，T7.4 阶段只在本地 ASGI 测试与埋点注入层验证计数路径（见 `l3-split-p7-metrics.md` §7）。
 4. **脚本只读**：不调用 reserve / settle / release，不写 Redis，不改配置；`--init-baseline` 只写本地 JSON 文件。
@@ -264,3 +264,30 @@ L2 停机时宿主机 9998 返回 502 而非连接拒绝，属 Docker 端口转�
   `rate()` / `increase()` 在 16:31 前后窗口的负增量不代表业务下跌（继 15:50、16:08 之后第三次）。
 - 未改业务分支、未删旧代码、未改 `mode`、未动起算基线。**不重置 14 天计时**：
   起算仍为 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**；不触发灰度方案 §4 回切条件。
+
+---
+
+## 10. 监控告警链路补齐与端口遗留修复（2026-11-09 16:44–16:49 +0800）
+
+用户「继续」后盘点剩余项：11-23 收口 / 第 2 周 G1 / 三方签字属时间或人工锁，
+`config.conf` 属线下受控核对项（不读取、不推断）；本轮只推进两项可执行遗留，
+完整证据见 `l3-split-p7-metrics.md` §8。操作人：WorkBuddy Agent 代执行（待运维复核）。
+
+- 新增 `monitoring/alertmanager.yml` 与 compose `alertmanager` 服务（0.34.2，9093），
+  `prometheus.yml` 的 `alerting.alertmanagers` 指向 `alertmanager:9093`，SIGHUP 热重载。
+- 链路实测 6/6：Prometheus active alertmanager 1 个 / dropped 0；AM 内 2 条真实
+  `ServiceUnavailable`（node_exporter / pushgateway）；AM 日志 16:47:23 `Notify success`；
+  临时 webhook 收到探针 `firing` + `resolved`；`promtool` / `amtool` / compose 静态校验全绿。
+- `prepare-secrets.ps1` 生成 `.env` 的两个 public base URL 由 `19999/19100` 改为
+  `9999/9100`，与现行 compose 及运行态一致；脚本语法静态解析 0 错误。
+
+**边界**：默认 webhook URL 为本地验证占位 `http://host.docker.internal:9094/alerts`，
+正式通知渠道待运维提供（改一行 URL 后重启 AM）；AM 0.34.2 不支持 `--config.expand-env`。
+首次端到端脚本因 payload 解析类型错误未产生结论，重跑改用两段判据，`pushgateway` 组
+首次投递因接收器关闭过早被取消，均已如实登记在 metrics §8.2。
+
+**观察期影响**：监控栈变更不涉及业务进程；Prometheus 未重启（SIGHUP）、TSDB 未清。
+巡检 **16/16 PASS @16:49:40**（3 个 L3 job up、14 条规则加载、firing 均为已知辅助组件 down）；
+`mode=proxy_l3`、used/held 基线不变、三业务容器 healthy。**不重置计时**：起算
+13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发灰度方案 §4 回切条件。
+剩余开放项：正式通知渠道 URL、`config.conf` 线下核对、第 2 周 G1、三方签字、T7.5 到期收口。

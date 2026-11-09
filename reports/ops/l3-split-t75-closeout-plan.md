@@ -162,5 +162,5 @@ docker compose -f deploy/l3/docker-compose.yml --env-file deploy/l3/.env up -d -
 
 1. `config.conf` 是否含真实凭据及 `mode` 覆盖项（线下受控，本预案不读取、不推断）；
 2. `tasks.md` §P4 中 T4.4 / T4.5 / T4.6 / T4.9 是否仍有残留代码，本文未列全，以原文为准；
-3. Alertmanager 已于 2026-11-09 16:46 接入（`l3-split-p7-metrics.md` §8，6/6 判据通过）：告警可由 Prometheus 送达 AM 并经 webhook receiver 投递。但**默认 URL 为本地验证占位、正式通知渠道未配置**，收口前仍需运维提供正式 URL 或书面接受该边界；
+3. Alertmanager 已接入，且 17:18 起告警自动落盘到 `monitoring/alert-sink/alert-events.jsonl`（`l3-split-p7-metrics.md` §8/§9，8/8 判据通过）；**短信/邮件等外部值班通知渠道仍未配置**，收口前仍需运维提供正式 URL 或书面接受该边界；
 4. 单写者闸门改为结构性保证后的具体实现方式（§2.1 备注），需由 L3 拆分负责人确认。

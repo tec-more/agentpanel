@@ -91,3 +91,6 @@ deploy/l3/.env
 # deploy/harness-linux-verify/out/ 与 out-network/ 是 VERIFICATION.md 与
 # reports/ops/l3-split-acceptance.md §8 结论的唯一原始事件流（不含凭据）。
 # 注意：.dockerignore 里的 out*/ 只用于排除镜像构建上下文，与 git 忽略无关。
+
+# Alertmanager 本地告警落盘（运行态事件流，禁止入库）
+monitoring/alert-sink/

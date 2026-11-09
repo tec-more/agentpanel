@@ -108,7 +108,7 @@ curl.exe "http://127.0.0.1:9090/api/v1/targets?state=active"
 ## 7. 已知限制
 
 1. **5xx 与预占/结算失败未在生产真实触发**：会改动计量数据，故只在本地 ASGI 测试与埋点函数注入层面验证计数路径；告警表达式通过 promtool 与 Prometheus 实求值验证。
-2. **辅助组件未启动**：`pushgateway` / `node_exporter` 在 targets 中显示 `down`/`unknown`，不影响 L3 三个 job；其 `ServiceUnavailable` 持续 firing 属预期（巡检判 PASS）。Alertmanager 已于 2026-11-09 16:46 接入，告警可送达并经 webhook receiver 投递，但**默认 URL 是本地验证占位、正式通知渠道仍待运维配置**，见 §8 / §8.3。
+2. **辅助组件未启动**：`pushgateway` / `node_exporter` 在 targets 中显示 `down`/`unknown`，不影响 L3 三个 job；其 `ServiceUnavailable` 持续 firing 属预期（巡检判 PASS）。Alertmanager 已于 2026-11-09 16:46 接入、17:18 起告警自动落盘留痕（见 §9），但**短信/邮件等外部值班通知渠道仍待运维配置或书面接受**，见 §8.3 / §9.4。
 3. **标签冲突**：`prometheus.yml` 给两个 job 加了外部 `service` 标签，而 `l3_health_check_status` / `l3_service_info` 自带同名标签，Prometheus 按标准行为把后者重命名为 `exported_service`；告警规则统一使用 `job` 标签，不受影响。
 4. **两个 L3 进程共享指标定义**：编排也暴露恒 0 的租约缓存计数器、网关也暴露恒 0 的额度计数器；按 `job` 过滤即可。
 5. **R5/R7 仍靠人工**：见 §4 末。
@@ -153,10 +153,76 @@ T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部
 
 ### 8.3 仍存在边界（需运维决策，收口前需补齐或书面接受）
 
-- 默认 webhook URL 为 `http://host.docker.internal:9094/alerts`（本地验证接收器占位），
-  **未接入正式通知渠道**。未启动接收器时，告警仍在 Alertmanager 内持久化、可在 9093 UI/API
-  查询，但外发投递会失败并在 AM 日志留痕；接入正式渠道需改一行 URL 后重启 AM 服务。
+- 默认 webhook 已于 17:18 改为常驻本地落盘服务（见 §9.1），告警自动留痕、不再有占位投递失败；
+  但**短信/邮件等外部值班通知渠道仍未接入**，收口前需运维提供正式 URL 或书面接受该边界。
 - `pushgateway` / `node_exporter` 未启动，`ServiceUnavailable` 持续 firing 属预期。
 - R5（重复结算 / `used` 多加 / 预占悬挂）与 R7（`used`/`held` 一致性）仍靠人工 G1 抽查。
 - Prometheus 为 SIGHUP 热重载，未重启容器、未清 TSDB；规则求值与抓取可能出现 <15s 的窗口
   间隙，不影响 14 天观察期计时（计时基于灰度切换与业务进程，非监控组件）。
+
+---
+
+## 9. 常驻告警落盘与端口契约核对（2026-11-09 17:06–17:22 +0800）
+
+用户选择「补完 1、2 两项尾巴」。本轮全部在监控旁路与非敏感运行态核对，
+**未读取、未执行 `prepare-secrets.ps1`**（该文件含敏感内容，用户已明确拒绝共享，
+故第 2 项改用不接触脚本内容的等效契约核对）；未写 Redis、未改基线、未改巡检口径。
+
+### 9.1 常驻告警接收器（消除占位 URL）
+
+| 文件 | 变更 |
+|---|---|
+| `monitoring/alert_sink.py`（新增） | 仅监听 monitoring 网络 9094，接收 `/alerts` 并把通知摘要追加为 JSONL；不记录请求头/凭据、不发布宿主端口 |
+| `monitoring/monitoring-deployment.yml` | 新增 `alert-webhook-logger` 服务（python:3.12-slim、healthcheck、`./alert-sink` bind mount、`restart: unless-stopped`）；AM 加 `depends_on`、去掉不再需要的 `extra_hosts` |
+| `monitoring/alertmanager.yml` | webhook URL 由宿主占位 `host.docker.internal:9094` 改为同网络服务名 `alert-webhook-logger:9094`；`repeat_interval` 保持 4h |
+| `.gitignore` | 忽略 `monitoring/alert-sink/`（运行态事件流不入库） |
+
+配置通过 `/-/reload` 热加载（AM 日志 09:18:28 `Loading`/`Completed`）。
+注意：AM 0.34.2 的 `/api/v2/status` 会把 webhook URL 脱敏为 `<secret>`，
+**不能用该接口判断 URL 是否更新**；以容器内挂载文件与 AM 加载日志为准。
+首次据状态接口得到的 `False` 属判据口径问题，如实登记。
+
+**落盘验证 8/8 PASS**（`monitoring/alert-sink/alert-events.jsonl`，3 行）：
+真实规则告警 `ServiceUnavailable / node_exporter` 1 行、探针 `AlertmanagerPipelineProbe`
+的 firing + resolved 各 1 行，receiver 均为 `default-webhook`；AM 最近 4 分钟
+`Notify attempt failed` 0 次。为让真实告警在新 URL 上重投，验证窗口内临时把
+`repeat_interval` 改为 `1m`，验证后已恢复 `4h` 并 reload 确认；窗口内重复通知属预期。
+`pushgateway` 组因 16:47 首次投递重试被取消、4h 重投窗口未到，本轮未落盘，不伪造结果。
+
+查看命令：
+`docker compose -f monitoring/monitoring-deployment.yml exec alert-webhook-logger sh -c 'tail -n 20 /data/alert-events.jsonl'`
+
+### 9.2 端口契约核对（不接触脚本内容）
+
+| 来源 | 网关 | 编排 |
+|---|---|---|
+| `deploy/l3/.env` | `9999` | `9100` |
+| 容器内环境变量 | `GW_PUBLIC_BASE_URL=...9999` | `ORCH_PUBLIC_BASE_URL=...9100` |
+| 宿主端口映射 | `127.0.0.1:9999->9999` | `127.0.0.1:9100->9100` |
+
+6/6 判据通过，与 compose 头部约定一致。此前已完成的脚本语法解析（0 错误）与
+`.env` 端口核对结果沿用，不重跑、不重新读取脚本文件。
+
+### 9.3 观察期事件：17:20 巡检 WARN（非业务写入）
+
+`observe_check.py --append @17:20` 结论 **WARN（P15 / F0 / W1 / S0）**：
+`quota:usr:990001:token:2026-11` 的 Redis used 缓存键由基线 12 变为「无」。
+
+只读核查：DB 真账 `quota_account.used` 仍为 `{"token": 12.0}`；
+`usage_record` 21 / `quota_reservation` 12 / `quota_account` 5 行、测试行 0，与起算基线一致；
+Redis `expired_keys=2 / evicted_keys=0 / maxmemory-policy=noeviction`；
+`quota_service.py` 无删除 `_used_key` 的路径（只删 hold 键）；本轮亦未写 Redis。
+故判定为 **used 缓存键 TTL 到期/缺失，非业务写入、非计量丢失、非本轮监控变更所致**。
+
+未擅自处置：不改起算基线 `observation-baseline.json`（保留 14 天对比口径）、不改巡检
+脚本 R7 口径、不手工重建 Redis 缓存键。业务读取该主体额度时以 DB 值为底重建
+（`quota_service.py:1126`），不会造成计量偏差。若要立即让巡检恢复 16/16 PASS，需按 DB
+真账重建该缓存键（值 12、TTL 对齐 `usr:4`），属写入计量缓存，需单独授权。
+
+### 9.4 观察期影响
+
+监控栈变更不涉及三个 L3 业务进程；Prometheus 未重启、AM 仅 reload、接收器为新增容器。
+恢复后 `repeat_interval=4h`、`mode=proxy_l3`、used/held 真账未变、三业务容器 healthy。
+**不重置计时**：起算 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。
+边界收敛：告警已能自动本地留痕，但**短信/邮件等外部值班通知渠道仍待运维提供或书面接受**；
+`config.conf` 线下核对、第 2 周 G1、三方签字、T7.5 到期收口仍待。

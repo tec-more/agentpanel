@@ -21,6 +21,24 @@ services:
     networks:
       - monitoring
 
+  # 常驻本地告警接收器：把 Alertmanager 通知追加落盘到 ./alert-sink/alert-events.jsonl。
+  # 不发布宿主端口，只在 monitoring 网络内以服务名访问；运行态数据不入库。
+  alert-webhook-logger:
+    image: python:3.12-slim
+    container_name: alert-webhook-logger
+    volumes:
+      - ./alert_sink.py:/app/alert_sink.py:ro
+      - ./alert-sink:/data
+    command: ["python", "-u", "/app/alert_sink.py"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9094/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - monitoring
+
   alertmanager:
     image: prom/alertmanager:latest
     container_name: alertmanager
@@ -29,12 +47,12 @@ services:
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
-    # 正式通知渠道：修改 monitoring/alertmanager.yml 的 webhook url 后重启本服务。
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    # 正式外部通知渠道：编辑 monitoring/alertmanager.yml 的 webhook url 后 reload 本服务。
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
+    depends_on:
+      - alert-webhook-logger
     networks:
       - monitoring
 

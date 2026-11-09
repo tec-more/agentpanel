@@ -18,7 +18,6 @@ import type {
   AccountDetails,
   AccountUserId,
   AccountView,
-  PlatformSession,
   SignInAttemptId,
   SignInAttemptView,
 } from '@deepseek-ai/dsh-deepseek-account/types'
@@ -225,10 +224,6 @@ export class AgentPanelAccount extends Service {
 
   async rejectToken(token: string): Promise<void> {
     if (this.lease?.virtualKey === token) this.expireLease()
-  }
-
-  getPlatformSession(): Promise<PlatformSession | null> {
-    return Promise.resolve(null)
   }
 
   getDeviceIdentity(): Promise<{ deviceId?: string; userId?: AccountUserId; osVersion: string }> {

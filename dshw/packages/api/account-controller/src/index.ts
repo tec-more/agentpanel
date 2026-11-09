@@ -7,6 +7,19 @@ import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, Acc
 import type { AgentPanelAccount } from '@deepseek-ai/dsh-agentpanel-account'
 import type { AccountView, SignInAttemptId } from './types.ts'
 
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /** agentpanel gateway-lease account backend. */
+    agentpanelAccount: AgentPanelAccount
+  }
+  interface Events {
+    /** Server rejection or renewal failure removed the current lease credential. */
+    'agentpanel-account/session-expired'(): void
+    /** Local grant removal has completed. */
+    'agentpanel-account/signed-out'(): void
+  }
+}
+
 /** Account commands and reconnect-safe state stream. */
 export class AccountController extends TypertRemoteService {
   static inject = ['agentpanelAccount', 'agents']

@@ -6,6 +6,13 @@ import type { AccountView, SignInAttemptId } from '../src/types.ts'
 import { afterEach, expect, it, vi } from 'vitest'
 import AccountController from '../src/index.ts'
 
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** Server rejection or renewal failure removed the current lease credential. */
+    'agentpanel-account/session-expired'(): void
+  }
+}
+
 const roots: Context[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(ctx => ctx.fiber.dispose())) })
 const state: AccountView = { status: 'signed-out', links: { usageUrl: 'https://platform.example/usage', topUpUrl: 'https://platform.example/top_up' }, attempt: null }

@@ -26,14 +26,14 @@ docker run --rm --name agentpanel-dsh-verify `
   --security-opt seccomp=unconfined `
   --add-host api.deepseek.com:127.0.0.1 `
   -v "${PWD}\deploy\harness-linux-verify\out:/out" `
-  -v "${PWD}\services\gateway\gateway\service.py:/opt/project_gateway_service.py:ro" `
+  -v "${PWD}\services\gateway\common\service.py:/opt/project_gateway_service.py:ro" `
   -v "${PWD}\packages\agentpanel_common\upstream\egress.py:/opt/project_gateway_egress.py:ro" `
   agentpanel-dsh-verify:0.1.5rc1
 ```
 
 说明：
 - `seccomp=unconfined` 用于放开 `unshare`，让 bubblewrap/landlock 沙箱能启动；若宿主机内核禁用非特权 user namespace，沙箱可能退化，结果文件会记录具体错误。
-- 只读挂载 `services/gateway/gateway/service.py` 与 `packages/agentpanel_common/upstream/egress.py` 仅为调用真实的 `assert_egress_allowed`，不给容器写权限。
+- 只读挂载 `services/gateway/common/service.py` 与 `packages/agentpanel_common/upstream/egress.py` 仅为调用真实的 `assert_egress_allowed`，不给容器写权限。
 - 输出写到 `deploy/harness-linux-verify/out/`；若 Windows 挂载权限异常，可去掉 `-v`，运行后 `docker cp agentpanel-dsh-verify:/out ./out`（需先去掉 `--rm`）。
 
 ## 验证项

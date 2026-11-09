@@ -6,7 +6,7 @@
 - `gateway_config()`：网关数据面配置，读 `services/gateway/manifest.json` 的
   `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不经过 plugin_manager**。
 - `configure_shared_runtime()`：由 L2 启动期显式调用，把配置/上游/租约缓存 TTL
-  provider 注入 `services.gateway.gateway.runtime`。
+  provider 注入 `services.gateway.common.runtime`。
 
 fail-closed 语义保持不变：enabled 时 fail_closed 必须为 true、public_base_url 必须
 http(s)、provider 白名单非空、TTL/重试/连接池配置合法。
@@ -222,7 +222,7 @@ def configure_shared_runtime() -> None:
     共享模块（router/service/budget/lease_auth）不 import `base.*`，
     由 L2 启动期显式调用本函数一次。
     """
-    from services.gateway.gateway import runtime as _runtime
+    from services.gateway.common import runtime as _runtime
 
     _runtime.configure(
         config_provider=gateway_config,

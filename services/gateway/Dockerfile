@@ -25,7 +25,7 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 COPY packages/ ./packages/
-# `services` 是常规包；网关领域包位于 services/gateway/gateway/
+# `services` 是常规包；网关领域包位于 services/gateway/common/
 COPY services/__init__.py ./services/__init__.py
 COPY services/gateway/ ./services/gateway/
 

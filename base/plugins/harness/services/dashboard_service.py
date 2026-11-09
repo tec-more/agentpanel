@@ -12,7 +12,7 @@ from tortoise.expressions import Q
 from base.common.quota.models.quota import UsageRecord
 from base.common.quota.models.reservation import QuotaReservation
 from base.common.quota.services.quota_service import QuotaService
-from services.gateway.gateway.budget import GatewayBudgetService
+from services.gateway.common.budget import GatewayBudgetService
 from base.plugins.harness.models.harness import HarnessAuditEvent, HarnessRun, HarnessSession
 from base.plugins.harness.services.reconcile_service import HarnessReconcileService
 from base.plugins.harness.services.run_service import TERMINAL_STATUSES

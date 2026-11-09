@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from services.gateway.gateway.budget import GatewayBudgetService
+from services.gateway.common.budget import GatewayBudgetService
 from base.common.permissions import require_superuser
 from base.common.response import success_response, fail_response
 from base.plugins.harness.services.dashboard_service import HarnessDashboardService

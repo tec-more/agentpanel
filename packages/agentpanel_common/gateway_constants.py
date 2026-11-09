@@ -6,7 +6,7 @@
 放在共享基础包而非网关服务目录，是为了保持依赖方向单向：
 ``packages.agentpanel_common`` 不 import ``services.*`` / ``base.*``，
 三个进程都从同一模块身份读取，避免常量定义漂移或重复加载。
-网关服务目录内的 ``services.gateway.gateway.constants`` 保留为兼容层。
+网关服务目录内的 ``services.gateway.common.constants`` 保留为兼容层。
 """
 
 # 数据面统一前缀；与业务 API（/v1/llm、/v1/harness 等）结构隔离

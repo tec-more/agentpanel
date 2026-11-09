@@ -1,6 +1,6 @@
 """只读加载网关领域包 service.py，验证真实出网白名单判定。
 
-通过 docker run 把 `services/gateway/gateway/service.py` 与
+通过 docker run 把 `services/gateway/common/service.py` 与
 `packages/agentpanel_common/upstream/egress.py` 只读挂到
 /opt/project_gateway_service.py 与 /opt/project_gateway_egress.py；
 这里注入最小 stub 依赖（运行时配置/日志/ORM 模型/计价服务），
@@ -13,7 +13,7 @@ import sys
 import types
 from typing import Any, Dict
 
-GATEWAY_MODULE = "services.gateway.gateway.service_probe"
+GATEWAY_MODULE = "services.gateway.common.service_probe"
 EGRESS_PATH = "/opt/project_gateway_egress.py"
 
 
@@ -27,7 +27,7 @@ def _stub(name: str) -> types.ModuleType:
 def _install_stubs(config_holder: Dict[str, Any]) -> None:
     """伪造 service.py 顶层依赖，保证只读加载时不引入真实 DB / 插件栈。
 
-    service.py 迁移到 `services.gateway.gateway` 后，跨包依赖改为绝对导入
+    service.py 迁移到 `services.gateway.common` 后，跨包依赖改为绝对导入
     `packages.agentpanel_common.*`，同包依赖仍是相对导入 `.logging` / `.runtime`；
     两侧模块链都要预置，否则 spec_from_file_location 加载会 ImportError。
     """
@@ -39,16 +39,16 @@ def _install_stubs(config_holder: Dict[str, Any]) -> None:
 
     services = _stub("services")
     gw_service = _stub("services.gateway")
-    gateway = _stub("services.gateway.gateway")
+    gateway = _stub("services.gateway.common")
 
-    logging_mod = _stub("services.gateway.gateway.logging")
+    logging_mod = _stub("services.gateway.common.logging")
     logging_mod.gateway_logger = types.SimpleNamespace(
         info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
         error=lambda *a, **k: None,
         exception=lambda *a, **k: None,
     )
-    runtime_mod = _stub("services.gateway.gateway.runtime")
+    runtime_mod = _stub("services.gateway.common.runtime")
     runtime_mod.gateway_config = lambda: config_holder["config"]
 
     pricing_mod = _stub("packages.agentpanel_common.domain.pricing_service")
@@ -62,7 +62,7 @@ def _install_stubs(config_holder: Dict[str, Any]) -> None:
     common.models = models  # type: ignore[attr-defined]
     common.upstream = upstream  # type: ignore[attr-defined]
     services.gateway = gw_service  # type: ignore[attr-defined]
-    gw_service.gateway = gateway  # type: ignore[attr-defined]
+    gw_service.common = gateway  # type: ignore[attr-defined]
 
 
 def _load_egress(egress_path: str) -> None:

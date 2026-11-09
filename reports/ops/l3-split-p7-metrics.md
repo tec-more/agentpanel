@@ -21,7 +21,7 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 | `packages/agentpanel_common/l3_metrics.py` | **新增**。共享 registry 上的 L3 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
 | `services/gateway/app/main.py` | 挂载中间件 + `/metrics`，注入 DB/Redis 健康探针 |
 | `services/orchestration/app/main.py` | 同上 |
-| `services/gateway/gateway/lease_auth.py` | `_get_cached_lease()` 记录 hit/miss/unavailable/error |
+| `services/gateway/common/lease_auth.py` | `_get_cached_lease()` 记录 hit/miss/unavailable/error |
 | `services/orchestration/app/l2_quota_client.py` | `_post()` 观测包装，记录 reserve/settle/release 成败与异常类型 |
 | `monitoring/prometheus.yml` | 新增 `l3-gateway` / `l3-orchestration` 两个抓取 job |
 | `monitoring/alert_rules.yml` | 新增 `l3_split_alerts` 组 10 条规则，对齐灰度方案 R1–R6 |

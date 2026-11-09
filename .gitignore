@@ -102,3 +102,23 @@ deploy/harness-win-verify/pkg/
 deploy/harness-win-verify/state/
 deploy/harness-win-verify/desktop/
 deploy/harness-win-verify/source-web/
+
+# ---- dshw (DeepSeek Harness，vendored 于 dshw/) ----
+# 仅入库源码与主要文档/配置；构建产物与依赖由 dshw/.gitignore 处理，这里兜底并放行必要元数据。
+# 放行 dshw 下被根 `.gitignore` 的 `.*` 规则误伤的关键元数据文件/目录：
+!dshw/.gitignore
+!dshw/.gitattributes
+!dshw/.editorconfig
+!dshw/.gitlab-ci.yml
+!dshw/.github/
+!dshw/.github/**
+# 兜底忽略大文件/构建产物（与 dshw/.gitignore 互补，双重保险）
+dshw/**/node_modules/
+dshw/**/dist/
+dshw/**/lib/
+dshw/**/*.tsbuildinfo
+dshw/.pnpm-store/
+dshw/dist-exe/
+dshw/**/.desktop-build/
+dshw/**/coverage/
+dshw/**/.pytest_cache/

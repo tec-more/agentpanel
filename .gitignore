@@ -94,3 +94,11 @@ deploy/l3/.env
 
 # Alertmanager 本地告警落盘（运行态事件流，禁止入库）
 monitoring/alert-sink/
+
+# Windows Harness 验证：下载的 wheel / 解压 runtime / 运行态体积大且可再生，禁止入库；
+# scripts/、README.md、VERIFICATION.md 与 out/ 结果文件有意纳入版本控制。
+deploy/harness-win-verify/wheels/
+deploy/harness-win-verify/pkg/
+deploy/harness-win-verify/state/
+deploy/harness-win-verify/desktop/
+deploy/harness-win-verify/source-web/

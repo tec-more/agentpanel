@@ -212,12 +212,24 @@ T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部
 `usage_record` 21 / `quota_reservation` 12 / `quota_account` 5 行、测试行 0，与起算基线一致；
 Redis `expired_keys=2 / evicted_keys=0 / maxmemory-policy=noeviction`；
 `quota_service.py` 无删除 `_used_key` 的路径（只删 hold 键）；本轮亦未写 Redis。
-故判定为 **used 缓存键 TTL 到期/缺失，非业务写入、非计量丢失、非本轮监控变更所致**。
+故判定为 **Redis used 缓存键缺失，DB 真账正确，非业务写入、非计量丢失、
+非本轮监控变更所致**。17:29 复核更正：「TTL 到期」仅为推断，**消失原因未确定**——
+`_period_ttl`（:164）把月度键 TTL 设到月末，实测 `usr:4` 键 TTL ≈21.6 天指向 12-01，
+同月同类型键不该在 11-09 到期。
 
-未擅自处置：不改起算基线 `observation-baseline.json`（保留 14 天对比口径）、不改巡检
-脚本 R7 口径、不手工重建 Redis 缓存键。业务读取该主体额度时以 DB 值为底重建
-（`quota_service.py:1126`），不会造成计量偏差。若要立即让巡检恢复 16/16 PASS，需按 DB
-真账重建该缓存键（值 12、TTL 对齐 `usr:4`），属写入计量缓存，需单独授权。
+未擅自处置：不改起算基线 `observation-baseline.json`、不改巡检脚本 R7 口径、
+不手工重建 Redis 缓存键。补查重建机制（修正此前「业务读取以 DB 值为底重建」）：
+`quota_service.py:1126` 只是展示回退、**不写回 Redis**；`reconcile_active_accounts`（:1160）
+方向为 Redis → PG，**不会重建该键**；只有写操作重建，`reserve`（:333）用 DB 值播种，
+`_settle_redis_counters`（:791）用 `0` 播种后累加——故缺失窗口内若发生无预占直接 settle，
+Redis 实时 used 会从 0 起算、低估历史 12，使配额判断偏松；DB 真账不受影响，
+下一次 reserve 可纠正。属既有设计弱点、非本轮引入，登记为收口后改进项。
+
+巡检侧 WARN 非 FAIL、退出码 0，§5 准入的「WARN 均有说明」已由本节满足；
+但键不恢复则 14 天内每日均为 P15/F0/W1/S0、16/16 信号消失。若要立即恢复 16/16，
+需按 DB 真账重建该键（值 12、TTL 到 2026-12-01，对齐 `usr:4`），
+属一次 `SET ... EX` 写入计量缓存，需单独授权；**不建议**改基线或改脚本口径。
+完整论证见 `l3-split-p7-observation-log.md` §11.3。
 
 ### 9.4 观察期影响
 

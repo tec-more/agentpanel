@@ -165,8 +165,8 @@
 | ✅ T7.1 | 更新运维 runbook：容器启停、secret 轮换、网络附加、日志 | `reports/ops/l3-split-p7-runbook.md`；含从零拉起步骤 |
 | ✅ T7.2 | 回滚演练：`pre-l3-physical-split` 起回单仓三进程 | 两条路径均实测：容器旧端口恢复 18.0s、宿主三进程约 33s；恢复后三容器 healthy（见 `reports/ops/l3-split-p7-report.md`） |
 | ✅ T7.3 | 灰度方案：L2 `mode=proxy_l3` 保留期、切流比例、回切条件 | `reports/ops/l3-split-p7-grayscale.md`；保留期 14 天、部署级二元切换、阈值与角色责任人齐全 |
-| ⏳ T7.4 | 监控/告警：两容器 health、5xx、预占失败、租约缓存命中 | **未实现**：L3 网关/编排无 `/metrics`，仅有 HEALTHCHECK 与 `/health*`；5xx/预占失败/缓存命中未暴露，无告警规则（已列入验收报告已知限制） |
-| ⏳ T7.5 | 收口：删除灰度开关与旧代码、更新架构图 | **未开始**：旧编排代码与 `mode` 开关仍在仓库，架构图未改；需 T7.4 补齐并完成 14 天观察期后执行 |
+| ✅ T7.4 | 监控/告警：两容器 health、5xx、预占失败、租约缓存命中 | `reports/ops/l3-split-p7-metrics.md`：两容器 `/metrics` 200、`l3_split_alerts` 10 条规则、promtool 14 条通过、Prometheus 端到端抓取与逐条求值通过 |
+| ⏳ T7.5 | 收口：删除灰度开关与旧代码、更新架构图 | **观察期计时中**：旧编排代码与 `mode` 开关仍在仓库，架构图未改；T7.4 已补齐，14 天观察期自 2026-11-09 13:33 +0800 起算（台账 `l3-split-p7-observation-log.md`，每日巡检 `deploy/l3/scripts/observe_check.py`），最早 2026-11-23 收口 |
 
 ---
 

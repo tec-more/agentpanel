@@ -63,5 +63,5 @@
 - [x] T7.1 `reports/ops/l3-split-p7-runbook.md`
 - [x] T7.2 回滚演练 A（容器旧端口）与 B（宿主三进程）：均实测并恢复三容器 healthy
 - [x] T7.3 `reports/ops/l3-split-p7-grayscale.md`（保留期/阈值/责任人）
-- [ ] T7.4 监控/告警指标：L3 网关/编排无 `/metrics`，5xx/预占失败/缓存命中未暴露（未实现）
-- [ ] T7.5 收口：灰度开关与旧编排代码未删除，架构图未更新（未开始）
+- [x] T7.4 监控/告警指标：两容器 `/metrics` 200；5xx/401、预占与结算失败、租约缓存命中、DB/Redis 健康 Gauge 均已暴露；`monitoring/alert_rules.yml` 新增 10 条规则并加载；`promtool check rules/config` 通过；Prometheus 两个 L3 job 均 `up`（证据：`reports/ops/l3-split-p7-metrics.md` §6）
+- [ ] T7.5 收口：灰度开关与旧编排代码未删除，架构图未更新（**14 天观察期已于 2026-11-09 13:33 +0800 起算，最早 2026-11-23 收口**；每日巡检脚本与台账已建立，见 `reports/ops/l3-split-p7-observation-log.md`）

@@ -1,8 +1,10 @@
 # 灰度方案：L3 编排 / 网关物理拆分
 
 - 日期：2026-11-09
-- 状态：方案已定，尚未进入灰度观察期
-- 相关：`reports/ops/l3-split-acceptance.md`、`reports/ops/l3-split-p7-runbook.md`、`reports/ops/l3-split-p7-report.md`
+- 状态：**观察期已启动，计时中**（2026-11-09 起算；最早收口 2026-11-23 13:33 +0800）
+- 台账：`reports/ops/l3-split-p7-observation-log.md`（切换证据、基线快照、每日/每周记录、收口判定）
+- 巡检：`deploy/l3/scripts/observe_check.py`（只读，16 项）、`deploy/l3/observation-baseline.json`（起算基线）
+- 相关：`reports/ops/l3-split-acceptance.md`、`reports/ops/l3-split-p7-runbook.md`、`reports/ops/l3-split-p7-report.md`、`reports/ops/l3-split-p7-metrics.md`
 
 ## 1. 当前实现能做什么
 
@@ -21,7 +23,8 @@
 - 保留期：`mode=proxy_l3` 自 P6 验收通过起保留 **14 天**（观察期）；期间不删除 L2 旧编排代码与 `mode` 开关。
 - 最短观察：7 天；若 7 天内出现任一回切条件（§4），立即回切并重置观察期。
 - 提前收口：连续 14 天无 P1 故障、§4 阈值全部未触发、G1 抽查通过，才允许进入 T7.5（删除灰度开关与旧代码、更新架构图）。
-- 延期：任一硬项未满足或监控缺口未补齐（T7.4），保留期顺延，不以“时间到了”为由强行收口。
+- 延期：任一硬项未满足，保留期顺延，不以“时间到了”为由强行收口。T7.4 监控缺口已于 2026-11-09 补齐（见 `l3-split-p7-metrics.md`），不再构成顺延理由。
+- **正式起算**：2026-11-09 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。切流事实上在当日 P6 验收/容器接管阶段已生效，但当时未留痕；取「证据完备时刻」起算更保守，不存在提前收口。起算依据、切换证据与基线快照见 `reports/ops/l3-split-p7-observation-log.md` §1–§2。
 
 ## 3. 切流方式与操作
 
@@ -29,7 +32,7 @@
 2. 将 L2 的 `orchestration.mode` 设为 `proxy_l3`（当前 manifest 默认值即 `proxy_l3`；容器部署下通过 `l2_config.conf` / L2 配置覆盖显式固定）。
 3. 重建 L2：`docker compose ... up -d --force-recreate l2`，等待 healthy。
 4. 验证：`9998/health/health` 200；`9998/api/v1/harness/runs/nope` 401（代理可达，非 503）；`9100/health/orchestration` 的 `mode=proxy_l3`。
-5. 记录切换时间、操作人、验证输出；观察期从切换时刻起算。
+5. 记录切换时间、操作人、验证输出；观察期从切换时刻起算。**已补留痕**：见 `l3-split-p7-observation-log.md` §1（含 `docker ps` 输出、4 个健康端点、`mode=proxy_l3`、代理 401、`/metrics`、Prometheus targets/rules 与首次 16 项巡检结果）。
 
 回切：把 `mode` 改回 `l2` 并重建 L2；若容器整体异常，按 `port-switch-9998-9999-9100.md` 执行回滚 A 或 B。
 
@@ -45,7 +48,7 @@
 | R6 | 内部鉴权 | 服务凭据 401 比例异常或轮换后未恢复 | 先修密钥；10 分钟未恢复则回切 |
 | R7 | 数据一致性 | `org:14` / `usr:4` 的 `used` 在演练或变更前后发生变化（非业务请求导致） | 立即停止变更并回切 |
 
-说明：当前没有 5xx、预占失败、租约缓存命中的指标端点（T7.4 未实现），R2/R4 只能通过容器日志与访问日志人工统计；在 T7.4 补齐前，观察期以“每日人工抽查 + 健康巡检”为准，不宣称自动告警已覆盖。
+说明（2026-11-09 更新）：T7.4 已补齐，`9999`/`9100` 均有 `/metrics`，`l3_split_alerts` 覆盖 R1（容器/健康）、R2（代理 5xx）、R3（P95 翻倍）、R4（网关/编排 5xx）、R5（预占/结算失败）、R6（401 比例）；指标与规则清单见 `l3-split-p7-metrics.md` §3–§4。**R5 的重复结算/`used` 多加/预占悬挂与 R7 的数据一致性仍无法由 Prometheus 判定**，继续按每日人工 G1 抽查执行；此外当前未接 Alertmanager，规则会被求值但不会自动外发通知，值班仍需查看 Prometheus 告警页。
 
 ## 5. 责任人（角色制）
 
@@ -59,8 +62,14 @@
 
 ## 6. 观察期检查清单
 
-- [ ] 每日：三容器 healthy、`/health*` 全 200、`9998/api/v1/harness/runs/nope` 401
-- [ ] 每日：`org:14` / `usr:4` 的 `used` 与基线一致，`held` 无悬挂
-- [ ] 每周：G1-A/B/C 抽查（同 hold 并发 reserve/settle/release 各一次）
-- [ ] 每周：容器日志中的 5xx/503/401 抽样统计
-- [ ] 收口前：T7.4 监控缺口是否补齐；未补齐则顺延
+> 2026-11-09 起由 `deploy/l3/scripts/observe_check.py --append` 执行每日只读巡检（16 项，含容器/健康/mode/代理/配额/指标/Prometheus），结果逐日写入 `reports/ops/l3-split-p7-observation-log.md` §3。脚本**不代劳**每周 G1 抽查（会写计量数据），也不代替人工复核 §4 R1–R7。
+
+- [ ] 每日：三容器 healthy、`/health*` 全 200、`9998/api/v1/harness/runs/nope` 401（脚本覆盖）
+- [ ] 每日：`org:14` / `usr:4` 的 `used` 与基线对比、`held` 无悬挂（脚本覆盖；`used` 变化记 WARN，需登记业务写入来源）
+- [ ] 每周：G1-A/B/C 抽查（同 hold 并发 reserve/settle/release 各一次）（人工，台账 §4）
+- [ ] 每周：容器日志中的 5xx/503/401 抽样统计（Prometheus 已有对应指标，日志抽查作为交叉校验）
+- [x] 收口前：T7.4 监控缺口已补齐（`l3-split-p7-metrics.md` §6 实测）
+- [x] 收口前：观察期已正式起算、切换证据与巡检台账已建立（台账 §1–§3）
+- [ ] 收口前：连续 14 天无 P1 故障、§4 阈值未触发、G1 抽查通过（台账 §5）
+
+已知缺口：Alertmanager 未配置，告警只求值不外发；监控栈仅 prometheus 单服务常驻，`pushgateway`/`node_exporter` down 属预期。二者均记入台账 §6，列为后续 P1 待办，不影响本阶段收口判定的硬项。

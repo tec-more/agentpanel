@@ -135,3 +135,24 @@ docker run --rm --name agentpanel-dsh-egress `
 
 - `docker.io` 直连在当前网络下 IPv6 超时，首次构建失败；改用本地已有镜像 `docker.m.daocloud.io/library/python:3.12-slim`（`BASE_IMAGE` 可覆盖）。
 - Debian apt 与 PyPI 使用清华镜像；Linux runtime wheel `deepseek_harness_runtime_bin-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl` 正常安装，`dsh` 在容器内可执行。
+
+## 重跑证据（2026-11-09 16:07，目录改名后）
+
+为验证改名后的挂载路径，在**不覆盖原始证据**的前提下重跑主验证：镜像重新 build 后以同一
+`--network none` / `--security-opt seccomp=unconfined` / `--add-host api.deepseek.com:127.0.0.1`
+参数运行，但把 `-v` 输出指向新目录 `out-rerun-20261109/`，并挂载
+`services/gateway/common/service.py`（新路径）。退出码 0，产出 9 个文件。
+
+| 判定 | 结果 |
+|---|---|
+| `1_pre_execute_hook` | PASS（PreToolUse deny，目标文件未产生） |
+| `2_workspace_escape` | PASS（bash 只读文件系统、fs 沙箱拒绝） |
+| `3_egress` | PASS（隔离网络下外部域名不可达；provider 可直达假 provider） |
+| `4_native_approval` | **FAIL**：`session/request_permission` 0 次、`no approval channel is available`，与 2026-11-07 原始结论一致，属已登记的已知限制 |
+| `gateway_allowlist` | **PASS，5 用例全部符合预期**，证明新挂载路径生效 |
+
+- `placeholder_key_used=true`、`real_provider_called=false`，未调用真实 provider。
+- `out/` 与 `out-network/` 的 mtime / 大小全程未变；另有本地保全备份
+  `.workbuddy/evidence-backup-20261109-1604/`（不入库）。
+- `out/` 与 `out-network/` 仍是 2026-11-07 运行的唯一原始事件流；
+  `out-rerun-20261109/` 是 2026-11-09 的独立新证据，两者不可混用。

@@ -1,0 +1,203 @@
+{
+  "environment": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "python": "3.12.16",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "workdir": "/work/ws",
+    "network_mode_expected": "none",
+    "bwrap": "/usr/bin/bwrap"
+  },
+  "verdicts": {
+    "1_pre_execute_hook": {
+      "pass": true,
+      "evidence": {
+        "hook_subprocess_calls": 4,
+        "hook_event_types": [
+          "hook/invoked",
+          "hook/result"
+        ],
+        "hook_result": [
+          {
+            "turn": 1,
+            "point": "PreToolUse",
+            "handlerId": "claude-code:PreToolUse:1",
+            "decision": "deny",
+            "exitCode": 0,
+            "durationMs": 27.026567999999997
+          }
+        ],
+        "target_exists": false,
+        "tool_errors": [
+          {
+            "type": "tool/result",
+            "error_name": null,
+            "error_code": null,
+            "text": "Error: agentpanel verify: blocked by PreToolUse hook"
+          }
+        ]
+      }
+    },
+    "2_workspace_escape": {
+      "pass": true,
+      "evidence": {
+        "bash_marker_exists": false,
+        "fs_markers": {
+          "/work/agentpanel_escape_fs.txt": false,
+          "/work/agentpanel_escape_fs_rel.txt": false
+        },
+        "bash_tool_errors": [
+          {
+            "type": "tool/result",
+            "error_name": null,
+            "error_code": null,
+            "text": "d1702b24dc6a\n[stderr]\nbash: line 1: /work/agentpanel_escape_bash.txt: Read-only file system\n"
+          }
+        ],
+        "fs_tool_errors": [
+          {
+            "type": "tool/result",
+            "error_name": "FsError",
+            "error_code": "FS_SANDBOX_DENIED",
+            "text": "Error: [sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available — retry this exact operation once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]"
+          },
+          {
+            "type": "tool/result",
+            "error_name": "FsError",
+            "error_code": "FS_SANDBOX_DENIED",
+            "text": "Error: [sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available — retry this exact operation once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]"
+          }
+        ],
+        "fs_incoming_requests": []
+      }
+    },
+    "3_egress": {
+      "pass": true,
+      "evidence": {
+        "configured_provider_reachable_requests": 14,
+        "non_allowlisted_tool_errors": [
+          {
+            "type": "tool/result",
+            "error_name": "WebError",
+            "error_code": "WEB_PROVIDER_ERROR",
+            "text": "Error: web fetch failed: Error: getaddrinfo EAI_AGAIN example.com"
+          }
+        ],
+        "allowlisted_web_fetch_errors": [
+          {
+            "type": "tool/result",
+            "error_name": "WebError",
+            "error_code": "WEB_BLOCKED_URL",
+            "text": "Error: URL hostname \"api.deepseek.com\" resolves to a non-public IP address"
+          }
+        ],
+        "allowlisted_web_fetch_blocked_by_dsh_ssrf_guard": true,
+        "note": "容器以 --network none 运行，外部域名在容器网络层不可达；dsh web_fetch 另有非公网 IP 拦截，白名单域名经 --add-host 指向 127.0.0.1 时仍被其 SSRF 防护拒绝。provider 通道（LLM 请求）可直达假 provider；域名白名单由业务网关 assert_egress_allowed 负责。"
+      }
+    },
+    "4_native_approval": {
+      "pass": false,
+      "evidence": {
+        "session_request_permission_count": 0,
+        "permission_request_payload": [],
+        "approval_asked_events": 1,
+        "approval_decided_events": 1,
+        "executed_after_allow": false,
+        "approval_event_types": [
+          "permission/preset",
+          "sandbox/mode",
+          "approval/policy",
+          "agent/inbox/spliced",
+          "turn/start",
+          "agent/inbox/spliced",
+          "step/start",
+          "system/message",
+          "user/message",
+          "user/message",
+          "request/header",
+          "request/context",
+          "session/title",
+          "assistant/message",
+          "tool/call",
+          "hook/invoked",
+          "hook/result",
+          "tool/result",
+          "step/end",
+          "step/start",
+          "assistant/message",
+          "tool/call",
+          "hook/invoked",
+          "hook/result",
+          "approval/asked",
+          "approval/decided",
+          "tool/result",
+          "step/end",
+          "step/start",
+          "assistant/message",
+          "step/end",
+          "turn/end"
+        ],
+        "bash_tool_errors": [
+          {
+            "type": "tool/result",
+            "error_name": null,
+            "error_code": null,
+            "text": "[stderr]\ntouch: cannot touch '/work/agentpanel_approval_executed.txt': Read-only file system\n[sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available — retry this exact command once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]\n[exit code: 1]"
+          },
+          {
+            "type": "tool/result",
+            "error_name": null,
+            "error_code": null,
+            "text": "Error: sandbox escalation to \"danger-full-access\" requires approval, but no approval channel is available"
+          }
+        ]
+      }
+    }
+  },
+  "gateway_allowlist": {
+    "pass": true,
+    "cases": [
+      {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "expected": true,
+        "actual": true,
+        "detail": "allowed"
+      },
+      {
+        "url": "https://example.com/v1/chat/completions",
+        "expected": false,
+        "actual": false,
+        "detail": "403: provider 域名不在出网白名单: example.com"
+      },
+      {
+        "url": "http://127.0.0.1:18080/v1/chat/completions",
+        "expected": false,
+        "actual": false,
+        "detail": "403: provider 域名不在出网白名单: 127.0.0.1"
+      },
+      {
+        "url": "ftp://api.deepseek.com/v1/chat/completions",
+        "expected": false,
+        "actual": false,
+        "detail": "403: provider 地址协议不被允许"
+      },
+      {
+        "url": "http://127.0.0.1:18080/v1/chat/completions",
+        "expected": true,
+        "actual": true,
+        "detail": "allowed",
+        "config": "allow_loopback=true"
+      }
+    ]
+  },
+  "raw_scenarios": [
+    "hook_deny",
+    "bash_escape",
+    "fs_escape",
+    "approval_allow",
+    "egress_ok",
+    "egress_deny"
+  ],
+  "placeholder_key_used": true,
+  "real_provider_called": false
+}

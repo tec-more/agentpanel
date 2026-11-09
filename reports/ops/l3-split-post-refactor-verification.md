@@ -4,7 +4,7 @@
 - 触发：三次目录整理（`7be9c13` 网关领域包迁入 → `2103fca` 常量下沉/编排解耦 → `84ae9b3` 改名 `common`）与运行容器切换（`c885f7d`，15:50:43）后的回归验证
 - 判据：`reports/ops/l3-split-acceptance.md`（P6 T6.1–T6.7）、`reports/specs/l3-service-split/checklist.md`
 - 性质：**只读、无写入验证**。未签发租约、未写计量数据、未停服务、未重跑 Linux 验证链
-- 结论：所执行的判据全部通过，新目录布局未引入回归；发现 1 项需人工线下核对的安全差异（§7.1）
+- 结论：只读判据与授权后的写入/破坏性判据全部通过，新目录布局未引入回归；发现 1 项需人工线下核对的安全差异（§7.1）
 
 ## 1. 验证环境
 
@@ -100,7 +100,9 @@
 - `pushgateway` / `node_exporter` 未起、Alertmanager 未配置（规则求值但不会外发通知）仍为 P7 已知限制，见验收报告 §8.4。
 - 15:50 容器切换造成进程内 Counter 归零，Prometheus 按 counter reset 处理；`rate()` / `increase()` 在 15:50 前后窗口需人工注意，已在 `l3-split-p7-observation-log.md` §7 登记。
 
-## 8. 未执行项（需授权后另行安排）
+## 8. 首次验证时未执行的项（16:04 已授权补验，结果见 §10）
+
+> 下表是 16:02 首次只读验证时的状态；用户于 16:04 授权后已执行除 T7.5 外的全部项。
 
 | 项 | 判据来源 | 未执行原因 / 影响 |
 |---|---|---|
@@ -115,4 +117,81 @@
 
 三次目录整理与容器切换后的**只读回归验证全部通过**：健康端点、依赖只读、配置契约 fail-closed、代理链路、内部接口鉴权、出网白名单、镜像布局、依赖方向、监控抓取与 16 项观察期巡检均无回归。运行态与新代码布局一致（网关 CMD 已是 `services/gateway/run.py`，编排镜像内无网关目录）。
 
-观察期继续有效，起算与最早收口时间不变。§7.1 的安全差异需人工线下核对；§8 的写入与破坏性验证待授权后安排，其中 Linux 验证链重跑必须先备份 `out*/` 原始证据。
+观察期继续有效，起算与最早收口时间不变。§7.1 的安全差异仍需人工线下核对；§8 的写入与破坏性项已于 16:04 获授权并全部完成（T7.5 除外），见 §10，且 Linux 验证链重跑前已备份原始证据、实际输出到新目录未覆盖孤本。
+
+## 10. 授权后补验（2026-11-09 16:04–16:13 +0800）
+
+用户于 16:04 对 §8 的写入/破坏性项授权（T7.5 收口因观察期时间约束仍不执行）。执行前先把
+`out/`、`out-network/` 与基线备份到 `.workbuddy/evidence-backup-20261109-1604/`
+（15 文件 / 1,053,201 字节），并把 Linux 验证输出改到新目录；**原 `out/` 与 `out-network/`
+的 mtime / 大小全程未变**。
+
+### 10.1 网关数据面完整链路（独立实例，fixture 自动清理）
+
+以 `services/gateway/run.py` 起 9990 独立实例（`GW_ALLOW_LOOPBACK=true`、白名单含
+`127.0.0.1`、`GW_MAX_CONCURRENT_REQUESTS_PER_OWNER=1`），执行
+`services/gateway/tests/verify_gateway.py`：**66 通过 / 0 失败，退出码 0**，覆盖 V3–V11：
+
+| 组 | 关键结果 |
+|---|---|
+| V3 鉴权 | 缺凭据 / JWT / 非 dgw / secret 不符 / 已吊销 / 已过期均 401；会话关闭与 run 终态 403；鉴权失败不触达上游；超 RPM 429 |
+| V4 白名单 | 非白名单域名 403 且未触达上游；临时 9991 实例 `allow_loopback=false` 拒绝回环 |
+| V5 / V6 转发与记账 | 合法租约非流式 200、`dsh_session_log` 已剥离；**SSE 逐字节透传 361/361 字节**；`usage_record` 2 行、`source=gateway`、`idem_key` 前缀 `gw:<lease_id>:` 且每次唯一；非流式与流式用量口径均 12/8/20 |
+| V7 失败记账 | 403 请求恰好 1 行、`resource_type=gateway_error`、`amount=0` |
+| V8 预算 / 并发 / 截断 | 预算耗尽 402 且自动吊销、并发上限 429、流式越界截断 `partial=true` 并单独记账 |
+| V9 Redis 缓存 | `gw:lease:state:*` TTL=8s；吊销写穿删除 |
+| V10 DB 兜底 | 临时 9992 实例 `REDIS_ENABLED=false`，请求仍 200、账户用量 +20、并发槽释放 |
+| V11 审计 | 4 类事件齐全、`event_source=gateway`、不落虚拟 key 明文 |
+
+脚本 `finally` 执行 `cleanup_db` + `cleanup_redis`；9990/9991/9992 端口实测均已关闭。
+fixture 使用 `p3v_` 前缀与 `usr/999001`，与观察期基线键 `usr/990001`、`org/14` 不同。
+
+### 10.2 L2 内部额度链路（真实主体，基线精确恢复）
+
+在编排容器内经 `app/l2_quota_client._post` 调用 L2 内部额度 API；服务凭据由容器内 shell
+读取 `/run/secrets/` 后 export、脚本经 stdin 注入，**密钥未进入任何输出**。
+先用独立 `usr/999002` 探测得到 `hold_id=""` —— 这是 `quota_estimate` 对未绑定套餐主体
+「不计量」的设计行为（未写任何数据），不是回归；改用 P6 使用过的 `org:14`：
+
+| 场景 | 结果 |
+|---|---|
+| reserve(100) | 返回真实 `orch:p7v_<tag>_a` |
+| 重复 reserve 同 hold | 返回同一 hold_id，幂等 |
+| G1-A：20 并发 reserve 同 hold | 20/20 成功，**仅 1 个唯一 hold** |
+| G1-C：20 并发 release | 20/20 成功，**恰好 1 次 `released=true`** |
+| release / 重复 release | `true` / `false` |
+
+未执行 settle：`usage_record` 记账已由 §10.1 的 V6/V7/V8/V10 覆盖，避免重复写计量表。
+验证后清理并逐项核对：`quota:org:14:token:2026-11=450`、`quota_held:*` 全 0、
+`quota_reservation` 12 行、`usage_record` 21 行、测试行 0 残留，**与验证前完全一致**。
+
+### 10.3 故障注入
+
+`docker compose stop l3-orchestration` 后，L2 代理 `/api/v1/harness/runs/nope` 返回
+**503 `orchestration_downstream_unavailable`**（`ConnectError: Name or service not known`），
+未回落本进程；`up -d --wait` 恢复后回到 401，三容器 healthy。
+未做 Redis / L2 down 注入（会扩大中断面，且 P6 §7 已记录同类结果）。
+
+### 10.4 Linux 容器验证链重跑
+
+用改名后的 `services/gateway/common/service.py` 挂载路径重跑（隔离网络 `--network none`），
+退出码 0，9 个新证据文件落在 `deploy/harness-linux-verify/out-rerun-20261109/`：
+
+- `1_pre_execute_hook` PASS、`2_workspace_escape` PASS、`3_egress` PASS；
+- `4_native_approval` **FAIL**（`session/request_permission` 0 次、`no approval channel is available`）——
+  与 2026-11-07 原始结论一致，是已登记的已知限制，不是本次目录改名的回归；
+- `gateway_allowlist` **5 用例全部通过**，证明新挂载路径有效；
+  `placeholder_key_used=true`、`real_provider_called=false`。
+
+原始证据未被覆盖，另存本地备份 `.workbuddy/evidence-backup-20261109-1604/`（不入库）。
+
+### 10.5 恢复核验与观察期影响
+
+巡检 **16/16 PASS、verdict PASS @ 2026-11-09T16:12:28+08:00**；`used` 3 键与基线一致、
+`held` 全 0、`quota_holds_index` 空；三容器 healthy；临时端口 9990/9991/9992 全关闭；
+Prometheus 抓取与非预期告警仍 PASS。
+
+唯一观察期影响是故障注入使编排容器重启，**进程内指标 Counter 再次归零**，
+`rate()` / `increase()` 在 16:08 前后窗口需人工注意；业务计量数据最终完全恢复。
+未改业务分支、未删旧代码、`mode` 仍 `proxy_l3`，起算 13:33:40 与最早收口
+2026-11-23 13:33 不变，不触发回切。完整登记见 `l3-split-p7-observation-log.md` §8。

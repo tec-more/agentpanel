@@ -137,3 +137,29 @@ docker compose -f deploy/l3/docker-compose.yml --env-file deploy/l3/.env \
 2. **不重置观察期计时**：起算时刻仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本次是镜像/目录布局切换，不是切流模式变更（`mode` 保持 `proxy_l3`），不触发 §3 重新留痕或 §4 回切条件。
 3. **未触碰观察期边界**：未改业务分支、未删旧代码、未动计量数据（Redis `used`/`held` 与基线完全一致）。§5 收口检查清单状态不变。
 4. 操作人：WorkBuddy Agent 代执行（待 L3 拆分负责人签字复核）。
+
+## 8. 授权补验登记（2026-11-09 16:04–16:13 +0800）
+
+用户对 `l3-split-post-refactor-verification.md` §8 的写入/破坏性项授权执行；**T7.5 收口因
+14 天观察期时间约束仍不执行**（最早 2026-11-23 13:33）。操作人：WorkBuddy Agent 代执行
+（待 L3 拆分负责人签字复核）。
+
+| 时刻 | 动作 | 观察期影响 |
+|---|---|---|
+| 16:04 | 备份 `out/`、`out-network/`、基线到 `.workbuddy/evidence-backup-20261109-1604/`（15 文件 / 1,053,201 字节）；新建 `out-rerun-20261109/` | 无 |
+| 16:07 | 重跑 Linux 隔离验证链，输出到新目录，退出码 0；原证据 mtime/大小未变 | 隔离容器，无 |
+| 16:08 | `stop l3-orchestration` → L2 代理 503 `orchestration_downstream_unavailable`；`up -d --wait` 恢复 healthy → 401 | 编排容器重启，进程内 Counter 归零；Prometheus 短暂 down 后恢复 |
+| 16:09 | 独立 9990 网关跑 `verify_gateway.py`，**66/66 PASS**；9990/9991/9992 全部终止 | `p3v_` fixture 写入后由脚本 `finally` 清理 |
+| 16:11 | 编排容器经 L2 内部额度 API 验证 reserve/幂等/20 并发/释放（主体 `org:14`） | `held` 临时变化后归零，`used` 未变 |
+| 16:12 | 清理测试行与 Redis 键、逐项恢复 `used`/`held` 快照；巡检 16/16 PASS | 基线完全一致 |
+
+**恢复核验**：`quota:org:14:token:2026-11=450`、`quota:usr:4:...=93294`、`quota:usr:990001:...=12`
+与基线一致；`quota_held:*` 全 0；`quota_holds_index` 空；`quota_reservation` 12 行、
+`usage_record` 21 行与验证前相同，测试行 0 残留；三容器 healthy；五端点与 `/metrics` 正常；
+Prometheus 抓取 / 规则加载 / 非预期告警三项巡检仍 PASS。
+
+**影响评估与判定**：唯一实质影响是 16:08 编排容器重启导致进程内 Counter 再次归零，
+判读 `rate()` / `increase()` 时 16:08 前后窗口的负增量不代表业务下跌。业务计量数据已完全恢复，
+未改业务分支、未删旧代码、未改 `mode`（仍 `proxy_l3`），**不重置 14 天计时**、
+不触发 §4 回切条件。起算仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。
+每日 `observe_check.py --append` 口径不变，本节作为当日补充留痕。

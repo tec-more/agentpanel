@@ -1,0 +1,9 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "python": "3.12.16",
+  "kernel": "6.18.33.2-microsoft-standard-WSL2",
+  "workdir": "/work/ws",
+  "network_mode_expected": "none",
+  "bwrap": "/usr/bin/bwrap"
+}

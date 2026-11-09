@@ -58,10 +58,16 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 | 日期 | 时间 | 执行方式 | 结论 | 异常/备注 |
 |---|---|---|---|---|
 <!-- DAILY_ROWS_START -->
-| 2026-11-09 | 17:20 | 脚本 | WARN (P15/F0/W1/S0) | WARN used 基线对比：quota:usr:990001:token:2026-11 12→无（需登记业务写入来源） |
+| 2026-11-09 | 17:36 | 脚本 | FAIL (P15/F1/W0/S0) | FAIL 非预期告警：L3InternalAuth401RateHigh/None |
 <!-- DAILY_ROWS_END -->
 
 巡检覆盖：三容器 healthy、4 个健康端点 200、`mode=proxy_l3`、代理 401、Redis 可读、`held` 无悬挂、`used` 基线对比、两个 `/metrics` 健康 Gauge、Prometheus 三个 L3 job、规则加载、非预期 firing 告警。
+
+> 同日重跑按脚本机制**覆盖**当日行，11-09 当日时间线为：
+> 17:20 `WARN (P15/F0/W1/S0)`（used 缓存键缺失）→ 17:34 `PASS (P16/F0/W0/S0)`
+> （授权重建后）→ 17:36 `FAIL (P15/F1/W0/S0)`（非预期告警 `L3InternalAuth401RateHigh`，
+> 与重建无关的监控误报，见 §11.6）。三个结论都不在表格中抹去，
+> 成因、证据与处置完整留痕见 §11.3 / §11.5 / §11.6；**最新运行态以最后一行为准**。
 
 ## 4. 每周人工抽查（脚本不代劳）
 
@@ -348,11 +354,10 @@ Redis `expired_keys=2 / evicted_keys=0 / maxmemory-policy=noeviction`；
   会用 DB 值播种纠正。这是既有设计弱点、非本轮引入，观察期内不改业务代码，
   登记为 T7.5 收口后的改进项。
 
-未擅自处置：不改起算基线 `observation-baseline.json`（保留 14 天对比口径）、
+当时的处置：不改起算基线 `observation-baseline.json`（保留 14 天对比口径）、
 不改巡检脚本 R7 口径、不手工重建 Redis 缓存键。巡检侧 WARN 非 FAIL、退出码 0，
-§5「WARN 均有说明」已由本节满足；但键不恢复则 14 天内每日均为 P15/F0/W1/S0、
-需逐日登记，且 16/16 PASS 健康信号消失。若要立即恢复，需按 DB 真账重建该键
-（值 12、TTL 到 2026-12-01，对齐 `usr:4`），属一次 `SET ... EX` 写入计量缓存，需单独授权；
+§5「WARN 均有说明」已由本节满足；代价是键不恢复则 14 天内每日均为 P15/F0/W1/S0、
+需逐日登记，且 16/16 PASS 健康信号消失。**17:34 用户明确授权后已重建该键，见 §11.5**；
 **不建议**改基线或改脚本口径（会破坏 14 天对比、掩盖真实异常）。
 此项按台账 §6「WARN 需登记写入来源」口径登记为「无业务写入」。
 
@@ -363,3 +368,83 @@ Redis `expired_keys=2 / evicted_keys=0 / maxmemory-policy=noeviction`；
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发回切。
 边界收敛：告警已能自动本地留痕；仍待的是外部值班通知渠道、`config.conf` 线下核对、
 第 2 周 G1、三方签字与 T7.5 到期收口。
+
+### 11.5 授权重建 used 缓存键（2026-11-09 17:34 +0800）
+
+用户在 17:33 明确回复「授权重建」。按 §11.3 的推荐口径执行，**只写这一个缓存键**：
+
+| 项 | 值 / 做法 |
+|---|---|
+| 目标键 | `quota:usr:990001:token:2026-11` |
+| 取值 | 不硬编码：容器内读 `quota_account.used` → `{"token": 12.0}` → 按基线字符串口径写 `"12"`（巡检 `collect_quota` 是 `str` 比较，写 `"12.0"` 仍会 WARN） |
+| TTL | 不猜时间：取同周期 `quota:usr:4:token:2026-11` 的当前 TTL `1866359s`（指向 2026-12-01），两键同时到期 |
+| 写入方式 | 一次 `SET key "12" EX 1866359 NX`；`NX` 保证不覆盖期间可能发生的业务写入，若键已被业务重建则跳过 |
+| 凭据 | 只在编排容器内读 `/run/secrets/` 并流转，脚本经 stdin 传入、不进入任何输出；未接触宿主 secrets 文件 |
+
+**8/8 判据通过**：DB 真账 token=12、写入前键确实不存在、`SET NX EX` 成功、
+写后值 `"12"` 与基线字面一致、TTL 与 `usr:4` 完全相等（同秒）、
+其余 5 个配额键/值零变化、DB（used / 21 / 12 / 5 / 测试行 0）前后完全一致、
+held 全 0 且 `quota_holds_index` 空。
+
+复跑 `observe_check.py --append @17:34:16` → **PASS 16/16（P16/F0/W0/S0）**，
+`used 基线对比` 由 WARN 转 PASS（3 个键与起算基线一致），当日巡检行按脚本机制覆盖为 PASS，
+历史 WARN 留痕保留在 §11.3。三业务容器与 Redis 均 healthy，未重启任何容器。
+
+**明确未做**：不改 `observation-baseline.json`、不改 `observe_check.py` 的 R7 口径、
+不改任何业务代码、不改 `mode`、不动架构图、不提前勾选 §5 五项准入。
+重建属于按 DB 真账恢复缓存，不是业务写入、不改变计量事实，因此**不触发 §4 阈值、
+不重置计时**：起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发回切。
+
+`_settle_redis_counters`（:791）用 0 播种的既有设计弱点仍在，观察期内不改业务代码，
+保持登记为 T7.5 收口后改进项；当前键已存在，暴露窗口关闭。
+
+### 11.6 17:35 新出现 `L3InternalAuth401RateHigh`（监控误报，与重建无关）
+
+17:36 巡检为 **FAIL（P15/F1/W0/S0）**，唯一失败项「非预期告警」命中
+`L3InternalAuth401RateHigh/None`。先给结论：**这不是业务故障，也不是 17:34 缓存重建引起的，
+而是 R6 告警规则在低流量下被巡检自身的 401 探测触发的自激误报**。
+
+时间线（UTC+8）：
+
+| 时刻 | 事件 |
+|---|---|
+| 17:30:11 | 规则 `L3InternalAuth401RateHigh` 开始 active（pending 状态） |
+| 17:34:16 | 巡检 `--append` → **PASS 16/16**；该告警仍在 `for: 5m` pending，故不在 firing 列表 |
+| 17:35:11 | pending 满 5 分钟转 **firing**，`/api/v1/alerts` 开始返回它 |
+| 17:36 | 复跑巡检 → **FAIL 15/16**（判据 `EXPECTED_FIRING_JOBS={pushgateway,node_exporter}` 不含它） |
+
+重建脚本只连 Redis / PostgreSQL、不发任何 HTTP 请求，且告警 activeSince 早于重建时刻，
+因果上排除。规则与实测数据：
+
+```
+expr: sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m]))
+      / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.05
+for: 5m     labels: severity=warning, rollback="true"
+```
+
+17:36 实测 `401_rate=0.0140/s`、`total_rate=0.1053/s`、比例 **13.3%**（告警触发时 8.33%）。
+5 分钟窗口内编排侧只有三类请求：`/health/health` 200、`/health/orchestration` 200、
+`/v1/harness/runs/:id` **401**。即分母极小，而分子是巡检「编排直连可达」检查
+（脚本期望 401 以证明鉴权生效）与先前故障注入探测产生的**预期 401**，
+并非服务凭据错误。灰度方案 §4 的 R6 定义为「服务凭据 401 比例异常」，与此不同。
+
+**风险提示**：该规则带 `rollback: "true"`，按 §4「先修密钥；10 分钟未恢复则回切」，
+若值班机械按告警字面执行，可能误判为 R6 触发。需人工判读并在此登记解释；
+§5 第二项「§4 全部阈值未触发」到期复核时应把本条作为已知误报说明，代理不代劳判定。
+
+**未擅自处置**（超出本次「授权重建」范围）：不改 `alert_rules.yml`、不改
+`observe_check.py` 的白名单或判据、不在 Alertmanager 建 silence、不删告警、不改业务代码。
+可选处置均需单独授权：
+
+1. **推荐**：给 R6 表达式加最小流量门槛（例如追加
+   `and sum(rate(http_requests_total{job="l3-orchestration"}[5m])) > 0.05`，
+   或提高 `clamp_min` 下限），低流量时不误报，同时保留真实凭据故障检测能力；
+2. 让巡检探测与真实流量可区分（探测请求打标、指标按 label 排除），需改巡检脚本
+   与中间件，改动面较大；
+3. 把该告警加入 `EXPECTED_FIRING_JOBS` 白名单——**不推荐**，会掩盖真实 R6；
+4. 不动、每日人工判读——会持续污染巡检结论与 §4 判定，**不推荐**。
+
+**观察期影响**：监控判据误报，非业务故障；三业务容器 healthy、`mode=proxy_l3`、
+计量真账未变、未回切、**不重置计时**（起算 13:33:40 +0800，
+最早收口 2026-11-23 13:33 +0800）。台账 §3 当日行按脚本覆盖为 17:36 的 FAIL，
+如实反映最新运行态；17:34 的 16/16 PASS 证据保留在 §11.5。

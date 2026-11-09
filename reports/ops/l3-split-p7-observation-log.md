@@ -478,3 +478,63 @@ SIGHUP 热重载、Prometheus 容器未重启（`Up 4 hours`）、规则 `health
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发灰度方案 §4 回切条件。
 §5 第二项「§4 全部阈值未触发」到期复核时，可把 17:35–17:43 这一段登记为
 「已定位并修复的监控误报，非 R6 真实触发」，阈值解释仍须人工判断。
+
+### 11.8 全流程只读复检（2026-11-09 17:48–17:56 +0800）
+
+用户要求「重新检测整个项目流程，查看是否流程是否完整，并记录」。按构建 → 配置 →
+运行态 → 业务链路 → 指标/告警 → 留痕收口六层做端到端**只读**复检，完整报告见
+`reports/ops/l3-split-full-flow-recheck-2026-11-09.md`。
+
+**核心链路全绿**：829 个 `.py` 语法 0 错误、共享包反向 import 0；三容器 healthy；
+8 个健康端点符合 runbook 基线；`/health/orchestration` 仍 `mode=proxy_l3` /
+`write_enabled=true` / 只读库写探测被拒；L2 代理 401（非 503）；`used` 3 键与
+起算基线一致、`held` 全 0、holds_index 空；3 个 L3 job up、14 条规则加载、
+`promtool test rules` SUCCESS、activeAM=1/dropped=0、告警落盘 6 条；
+`observe_check.py --json @17:54:05` → **PASS 16/16 (P16/F0/W0/S0)**。
+
+**发现 6 项未闭环（均不阻断当前观察链路）**：F1 对外反向代理入口脱节
+（nginx 8080 → legacy `aipanel-app`，该容器 `/health/health` unhealthy、harness 路由 404，
+且不在巡检覆盖内）；F2 L2 镜像未 COPY 当前 `web/dist`，容器内前端来自基础镜像且
+`index.html` sha256 与宿主不一致（`/panel` 200 但为旧版）；F3 pushgateway/node_exporter
+未启动致 2 条 `ServiceUnavailable` 常驻 firing（白名单内），外部值班通知渠道未接；
+F4 `services/gateway/tests/plan_golden.py:8` 注释残留旧路径；F5 `_settle_redis_counters`
+用 0 播种 used 缓存（收口后改进项）；F6 §5 五项准入全部未勾选，T7.5 不得提前执行。
+
+**处置边界（本次未做）**：未改任何配置/代码/规则、未重启或重建容器、未动计量数据、
+未读敏感配置内容、**未执行 `--append`**（故 §3 当日行仍保留 17:43 的 PASS 证据不被覆盖）、
+未提前收口。F1/F2 若修复涉及镜像重建与运行态变更，须另行授权并登记观察期影响评估。
+
+**观察期影响**：纯只读复检，不涉及三个业务进程、未回切、**不重置计时**；
+起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
+
+### 11.9 授权修复 F1 / F2 / F4（2026-11-09 18:00–18:10 +0800）
+
+用户「修复新发现的关键问题」，并明确选择 F1 方案「切换 8080 到新 L2」。完整记录见
+`reports/ops/l3-split-full-flow-recheck-2026-11-09.md` §6。
+
+**F2（前端发布契约）**：`deploy/l3/Dockerfile.l2` 增加 node 多阶段构建，从源码 +
+`package-lock` 编译 dist 覆盖基础镜像自带的 11-05 旧快照（`web/dist` 未入库且被
+`.dockerignore` 排除，故不 COPY 本地残留）。`docker build` 18 秒成功；
+`up -d --no-deps --force-recreate --wait l2` 后 L2 healthy，**网关/编排容器未动**。
+新镜像与运行容器内 `index.html` sha256 = `acc16e92…`，与宿主当前源码产物一致
+（修复前容器为 `3717b5a4…`），417 个 assets，`9998/panel` 200。
+
+**F1（对外入口）**：查清运行中的 `aipanel-nginx:8080` 挂载的是**另一目录**
+`D:\programs\fastapi\aipaneladmin\deploy\nginx\conf.d\aipanel.conf`。备份后把 upstream
+`app:9998` 改成 `agentpanel-l2:9998`；用 `docker network connect --alias agentpanel-l2
+app_default agentpanel-l3-l2-1` 热接入（容器级、不重启），`nginx -t` + `nginx -s reload`。
+验证：`8080/health/health` 200 healthy（原 unhealthy）、`8080/api/v1/harness/runs/nope`
+**401**（原 404，证明走 `proxy_l3` 代理）、`8080/panel` 200。
+本仓库 nginx 配置只加 F1 说明注释（保留 `app:9998` 以免破坏 legacy 栈默认部署）；
+runbook 新增 §4.1 记录命令与**别名在 L2 容器重建后会丢失、须重跑连接命令**的警告。
+
+**F4**：`services/gateway/tests/plan_golden.py:8` 注释路径改为 `services\gateway\tests\`。
+
+**复核**：7 个关键端点全部符合基线、`mode=proxy_l3` 不变、计量真账与 `used` 基线未动、
+巡检 **PASS 16/16 (P16/F0/W0/S0) @18:06:52**。未读敏感配置内容、未删旧代码、
+未改 `mode`、未提前收口。
+
+**观察期影响**：L2 容器重建使进程内 Counter **第 4 次**归零（同 15:50 / 16:08 / 16:30
+口径，`rate()` 跨 18:06 窗口注意）；非切流模式变更、未回切、**不重置计时**：
+起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
+F3（监控辅助组件 / 外部通知）、F5（settle 0 播种）、F6（五项准入）仍未闭环。

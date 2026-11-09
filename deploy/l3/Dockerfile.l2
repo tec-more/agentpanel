@@ -21,7 +21,27 @@
 # （当前代码内容对应 sha256:b2a720aec44d59bf9b990ee6d0af25e53f90e92700257d10888411d0996c47e2）；
 # 默认开启 provenance attestation 会把构建时间戳写入外层 manifest list，导致该外层
 # digest 不同，但内层 manifest/config digest 一致，可解释为构建时间戳差异。
+#
+# 2026-11-09 全流程复检 F2 修复：基础镜像自带的 /app/web/dist 是 11-05 构建时的
+# 前端快照，与本仓库当前 web/ 源码不一致（/panel 返回 200 但是旧页面）。本镜像
+# 此前没有 COPY 前端产物，也没有编译阶段。现按 deploy/app/Dockerfile 的同一范式
+# 加多阶段构建：从源码 + package-lock 编译 dist 并覆盖基础镜像快照。
+# 不直接 `COPY web/dist/`：该目录未入库且被 .dockerignore 的 `**/dist/` 排除，
+# 依赖本地残留产物会让镜像不可复现。
 
+# ===== 阶段1：管理后台前端（web → /build/dist）=====
+ARG NODE_IMAGE=docker.m.daocloud.io/library/node:20-alpine
+FROM ${NODE_IMAGE} AS web-builder
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /build
+# 先装依赖（package-lock 锁定版本，命中 Docker 层缓存）
+COPY web/package.json web/package-lock.json ./
+RUN npm config set registry ${NPM_REGISTRY} && npm ci
+# 本地 node_modules/ 与 dist/ 已被 .dockerignore 排除，不会覆盖上面安装的依赖
+COPY web/ ./
+RUN npm run build
+
+# ===== 阶段2：L2 运行时 =====
 FROM aipanel-app@sha256:aaac04f3cf85eeeef3b52fa1a7ee0c496135a78eb47cf5790bafe4f044b11dc1
 
 WORKDIR /app
@@ -32,8 +52,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UVICORN_HOST=0.0.0.0 \
     UVICORN_PORT=9998
 
-# 覆盖旧代码目录；运行时依赖由基础镜像提供
-RUN rm -rf /app/base /app/packages /app/run.py \
+# 覆盖旧代码目录与基础镜像里的旧前端快照；运行时依赖由基础镜像提供
+RUN rm -rf /app/base /app/packages /app/run.py /app/web/dist \
     && groupadd -g 10001 app \
     && useradd -u 10001 -g 10001 -M -s /sbin/nologin app \
     && mkdir -p /app/logs /app/storage
@@ -48,8 +68,10 @@ COPY services/gateway/__init__.py /app/services/gateway/__init__.py
 COPY services/gateway/manifest.json /app/services/gateway/manifest.json
 COPY services/gateway/common/ /app/services/gateway/common/
 COPY services/orchestration/manifest.json /app/services/orchestration/manifest.json
+# F2：用当前源码编译出的前端产物覆盖基础镜像快照（/panel 与 /install 走这里）
+COPY --from=web-builder /build/dist /app/web/dist
 
-RUN chown -R 10001:10001 /app/base /app/packages /app/run.py /app/services /app/logs /app/storage
+RUN chown -R 10001:10001 /app/base /app/packages /app/run.py /app/services /app/web/dist /app/logs /app/storage
 
 USER 10001
 EXPOSE 9998

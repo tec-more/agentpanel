@@ -5,7 +5,7 @@
 行为断言（20 个黄金断言，覆盖 spec §13.6 P1–P14）。
 
 用法（本地库，需 DB_*/REDIS_* 环境变量）：
-    .venv\\Scripts\\python.exe services\\l3-gateway\\tests\\plan_golden.py
+    .venv\\Scripts\\python.exe services\\gateway\\tests\\plan_golden.py
 fixture 全部以 `p4golden_` 前缀构造，结束时清理。
 """
 import asyncio

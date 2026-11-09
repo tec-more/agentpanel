@@ -63,7 +63,7 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 | `L3Gateway5xxRateHigh` | R4 | 网关 5xx 比例 > 1%，for 5m |
 | `L3Orchestration5xxRateHigh` | 补充 | 编排 5xx 比例 > 1%，for 5m |
 | `L3QuotaReserveFailed` / `L3QuotaSettleFailed` | R5 | 5m 内出现预占/结算失败即告警，for 1m |
-| `L3InternalAuth401RateHigh` | R6 | 编排 401 比例 > 5%，for 5m |
+| `L3InternalAuth401RateHigh` | R6 | 编排 401 比例 > 5% **且** 401 速率 > 0.05/s，for 5m（低流量保护，§9.6） |
 | `L3LeaseCacheHitRateLow` | 观察项 | 30m 命中率 < 50%（非回切条件） |
 
 所有比例表达式的分母用 `clamp_min(..., 0.001)` 保护，低流量/零流量不误报。带 `rollback: "true"` 标签的规则即灰度方案中的回切条件。
@@ -241,7 +241,7 @@ DB 真账零变化；**不建议**改基线或改脚本口径。执行细节见
 边界收敛：告警已能自动本地留痕，但**短信/邮件等外部值班通知渠道仍待运维提供或书面接受**；
 `config.conf` 线下核对、第 2 周 G1、三方签字、T7.5 到期收口仍待。
 
-### 9.5 已知误报：R6 `L3InternalAuth401RateHigh`（17:35 起）
+### 9.5 R6 自激误报分析（17:35 发现，17:43 已修复）
 
 `l3_split_alerts` 的 R6 规则（401 比例 > 5%、`for: 5m`、`rollback: "true"`）在低流量环境下
 被**巡检自身的预期 401 探测**触发：17:36 实测编排侧 5 分钟窗口只有两个健康 200 与
@@ -249,7 +249,40 @@ DB 真账零变化；**不建议**改基线或改脚本口径。执行细节见
 分母过小。时间线 17:30:11 pending → 17:35:11 firing，恰好使 17:34 巡检 PASS 16/16、
 17:36 巡检 FAIL 15/16；与 17:34 的缓存重建无因果关系（重建脚本不发 HTTP）。
 
-该告警带 `rollback: "true"`，按灰度方案 §4 若机械执行有误回切风险，**需人工判读为已知误报**。
-本轮未改 `alert_rules.yml`、未改巡检白名单/判据、未建 silence（超出用户「授权重建」范围）；
-推荐给 R6 加最小流量门槛，需单独授权。完整证据、处置选项与观察期影响见
-`l3-split-p7-observation-log.md` §11.6。
+该告警带 `rollback: "true"`，按灰度方案 §4 若机械执行有误回切风险。
+发现当时未改规则（超出「授权重建」范围）；**17:43 用户「授权调整 R6 规则」后已修复，见 §9.6**。
+完整证据、处置选项与观察期影响见 `l3-split-p7-observation-log.md` §11.6 / §11.7。
+
+### 9.6 R6 低流量保护（2026-11-09 17:41–17:43 +0800，用户授权）
+
+| 文件 | 变更 |
+|---|---|
+| `monitoring/alert_rules.yml` | R6 表达式在「401 比例 > 5%」基础上追加 `and sum(rate(...401...[5m])) > 0.05`（≈ 5 分钟内 15 次 401）；比例阈值、`for: 5m`、`rollback: "true"` 均不变；summary/description 同步，注释写明误报背景 |
+| `monitoring/r6_rules_test.yml`（新增） | `promtool test rules` 单元测试两场景，随规则一起回归 |
+
+**更正上一轮的建议**：当时推荐「总流量门槛 `total_rate > 0.05`」其实挡不住这次误报——
+实测误报时 `total_rate=0.1053/s` 已超过 0.05；真正的特征是 **401 绝对量极小**
+（`401_rate=0.0140/s`）。因此改用 401 绝对速率门槛，只挡零星探测，
+真实服务凭据故障时 401 成批出现仍能触发。
+
+验证（全部通过）：
+
+| 判据 | 结果 |
+|---|---|
+| 静态校验 | `promtool check rules` 14 条 SUCCESS；`promtool check config` SUCCESS |
+| **规则单元测试** | `promtool test rules` **SUCCESS**：场景 A 低流量探测（200 0.167/s + 401 0.0167/s，比例 ≈9%）**不触发**；场景 B 真实凭据故障（401 0.5/s，比例 93.75%）**触发**，labels/annotations 精确匹配 |
+| 热重载 | SIGHUP 重载，Prometheus 容器未重启（`Up 4 hours`）；规则 `health=ok / state=inactive`、`for=300s`、labels 保留 |
+| 运行态 | 新表达式在真实数据上返回空；`L3InternalAuth401RateHigh` 从 firing 列表消失，仅剩 2 条已知 `ServiceUnavailable`；巡检产生的 401 未使表达式为真 |
+| 巡检 | `observe_check.py --append @17:43` → **PASS 16/16（P16/F0/W0/S0）** |
+| 告警链路 | `activeAlertmanagers=1 / dropped=0`，未受影响 |
+
+运行命令（宿主仓库根目录）：
+```
+MSYS2_ARG_CONV_EXCL='*' docker run --rm -v "<repo>/monitoring:/rules:ro" \
+  --entrypoint promtool prom/prometheus:latest test rules /rules/r6_rules_test.yml
+```
+Git Bash 下必须禁用 POSIX 路径转换，否则 `/rules/...` 会被改写成本机 Git 安装路径。
+
+**边界**：`0.05/s` 是按当前低流量设定的保守值，运维可按真实流量再调；规则仍保留
+比例 5% 与 `for 5m`，不是把 R6 关掉。本变更只在监控旁路，不改业务代码、不改 `mode`、
+不重启业务容器、不动计量数据、**不重置计时**（起算 13:33:40 / 最早收口 2026-11-23 13:33）。

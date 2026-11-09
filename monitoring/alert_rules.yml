@@ -138,17 +138,25 @@ groups:
           description: "5 分钟内新增 {{ $value }} 次结算失败，按 R5 立即回切并冻结相关租户写入。"
 
       # R6 服务凭据 401 比例异常
+      # 低流量保护（2026-11-09 17:40，用户授权调整）：巡检「编排直连可达」等探测会
+      # 产生预期 401，在总请求很少时把比例推过 5%，造成自激误报（曾于 17:35 firing，
+      # 见 l3-split-p7-metrics.md §9.5）。追加 401 绝对速率门槛 0.05/s
+      # （≈ 5 分钟内 15 次 401），只挡零星探测；真实凭据故障时 401 成批出现仍会触发。
+      # 比例阈值 5%、for 5m、rollback 标签均保持不变，R6 语义不变。
       - alert: L3InternalAuth401RateHigh
         expr: |
-          sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m]))
-          / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.05
+          (
+            sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.05
+          )
+          and sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m])) > 0.05
         for: 5m
         labels:
           severity: warning
           rollback: "true"
         annotations:
-          summary: "L3 编排内部鉴权 401 比例超过 5%"
-          description: "401 比例 {{ $value | humanizePercentage }}，按 R6 先修密钥，10 分钟未恢复则回切。"
+          summary: "L3 编排内部鉴权 401 比例超过 5% 且 401 速率异常"
+          description: "401 比例 {{ $value | humanizePercentage }}、5 分钟内 401 持续超过约 15 次，按 R6 先修密钥，10 分钟未恢复则回切。"
 
       # 租约缓存命中率观察项（非回切条件）
       - alert: L3LeaseCacheHitRateLow

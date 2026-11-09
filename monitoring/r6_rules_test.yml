@@ -1,0 +1,51 @@
+# R6 规则单元测试：证明「低流量下零星预期 401 不误报」且「真实凭据故障仍能检出」。
+#
+# 运行（宿主仓库根目录）：
+#   docker run --rm -v "<repo>/monitoring:/rules:ro" --entrypoint promtool \
+#     prom/prometheus:latest test rules /rules/r6_rules_test.yml
+#
+# rule_files 用相对路径，promtool 会相对本测试文件所在目录解析（容器内 /rules/）。
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 场景 A：巡检「编排直连可达」等探测产生的零星 401（低流量）
+  # 200 每分钟 +10 -> 0.167/s；401 每分钟 +1 -> 0.0167/s
+  # 401 比例 ≈ 9%（> 5%，旧规则会 firing），但 401 绝对速率 0.0167/s < 0.05/s
+  # -> 新规则必须不触发。
+  - interval: 1m
+    name: low traffic probe 401 must NOT fire
+    input_series:
+      - series: 'http_requests_total{job="l3-orchestration",endpoint="/health/health",method="GET",status_code="200"}'
+        values: '0+10x15'
+      - series: 'http_requests_total{job="l3-orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
+        values: '0+1x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: L3InternalAuth401RateHigh
+        exp_alerts: []
+
+  # 场景 B：真实服务凭据故障，401 成批出现
+  # 200 每分钟 +2 -> 0.033/s；401 每分钟 +30 -> 0.5/s
+  # 401 比例 ≈ 94% > 5%，且 401 速率 0.5/s > 0.05/s -> 必须触发（for 5m 已满足）。
+  - interval: 1m
+    name: real credential failure MUST fire
+    input_series:
+      - series: 'http_requests_total{job="l3-orchestration",endpoint="/health/health",method="GET",status_code="200"}'
+        values: '0+2x15'
+      - series: 'http_requests_total{job="l3-orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
+        values: '0+30x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: L3InternalAuth401RateHigh
+        exp_alerts:
+          - exp_labels:
+              alertname: L3InternalAuth401RateHigh
+              severity: warning
+              rollback: "true"
+            # 401 比例 = 0.5 / (0.5 + 0.0333) = 93.75%，模板变量按实测值渲染
+            exp_annotations:
+              summary: "L3 编排内部鉴权 401 比例超过 5% 且 401 速率异常"
+              description: "401 比例 93.75%、5 分钟内 401 持续超过约 15 次，按 R6 先修密钥，10 分钟未恢复则回切。"

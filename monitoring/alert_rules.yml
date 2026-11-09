@@ -36,3 +36,129 @@ groups:
         annotations:
           summary: "High active requests"
           description: "Number of active requests is {{ $value }}"
+
+  # T7.4：L3 物理拆分观察期告警，与 reports/ops/l3-split-p7-grayscale.md §4 的 R1–R7 对应。
+  # R5（重复结算/多加）以预占、结算失败率近似覆盖；R7（used/held 数据一致性）
+  # 无法由 Prometheus 判定，仍按灰度方案走每日人工 G1 抽查，不宣称自动告警已覆盖。
+  - name: l3_split_alerts
+    rules:
+      # R1 容器/进程可用性
+      - alert: L3ServiceDown
+        expr: up{job=~"l3-(gateway|orchestration)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 容器抓取失败：{{ $labels.job }}"
+          description: "Prometheus 连续 2 分钟无法抓取 {{ $labels.instance }}，按灰度方案 R1 检查容器健康并考虑回切。"
+
+      # R1 依赖健康（DB / Redis 探针随 /metrics 抓取刷新）
+      - alert: L3HealthCheckFailing
+        expr: l3_health_check_status == 0
+        for: 5m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 健康检查失败：{{ $labels.service }}/{{ $labels.check }}"
+          description: "{{ $labels.service }} 的 {{ $labels.check }} 探针连续 5 分钟非 healthy，按 R1 排查并考虑回切。"
+
+      # R2 L2→L3 代理 5xx/503 比例 > 1%（L2 侧 endpoint 实测为 /v1/harness/...）
+      - alert: L3Proxy5xxRateHigh
+        expr: |
+          sum(rate(http_requests_total{job="aipaneladmin",endpoint=~"/(api/)?v1/harness/.*",status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_requests_total{job="aipaneladmin",endpoint=~"/(api/)?v1/harness/.*"}[5m])), 0.001) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L2→L3 代理 5xx 比例超过 1%"
+          description: "5 分钟窗口 5xx/503 比例 {{ $value | humanizePercentage }}，按 R2 立即回切。"
+
+      # R3 P95 延迟较 1 小时前翻倍（低流量时不触发）
+      - alert: L3GatewayP95LatencyDoubled
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="l3-gateway"}[5m])))
+          / clamp_min(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="l3-gateway"}[5m] offset 1h))), 0.01) > 2
+          and sum(rate(http_requests_total{job="l3-gateway"}[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          rollback: "true"
+        annotations:
+          summary: "L3 网关 P95 延迟较基线翻倍"
+          description: "相对 1 小时前 P95 比值 {{ $value }}，持续 10 分钟，按 R3 回切。"
+
+      # R4 网关 5xx 比例 > 1%
+      - alert: L3Gateway5xxRateHigh
+        expr: |
+          sum(rate(http_requests_total{job="l3-gateway",status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_requests_total{job="l3-gateway"}[5m])), 0.001) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 网关 5xx 比例超过 1%"
+          description: "5 分钟窗口网关 5xx 比例 {{ $value | humanizePercentage }}，按 R4 回切并排查上游/鉴权。"
+
+      - alert: L3Orchestration5xxRateHigh
+        expr: |
+          sum(rate(http_requests_total{job="l3-orchestration",status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 编排 5xx 比例超过 1%"
+          description: "5 分钟窗口编排 5xx 比例 {{ $value | humanizePercentage }}，排查只读库/额度 API 后决定是否回切。"
+
+      # R5 配额正确性：预占或结算失败出现即告警（fail-closed 下每次失败都值得关注）
+      - alert: L3QuotaReserveFailed
+        expr: increase(l3_quota_operations_total{action="reserve",result="failed"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 预占失败：{{ $labels.reason }}"
+          description: "5 分钟内新增 {{ $value }} 次预占失败，按 R5 排查 L2 额度主写者/悬挂 hold。"
+
+      - alert: L3QuotaSettleFailed
+        expr: increase(l3_quota_operations_total{action="settle",result="failed"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          rollback: "true"
+        annotations:
+          summary: "L3 结算失败：{{ $labels.reason }}"
+          description: "5 分钟内新增 {{ $value }} 次结算失败，按 R5 立即回切并冻结相关租户写入。"
+
+      # R6 服务凭据 401 比例异常
+      - alert: L3InternalAuth401RateHigh
+        expr: |
+          sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m]))
+          / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          rollback: "true"
+        annotations:
+          summary: "L3 编排内部鉴权 401 比例超过 5%"
+          description: "401 比例 {{ $value | humanizePercentage }}，按 R6 先修密钥，10 分钟未恢复则回切。"
+
+      # 租约缓存命中率观察项（非回切条件）
+      - alert: L3LeaseCacheHitRateLow
+        expr: |
+          sum(rate(l3_lease_cache_lookups_total{result="hit"}[30m]))
+          / clamp_min(sum(rate(l3_lease_cache_lookups_total[30m])), 0.001) < 0.5
+          and sum(rate(l3_lease_cache_lookups_total[30m])) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "L3 租约缓存命中率偏低"
+          description: "30 分钟命中率 {{ $value | humanizePercentage }}，检查 Redis 可达性与 gw:lease:state:* TTL。"

@@ -29,6 +29,11 @@ from packages.agentpanel_common.db import (
 from packages.agentpanel_common.domain import credential_resolver
 from packages.agentpanel_common.gateway import runtime as gateway_runtime
 from packages.agentpanel_common.gateway.router import gateway_data_router
+from packages.agentpanel_common.l3_metrics import (
+    L3HttpMetricsMiddleware,
+    make_metrics_endpoint,
+    mark_service,
+)
 from packages.agentpanel_common.quota.services import plan_service
 from packages.agentpanel_common.quota.services.plan_resolver import SqlPlanResolver
 
@@ -154,6 +159,20 @@ def build_app() -> FastAPI:
     # `/health`、`/chat/completions` 由共享数据面 router 提供
     app.include_router(gateway_data_router)
     app.include_router(health_module.router)
+
+    # T7.4：纯 ASGI 指标中间件（不包装 StreamingResponse，SSE 保持原样透传）；
+    # /metrics 抓取时顺带刷新 DB/Redis 健康 Gauge，不依赖 L2 settings 开关。
+    app.add_middleware(L3HttpMetricsMiddleware)
+    app.add_api_route(
+        "/metrics",
+        make_metrics_endpoint(
+            "l3-gateway",
+            {"database": health_module.check_database, "redis": health_module.check_redis},
+        ),
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    mark_service("l3-gateway", "1.0.0")
     return app
 
 

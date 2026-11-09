@@ -8,7 +8,11 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
       - prometheus_data:/prometheus
+    # 抓取 host.docker.internal:9998/9999/9100（L2 / L3 网关 / L3 编排）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -101,8 +105,10 @@ services:
   node_exporter:
     image: prom/node-exporter:latest
     container_name: node_exporter
+    # 宿主 9100 已由 L3 编排容器占用（deploy/l3/docker-compose.yml），
+    # 改映射到 9101；容器内端口与 prometheus.yml 的 node_exporter:9100 不变。
     ports:
-      - "9100:9100"
+      - "9101:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro

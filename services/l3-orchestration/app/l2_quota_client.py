@@ -45,7 +45,7 @@ def _timeout() -> float:
         return 5.0
 
 
-async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+async def _post_impl(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     base_url = _base_url()
     service_id, secret = _credentials()
     if not base_url or not service_id or not secret:
@@ -96,6 +96,27 @@ async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     raise QuotaUnavailable(
         f"L2 额度 {action} 返回 {response.status_code}: {str(raw.get('msg') or raw)[:160]}"
     )
+
+
+def _inc_quota_operation(action: str, result: str, reason: str = "") -> None:
+    """T7.4 观测旁路：埋点失败不得影响额度调用。"""
+    try:
+        from packages.agentpanel_common.l3_metrics import inc_quota_operation
+
+        inc_quota_operation(action, result, reason)
+    except Exception:
+        pass
+
+
+async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """T7.4 观测包装：记录预占/结算/释放成败，异常类型与传播语义不变。"""
+    try:
+        data = await _post_impl(action, payload)
+    except Exception as exc:
+        _inc_quota_operation(action, "failed", type(exc).__name__)
+        raise
+    _inc_quota_operation(action, "ok")
+    return data
 
 
 async def reserve(

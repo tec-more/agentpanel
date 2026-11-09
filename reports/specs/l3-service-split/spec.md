@@ -954,7 +954,7 @@ L2 业务后端 :9998（宿主进程）
 | P4 | 完成 | L2 删除边界与内部 API 收口（本文件 §3） |
 | P5 | 完成 | 两镜像 + compose 交付；三容器接管 `9998/9999/9100` |
 | P6 | 完成 | T6.1–T6.8 全部通过，报告：`reports/ops/l3-split-acceptance.md` |
-| P7 | 部分完成 | T7.1–T7.3 完成；T7.4（监控指标）未实现；T7.5（删除开关与旧代码）未开始。演练记录：`reports/ops/l3-split-p7-report.md` |
+| P7 | 部分完成 | T7.1–T7.4 完成（T7.4 监控指标见 `reports/ops/l3-split-p7-metrics.md`）；T7.5（删除开关与旧代码、更新架构图）未开始，需 14 天观察期。演练记录：`reports/ops/l3-split-p7-report.md` |
 
 ### 16.2 P6 实测与设计假设的两处差异
 
@@ -963,6 +963,6 @@ L2 业务后端 :9998（宿主进程）
 
 ### 16.3 已知限制
 
-端口仅回环、`web_fetch`/`web_search` 可绕网关直连、DSH 原生审批无终端应答者、L3 无 `/metrics` 与告警、灰度仅为部署级二元切换、`prepare-secrets.ps1` 生成的 `.env` 仍写旧端口——详见 `reports/ops/l3-split-acceptance.md` §8。
+端口仅回环、`web_fetch`/`web_search` 可绕网关直连、DSH 原生审批无终端应答者、灰度仅为部署级二元切换、`prepare-secrets.ps1` 生成的 `.env` 仍写旧端口——详见 `reports/ops/l3-split-acceptance.md` §8。原「L3 无 `/metrics` 与告警」缺口已由 T7.4 补齐，但重复结算/`used` 一致性与预占悬挂仍需人工 G1 抽查，且尚未接 Alertmanager（详见 `reports/ops/l3-split-p7-metrics.md` §7）。
 
 

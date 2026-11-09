@@ -4,6 +4,7 @@
 - 范围：`reports/specs/l3-service-split/tasks.md` T7.1–T7.5
 - 前提：P6 验收通过（`l3-split-acceptance.md`）；回滚手册 `port-switch-9998-9999-9100.md` §2
 - 原则：不改业务逻辑代码；演练前后校验 `org:14` / `usr:4` 的 `used` 不变
+- 后续补充：本报告落盘后同日补齐 T7.4（只加观测旁路、不改业务分支），详见 `reports/ops/l3-split-p7-metrics.md`；下表 T7.4 状态已同步
 
 ## 1. P7 条目状态
 
@@ -12,8 +13,8 @@
 | T7.1 运维 runbook | 完成 | `reports/ops/l3-split-p7-runbook.md`（启停/secret 轮换/网络附加/日志/迁移/回滚） |
 | T7.2 回滚演练 | 完成 | 本文件 §2、§3；两条路径均实测并恢复到三容器 healthy |
 | T7.3 灰度方案 | 完成 | `reports/ops/l3-split-p7-grayscale.md`（保留期/二元切换/回切阈值/责任人） |
-| T7.4 监控/告警 | **未实现** | L3 网关/编排无 `/metrics`；仅 Docker HEALTHCHECK 与 `/health*`；5xx、预占失败、租约缓存命中未暴露，无告警规则 |
-| T7.5 收口 | **未开始** | 旧编排代码与 `mode` 开关仍在仓库；架构图未改；本阶段按要求不动业务代码 |
+| T7.4 监控/告警 | 完成（同日补齐） | `reports/ops/l3-split-p7-metrics.md`：两容器 `/metrics` 200；5xx/401、预占与结算失败、租约缓存命中、健康 Gauge 均已暴露；`l3_split_alerts` 10 条规则经 promtool 与 Prometheus 实求值通过 |
+| T7.5 收口 | **未开始** | 旧编排代码与 `mode` 开关仍在仓库；架构图未改；需完成 14 天观察期后执行 |
 
 ## 2. 演练 A：回滚到容器旧端口（19998/19999/19100）
 
@@ -112,6 +113,7 @@ GET 9998/api/v1/harness/runs/nope -> 401
 - `reports/ops/l3-split-p7-runbook.md`（T7.1）
 - `reports/ops/l3-split-p7-grayscale.md`（T7.3）
 - `reports/ops/l3-split-p7-report.md`（本文件，T7.2 演练记录 + T7.4/T7.5 状态）
+- `reports/ops/l3-split-p7-metrics.md`（T7.4 补齐：指标清单、告警映射、部署变更、验证证据）
 
 更新：
 
@@ -119,4 +121,5 @@ GET 9998/api/v1/harness/runs/nope -> 401
 - `reports/specs/l3-service-split/spec.md`（新增实施状态与 P6 两处实测差异；§8.1/§8.4 对齐现状）
 - `reports/specs/l3-service-split/checklist.md`（追加 P6 验收清单与 P7 状态）
 
-未改：业务逻辑代码、`deploy/l3/docker-compose.yml`、`deploy/l3/.env`、secrets。
+未改（T7.1–T7.3 与演练阶段）：业务逻辑代码、`deploy/l3/docker-compose.yml`、`deploy/l3/.env`、secrets。
+T7.4 另行新增 `packages/agentpanel_common/l3_metrics.py`，并在两服务入口、租约缓存、额度客户端与 `monitoring/` 中加入观测旁路（未改业务分支），见 `l3-split-p7-metrics.md` §2。

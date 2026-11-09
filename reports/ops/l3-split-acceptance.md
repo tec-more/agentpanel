@@ -104,11 +104,11 @@ T6.7（重启语义）：
 1. **端口仅回环**：三容器发布端口均绑定 `127.0.0.1`（`9998/9999/9100`），不接受远程直连；远程客户端需本机代理/隧道，且当前无 TLS 终止。
 2. **`web_fetch`/`web_search` 可绕网关直连**：二者是 dsh 工具侧的直接出网通道，不经过共享上游客户端与网关白名单（`packages/agentpanel_common/upstream/egress.py:7-8` 明确说明）。`base/plugins/harness/services/egress_policy_service.py:42` 的 `tool_denylist` 只是策略快照，不是执行边界；Linux 实测联网容器访问 `https://example.com/` 返回 200（`deploy/harness-linux-verify/VERIFICATION.md` §3）。生产必须禁用这些工具或用容器/网络策略兜底。
 3. **DSH 原生审批无终端应答者**：SDK profile 未组合 answerer，`approval/asked` 与 `approval/decided` 成对产生但 `outcome=unavailable`，客户端收到 `session/request_permission` 0 次，工具报 `no approval channel is available`（`deploy/harness-linux-verify/VERIFICATION.md` §4）。当前依赖后端审批事件落库 + 超时拒绝的 fail-closed 路径，不宣称原生审批可下发。
-4. **监控/告警缺口**：L3 网关与编排镜像无 `/metrics` 端点，仅有 Docker HEALTHCHECK 与 `/health*`；5xx、预占失败、租约缓存命中等指标未暴露，也无告警规则（T7.4 未实现）。
+4. **监控/告警（原缺口已补齐，仍有边界）**：P6 当时 L3 两镜像无 `/metrics`、无告警规则；T7.4 已于 2026-11-09 补齐（两容器 `/metrics`、`l3_split_alerts` 10 条规则、Prometheus 端到端抓取通过，见 `l3-split-p7-metrics.md`）。仍需人工的是 R5 重复结算/`used` 多加/预占悬挂与 R7 数据一致性抽查；且尚未配置 Alertmanager，规则求值但不会自动外发通知。
 5. **灰度只能部署级二元切换**：`orchestration.mode` 仅支持 `l2|proxy_l3`，没有按比例/按租户切流实现；切流与回切都是整机切换（详见 `l3-split-p7-grayscale.md`）。
 6. **密钥脚本端口遗留**：`deploy/l3/scripts/prepare-secrets.ps1` 生成的 `.env` 仍写 `GW_PUBLIC_BASE_URL=http://127.0.0.1:19999`、`ORCH_PUBLIC_BASE_URL=http://127.0.0.1:19100`；重新生成 secrets 后必须手动改为 `9999/9100`（本阶段未修改脚本）。
 7. **本机演练的进程生命周期**：Trae 终端会话结束会回收 `Start-Process` 子进程；宿主进程回滚必须作为常驻后台任务运行（与 `port-switch-9998-9999-9100.md` §2.2 记录一致）。
 
 ## 9. 结论
 
-P6 硬项全部通过，容器形态可以接管 `9998/9999/9100`。在 T7.4/T7.5 未完成前，不建议删除 L2 侧旧编排代码；回滚路径已由 P7 演练实测（见 `l3-split-p7-report.md`）。
+P6 硬项全部通过，容器形态可以接管 `9998/9999/9100`。T7.4 已补齐，但 T7.5（删除灰度开关与旧代码、更新架构图）需完成 14 天观察期后方可执行，在此之前不建议删除 L2 侧旧编排代码；回滚路径已由 P7 演练实测（见 `l3-split-p7-report.md`）。

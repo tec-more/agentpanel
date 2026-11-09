@@ -20,6 +20,11 @@ from packages.agentpanel_common.db import (
     shared_model_modules,
     stabilize_shared_model_fields,
 )
+from packages.agentpanel_common.l3_metrics import (
+    L3HttpMetricsMiddleware,
+    make_metrics_endpoint,
+    mark_service,
+)
 
 from app import health as health_module
 from app import quota_backend
@@ -156,6 +161,19 @@ def build_app() -> FastAPI:
     app.include_router(l3_business_router)
     app.include_router(l3_write_router)
     app.include_router(approval_router, prefix="/v1/harness")
+
+    # T7.4：与网关同口径的 HTTP 指标 + 健康 Gauge；/metrics 不纳入业务鉴权。
+    app.add_middleware(L3HttpMetricsMiddleware)
+    app.add_api_route(
+        "/metrics",
+        make_metrics_endpoint(
+            "l3-orchestration",
+            {"database": health_module.check_database, "redis": health_module.check_redis},
+        ),
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    mark_service("l3-orchestration", "0.2.0")
 
     @app.get("/health/orchestration", include_in_schema=True, tags=["编排-健康"])
     async def orchestration_health():

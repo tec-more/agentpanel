@@ -34,6 +34,16 @@ LEASE_CACHE_PREFIX = "gw:lease:state:"
 _rate_windows: Dict[str, Dict[str, float]] = {}
 
 
+def _inc_lease_cache(result: str) -> None:
+    """T7.4 观测旁路：任何异常都不得影响租约鉴权链路。"""
+    try:
+        from ..l3_metrics import inc_lease_cache
+
+        inc_lease_cache(result)
+    except Exception:
+        pass
+
+
 @dataclass
 class GatewayLease:
     """鉴权通过后的租约快照（替代插件层 ORM 模型，供数据面只读使用）"""
@@ -194,11 +204,16 @@ def _payload_to_lease(payload: Dict[str, Any]) -> Optional[GatewayLease]:
 async def _get_cached_lease(lease_id: str) -> Optional[GatewayLease]:
     cache = await _cache()
     if cache is None:
+        _inc_lease_cache("unavailable")
         return None
     try:
         payload = await cache.get(f"{LEASE_CACHE_PREFIX}{lease_id}")
-        return _payload_to_lease(payload) if payload else None
+        lease = _payload_to_lease(payload) if payload else None
+        # hit=命中；payload 无效或为空均需回源 DB，统一记 miss
+        _inc_lease_cache("hit" if lease is not None else "miss")
+        return lease
     except Exception:
+        _inc_lease_cache("error")
         return None
 
 

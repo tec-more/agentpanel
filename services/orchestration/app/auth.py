@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import Request
 
 from packages.agentpanel_common.domain.audit_service import HarnessAuditService
-from packages.agentpanel_common.gateway.constants import (
+from services.gateway.gateway.constants import (
     is_gateway_virtual_key,
     looks_like_jwt,
 )

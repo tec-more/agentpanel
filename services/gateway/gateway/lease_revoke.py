@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
-from ..models.harness import HarnessGatewayLease
+from packages.agentpanel_common.models.harness import HarnessGatewayLease
 from .audit import record_gateway_quota_event
 from .constants import GATEWAY_EVENT_SOURCE
 from .lease_auth import invalidate_lease_cache

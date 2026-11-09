@@ -15,9 +15,9 @@ from urllib.parse import urlparse
 from .logging import gateway_logger
 
 from .runtime import gateway_config
-from ..domain.pricing_service import ModelPriceService
-from ..models.quota import UsageRecord
-from ..upstream import EgressPolicy
+from packages.agentpanel_common.domain.pricing_service import ModelPriceService
+from packages.agentpanel_common.models.quota import UsageRecord
+from packages.agentpanel_common.upstream import EgressPolicy
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -101,7 +101,7 @@ def extract_usage(usage: Any) -> Dict[str, int]:
 
 async def resolve_upstream_credential(lease, body_model: Optional[str]):
     """解析真实 provider 凭据；失败即 fail-closed（不回退直连）。"""
-    from ..domain.credential_resolver import (
+    from packages.agentpanel_common.domain.credential_resolver import (
         ModelCredentialNotConfigured,
         resolve as resolve_model_credential,
     )

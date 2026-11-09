@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException, status
 
 from base.plugins.harness.services.gateway_config import issuance_config, lease_ttl_override
-from packages.agentpanel_common.gateway.lease_auth import (
+from services.gateway.gateway.lease_auth import (
     TERMINAL_RUN_STATUSES,
     VIRTUAL_KEY_PREFIX,
     authenticate as validate_gateway_lease,
@@ -179,7 +179,7 @@ class GatewayLeaseService:
         status_code: int,
         client_id: Optional[str] = None,
     ) -> None:
-        from packages.agentpanel_common.gateway.audit import record_gateway_quota_event
+        from services.gateway.gateway.audit import record_gateway_quota_event
 
         await record_gateway_quota_event(
             action="gateway.lease_renew_failed",
@@ -217,7 +217,7 @@ class GatewayLeaseService:
         client,
         ttl_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        from packages.agentpanel_common.gateway.budget import GatewayBudgetService
+        from services.gateway.gateway.budget import GatewayBudgetService
 
         client_id = getattr(client, "client_id", None) or str(client)
         client_status = getattr(client, "status", "active") or "active"
@@ -274,7 +274,7 @@ class GatewayLeaseService:
         try:
             snapshot = await GatewayBudgetService.snapshot(lease)
         except Exception as exc:
-            from packages.agentpanel_common.gateway.logging import gateway_logger
+            from services.gateway.gateway.logging import gateway_logger
 
             gateway_logger.error(
                 f"[gateway] 续期额度校验失败 lease={lease.lease_id}: {type(exc).__name__}"
@@ -331,7 +331,7 @@ class GatewayLeaseService:
         event_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """吊销单个租约并写审计；幂等，且只影响目标 lease，不波及同租户其他租约。"""
-        from packages.agentpanel_common.gateway.lease_revoke import revoke_lease_internal
+        from services.gateway.gateway.lease_revoke import revoke_lease_internal
 
         return await revoke_lease_internal(
             lease_id,
@@ -364,7 +364,7 @@ class GatewayLeaseService:
     # ---------------- 数据面鉴权 ----------------
     @classmethod
     async def authenticate(cls, token: str):
-        """校验逻辑已下沉到 packages.agentpanel_common.gateway.lease_auth（不依赖插件服务）。
+        """校验逻辑已下沉到 services.gateway.gateway.lease_auth（不依赖插件服务）。
 
         本方法保留为控制面/兼容入口，行为与历史实现完全一致。
         """

@@ -37,7 +37,7 @@ _rate_windows: Dict[str, Dict[str, float]] = {}
 def _inc_lease_cache(result: str) -> None:
     """T7.4 观测旁路：任何异常都不得影响租约鉴权链路。"""
     try:
-        from ..l3_metrics import inc_lease_cache
+        from packages.agentpanel_common.l3_metrics import inc_lease_cache
 
         inc_lease_cache(result)
     except Exception:
@@ -143,7 +143,7 @@ def _parse_dt(value: Any) -> Optional[datetime]:
 async def _cache() -> Any:
     """获取 Redis 缓存；不可用返回 None（调用方回落 DB）。"""
     try:
-        from ..cache import RedisCache
+        from packages.agentpanel_common.cache import RedisCache
 
         cache = await RedisCache.get_instance()
         return cache if cache.is_enabled() else None

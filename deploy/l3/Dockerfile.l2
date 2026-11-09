@@ -41,9 +41,13 @@ RUN rm -rf /app/base /app/packages /app/run.py \
 COPY run.py /app/run.py
 COPY base/ /app/base/
 COPY packages/ /app/packages/
-# L2 的 gateway/orchestration 配置读取 services/*/manifest.json（不复制运行代码）
-COPY services/orchestration/manifest.json /app/services/orchestration/manifest.json
+# L2 复用网关领域包（租约校验/预算/审计/常量），并读取 services/*/manifest.json。
+# 网关与编排的进程代码（run.py / app/ / tests/）不进入 L2 镜像。
+COPY services/__init__.py /app/services/__init__.py
+COPY services/gateway/__init__.py /app/services/gateway/__init__.py
 COPY services/gateway/manifest.json /app/services/gateway/manifest.json
+COPY services/gateway/gateway/ /app/services/gateway/gateway/
+COPY services/orchestration/manifest.json /app/services/orchestration/manifest.json
 
 RUN chown -R 10001:10001 /app/base /app/packages /app/run.py /app/services /app/logs /app/storage
 

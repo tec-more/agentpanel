@@ -25,7 +25,11 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 COPY packages/ ./packages/
+COPY services/__init__.py ./services/__init__.py
 COPY services/orchestration/ ./services/orchestration/
+# 编排鉴权复用网关领域包的常量契约（services.gateway.gateway.constants）
+COPY services/gateway/__init__.py ./services/gateway/__init__.py
+COPY services/gateway/gateway/ ./services/gateway/gateway/
 
 RUN chown -R 10001:10001 /app
 

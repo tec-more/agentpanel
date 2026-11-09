@@ -1,6 +1,6 @@
 # 现状架构说明（As-Built）：L3 物理拆分后
 
-- 日期：2026-11-09
+- 日期：2026-11-09（同日目录整理后修订：网关领域包迁入 `services/gateway/gateway/`）
 - 状态：**代码现状快照**，非目标态设计稿
 - 依据：2026-11-09 工作区代码、`deploy/l3/docker-compose.yml`、`monitoring/`，以及 P6 验收与 T7.4 实测报告
 - 关联：`reports/specs/l3-service-split/spec.md`、`reports/ops/l3-split-acceptance.md`、`reports/ops/l3-split-p7-metrics.md`、`reports/ops/l3-split-p7-observation-log.md`
@@ -14,7 +14,9 @@
 
 ## 1. 结论先行
 
-单仓（monorepo）多进程：一个共享代码包 + 三个独立容器。**控制面留在 L2，模型数据面与编排面各拆一个进程**，三者共享同一套 PostgreSQL 与 Redis，但**数据库迁移只由 L2 执行**；在 `mode=proxy_l3` 下，客户端的编排请求经 L2 只代理到 L3 编排，额度写主仍回呼 L2 内部 API，从而避免同一 run 双写。Prometheus 作为旁路抓取三个进程的 `/metrics`。
+单仓（monorepo）多进程：一个共享基础包 + 一个网关领域包 + 三个独立容器。**控制面留在 L2，模型数据面与编排面各拆一个进程**，三者共享同一套 PostgreSQL 与 Redis，但**数据库迁移只由 L2 执行**；在 `mode=proxy_l3` 下，客户端的编排请求经 L2 只代理到 L3 编排，额度写主仍回呼 L2 内部 API，从而避免同一 run 双写。Prometheus 作为旁路抓取三个进程的 `/metrics`。
+
+2026-11-09 目录整理后，网关数据面/租约/预算/契约代码从 `packages/agentpanel_common/gateway/` 整包迁入 `services/gateway/gateway/`，导入名统一 `services.gateway.gateway.*`。它仍是**跨进程共享的领域包**（L2 签发租约与看板、编排鉴权常量都引用它），因此 L2 与编排镜像也复制该目录；运行时标识（端口、容器名、compose 服务名、Prometheus job、指标标签、告警表达式）一律未改，观察期指标序列保持连续。
 
 ## 2. 分层总览
 
@@ -27,7 +29,8 @@ flowchart TB
     GW["L3 网关 :9999<br/>数据面 / SSE 透传"]
     OR["L3 编排 :9100<br/>会话·run·审批·额度"]
   end
-  CM["共享代码 packages/agentpanel_common<br/>models / gateway / quota / db / domain / upstream / prometheus / l3_metrics"]
+  CM["共享基础包 packages/agentpanel_common<br/>models / quota / db / domain / upstream / prometheus / l3_metrics"]
+  GWD["网关领域包 services/gateway/gateway<br/>router / lease_auth / budget / audit / runtime / contracts / constants"]
   subgraph ST["数据与外部依赖"]
     direction LR
     PG[("PostgreSQL :15432")]
@@ -43,6 +46,10 @@ flowchart TB
   L2 -.->|import| CM
   GW -.->|import| CM
   OR -.->|import| CM
+  GW -.->|"import（同进程装配）"| GWD
+  L2 -.->|"import（租约/预算/审计）"| GWD
+  OR -.->|"import（constants 契约）"| GWD
+  GWD -.->|"依赖基础包"| CM
   L2 --> PG
   L2 --> RD
   OR --> PG
@@ -55,14 +62,14 @@ flowchart TB
   PM -.-> OR
 ```
 
-共享包是**唯一来源**：三个镜像各自 `COPY packages/`（未打 wheel，`run.py` 注入 `sys.path`），导入名统一 `packages.agentpanel_common.*`；L2 通过 `base/*` shim 兼容 re-export，共享包禁止反向 `import base.*`。这是拆分能成立的依赖前提。
+**依赖规则**：共享基础包仍是模型/额度/上游客户端的唯一来源，三个镜像各自 `COPY packages/`（未打 wheel，`run.py` 注入 `sys.path`），导入名统一 `packages.agentpanel_common.*`；L2 通过 `base/*` shim 兼容 re-export，基础包禁止 `import base.*`。网关领域包位于 `services/gateway/gateway/`，L2、网关、编排三个镜像均复制 `services/__init__.py` 与该包，保证 `services.gateway.gateway.*` 在三种进程里是**同一个模块身份**（避免 `runtime.configure()` 注入的配置源分叉）。代价是 `packages/agentpanel_common/log.py` 会反向引用 `services.gateway.gateway.constants`；该常量模块不依赖任何基础包模块，不构成循环导入，但分层上属于已知取舍（见 §9）。
 
 ## 3. 三个服务
 
 | 服务 | 代码入口 | 容器启动命令 | 端口 | 健康端点 | 职责 |
 |---|---|---|---|---|---|
-| **L2 主应用** | `base/start.py` 建 app → `base/app_wrapper.py` 加 `/api` 前缀 → `run.py` 起 uvicorn | `CMD ["python","run.py"]`（`deploy/l3/Dockerfile.l2:56`） | `9998` | `/health/health`、`/api/health/health` | 租约签发、策略/凭据/出网策略 CRUD、看板与报表、对 L3 暴露内部额度与心跳 API；**唯一执行 aerich 迁移的进程**；`/metrics`（`start.py:733`） |
-| **L3 网关** | `services/gateway/run.py` → `app/main.py` | `CMD ["python","services/gateway/run.py"]` | `9999` | `/health`、`/health/health`、`/health/live` | `dgw.*` 虚拟 key 鉴权、provider 转发 SSE 透传、`usage_record` 记账、预算/并发/额度耗尽预检 |
+| **L2 主应用** | `base/start.py` 建 app → `base/app_wrapper.py` 加 `/api` 前缀 → `run.py` 起 uvicorn | `CMD ["python","run.py"]`（`deploy/l3/Dockerfile.l2:60`） | `9998` | `/health/health`、`/api/health/health` | 租约签发、策略/凭据/出网策略 CRUD、看板与报表、对 L3 暴露内部额度与心跳 API；**唯一执行 aerich 迁移的进程**；`/metrics`（`start.py:733`） |
+| **L3 网关** | `services/gateway/run.py` → `app/main.py` → `gateway/router.py`（领域包同目录） | `CMD ["python","services/gateway/run.py"]` | `9999` | `/health`、`/health/health`、`/health/live` | `dgw.*` 虚拟 key 鉴权、provider 转发 SSE 透传、`usage_record` 记账、预算/并发/额度耗尽预检 |
 | **L3 编排** | `services/orchestration/run.py` → `app/main.py` | 同构；compose 覆盖 command 注入 secret 后 `exec run.py`（`docker-compose.yml:134-137`） | `9100` | `/health/health`、`/health/live`、`/health/ready`、`/health/orchestration` | 会话/run/step 编排、策略评估、审批、审计；额度**不自己写主**，经 L2 内部 API |
 
 编排的路由前缀：`/v1/harness`（`api/business.py:24` 读、`api/write.py:32` 写）、`/v1/harness/approvals`（`api/approval.py:13`）、`/internal/v1/harness`（`api/internal.py:11`，含 `/whoami`）。`/metrics` 不纳入业务鉴权（`main.py:167-172`）。
@@ -76,13 +83,12 @@ flowchart TB
 
 校验仅允许这两个值（`services/orchestration/app/config.py:122-123`）。这是**部署级整机二元切换**，没有按比例/按租户切流；切流与回切都是整机行为。
 
-## 4. 共享包 `agentpanel_common` 子系统
+## 4. 共享基础包 `packages/agentpanel_common` 子系统
 
 | 模块 | 职责 |
 |---|---|
 | `config.py` | INI / ENV / `*_FILE` 契约，缺失即 fail-closed（退出码 2） |
 | `db.py`、`models/`、`domain/` | Tortoise 连接工厂、模型单一来源、run/event/policy/approval/audit/pricing 等领域对象 |
-| `gateway/`（13 模块） | `router.py`（`/health`、`/chat/completions`）、`lease_auth.py`（租约缓存）、auth / budget / audit / service / runtime / contracts / constants / lease_revoke 等 |
 | `quota/` | `quota_service.py`（预占/结算/释放）、`plan_service.py`、`plan_resolver.py`、`metrics.py` |
 | `upstream/` | `client` / `config` / `egress`，强制出网域名白名单，无绕过开关 |
 | `security.py` | HMAC-SHA256 服务凭据签名，L2 与 L3 共用 |
@@ -90,7 +96,23 @@ flowchart TB
 | `l3_metrics.py` | T7.4 新增：纯 ASGI HTTP 中间件、业务计数器、`/metrics` 端点构造（两个 L3 服务使用） |
 | `cache.py` / `log.py` / `masking.py` | Redis 缓存封装、日志、脱敏 |
 
-**为什么用纯 ASGI 中间件**：`gateway/router.py` 的 `/chat/completions` 用 `StreamingResponse` 边读边转发；共享包里的 `PrometheusMiddleware` 基于 `BaseHTTPMiddleware`，会包装响应并可能缓冲 SSE。T7.4 因此新增 `L3HttpMetricsMiddleware`（纯 ASGI），并用 `scope["path_params"]` 折叠动态段控制标签基数。
+### 4.1 网关领域包 `services/gateway/gateway`（2026-11-09 整包迁入）
+
+| 模块 | 职责 | 主要使用方 |
+|---|---|---|
+| `router.py` | `/health`、`/chat/completions` 数据面路由与 SSE 透传 | 网关 |
+| `service.py` | 出网白名单断言、上游 URL 构造、用量解析与记账 | 网关 |
+| `auth.py` / `lease_auth.py` | `dgw.*` 租约鉴权、Redis 短缓存（TTL 5–10s） | 网关、L2（复用租约校验） |
+| `budget.py` | 额度/预算/并发预检、流式看门狗、耗尽自动吊销 | 网关、L2（看板与签发） |
+| `audit.py` / `logging.py` | 网关审计事件、独立日志 sink | 网关、L2 |
+| `lease_revoke.py` | 租约吊销共享实现 | 网关、L2 |
+| `runtime.py` | 配置源注入访问器（`configure()` 由各入口启动时调用一次） | 网关、L2 |
+| `constants.py` / `contracts.py` | 前缀、虚拟 key 判定、错误码、幂等/缓存键前缀 | 网关、L2、编排、`log.py` |
+| `app.py` | embedded 形态的 FastAPI 子应用（L2 挂载用） | L2 |
+
+**布局**：`services/__init__.py`、`services/gateway/__init__.py` 让 `services.gateway.gateway.*` 成为常规包路径；`services/gateway/app/` 仍是进程装配层（config / health / main），`run.py` 是启动器，`tests/` 与 `manifest.json` 保持原位。包内同包依赖用相对导入（`.logging` 等），跨包依赖一律改为绝对导入 `packages.agentpanel_common.*`（迁移前是 `..` 相对导入）。
+
+**为什么用纯 ASGI 中间件**：`services/gateway/gateway/router.py` 的 `/chat/completions` 用 `StreamingResponse` 边读边转发；共享基础包里的 `PrometheusMiddleware` 基于 `BaseHTTPMiddleware`，会包装响应并可能缓冲 SSE。T7.4 因此新增 `L3HttpMetricsMiddleware`（纯 ASGI），并用 `scope["path_params"]` 折叠动态段控制标签基数。
 
 ## 5. 运行时链路
 
@@ -191,6 +213,7 @@ PostgreSQL 位于 `host.docker.internal:15432`（Tortoise ORM + asyncpg），Red
 4. 灰度只有部署级整机二元切换，无百分比/按租户切流。
 5. 配额正确性（重复结算、`used` 多加、预占悬挂）与数据一致性仍按每日人工 G1 抽查，Prometheus 无法判定；离线结算 outbox 未做（P2 技术债）。
 6. 对账触发仍在 L2（`reconcile_in_l3=false`），未迁移到 L3。
+7. **目录分层取舍**：网关领域包迁入 `services/gateway/` 后，`packages/agentpanel_common/log.py` 会反向 import `services.gateway.gateway.constants`，L2 与编排镜像也必须复制该包。这是「服务目录自包含」与「基础包→服务严格单向依赖」之间的取舍；`constants` / `contracts` 不依赖基础包，因此无循环导入。若后续要求严格单向，应把这两个契约模块下沉回基础包。
 
 ## 10. 与旧目标态架构图的差异对照
 
@@ -216,7 +239,10 @@ PostgreSQL 位于 `host.docker.internal:15432`（Tortoise ORM + asyncpg），Red
 | L2 应用构建与前缀 | `base/start.py`、`base/app_wrapper.py:289`、`run.py` |
 | 编排代理（只代理/503） | `base/plugins/harness/services/orchestration_proxy.py:56-102` |
 | L2 内部额度路由 | `base/plugins/harness/api/l2_internal/quota_router.py:21` |
-| 网关数据面路由 | `packages/agentpanel_common/gateway/router.py:190,200`、`lease_auth.py` |
+| 网关进程装配与启动 | `services/gateway/app/main.py`、`app/config.py`、`run.py` |
+| 网关领域包与包边界 | `services/gateway/gateway/`、`services/__init__.py`、`services/gateway/__init__.py` |
+| 网关数据面路由 | `services/gateway/gateway/router.py:190,200`、`lease_auth.py` |
+| 三镜像代码复制规则 | `services/gateway/Dockerfile`、`services/orchestration/Dockerfile`、`deploy/l3/Dockerfile.l2` |
 | 编排 app 与路由 | `services/orchestration/app/main.py:159-172`、`app/api/*.py` |
 | 额度回呼客户端 | `services/orchestration/app/l2_quota_client.py` |
 | 配额服务与 key | `packages/agentpanel_common/quota/services/quota_service.py:30-32,127-140` |
@@ -229,3 +255,15 @@ PostgreSQL 位于 `host.docker.internal:15432`（Tortoise ORM + asyncpg），Red
 - 本文记录 2026-11-09 的代码现状；观察期内（最早 2026-11-23 收口）**不修改现有架构图资产**。
 - T7.5 执行时，应以本文 §2、§5、§10 为输入，把 `agentpanel-architecture.mmd`（及其 HTML 渲染）更新为最终态，并同步 `spec.md` §11；届时本文可作为「as-built 基线」保留归档。
 - 所有判定以代码为准；若实现变更，先改代码再更新本文，不要反向以文档推定实现。
+
+### 2026-11-09 目录整理变更记录
+
+| 变更 | 前 | 后 |
+|---|---|---|
+| 服务目录去 `l3` 前缀 | `services/l3-gateway/`、`services/l3-orchestration/` | `services/gateway/`、`services/orchestration/`（提交 `22d40c9`） |
+| 网关领域包归入服务 | `packages/agentpanel_common/gateway/`（13 模块 + `__init__.py`，2663 行） | `services/gateway/gateway/`，导入名 `services.gateway.gateway.*` |
+| 包边界 | `services/` 无 `__init__.py` | 新增 `services/__init__.py`、`services/gateway/__init__.py` |
+| 镜像复制 | L2 只复制 `services/*/manifest.json`；编排不复制网关代码 | 三镜像均复制 `services/__init__.py` 与网关领域包（编排不复制网关进程代码） |
+| 验证脚本 | 挂载 `packages/agentpanel_common/gateway/service.py` | 挂载 `services/gateway/gateway/service.py`；stub 模块链同步为两级包路径 |
+
+保持不变：端口 `9998/9999/9100`、compose 服务名 `l2/l3-gateway/l3-orchestration`、容器/镜像名 `agentpanel-l3-*`、manifest `name`、Prometheus 6 个 job 与 14 条告警表达式、指标 `service` 标签、巡检白名单、观察期起算时间与台账。历史报告与 spec 中的**路径表述**已同步为新路径；`deploy/harness-linux-verify/out*/` 内的原始证据 JSON/JSONL 保留当时字面量，未改写。

@@ -7,7 +7,7 @@
 """
 from typing import Any, Callable, Dict, Optional
 
-from ..upstream import UpstreamConfig
+from packages.agentpanel_common.upstream import UpstreamConfig
 
 _config_provider: Optional[Callable[[], Dict[str, Any]]] = None
 _upstream_provider: Optional[Callable[[], UpstreamConfig]] = None

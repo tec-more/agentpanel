@@ -1,7 +1,9 @@
-"""只读加载共享网关 service.py，验证真实出网白名单判定。
+"""只读加载网关领域包 service.py，验证真实出网白名单判定。
 
-通过 docker run 把共享包源码只读挂到 /opt/project_gateway_service.py 与
-/opt/project_gateway_egress.py；这里注入最小 stub 依赖（运行时配置/日志/ORM 模型），
+通过 docker run 把 `services/gateway/gateway/service.py` 与
+`packages/agentpanel_common/upstream/egress.py` 只读挂到
+/opt/project_gateway_service.py 与 /opt/project_gateway_egress.py；
+这里注入最小 stub 依赖（运行时配置/日志/ORM 模型/计价服务），
 不修改业务代码，不发起真实出网请求。
 """
 from __future__ import annotations
@@ -11,47 +13,56 @@ import sys
 import types
 from typing import Any, Dict
 
-GATEWAY_MODULE = "packages.agentpanel_common.gateway.service_probe"
+GATEWAY_MODULE = "services.gateway.gateway.service_probe"
 EGRESS_PATH = "/opt/project_gateway_egress.py"
 
 
-def _install_stubs(config_holder: Dict[str, Any]) -> None:
-    packages = types.ModuleType("packages")
-    packages.__path__ = []  # type: ignore[attr-defined]
-    common = types.ModuleType("packages.agentpanel_common")
-    common.__path__ = []  # type: ignore[attr-defined]
-    gateway = types.ModuleType("packages.agentpanel_common.gateway")
-    gateway.__path__ = []  # type: ignore[attr-defined]
-    models = types.ModuleType("packages.agentpanel_common.models")
-    models.__path__ = []  # type: ignore[attr-defined]
-    upstream = types.ModuleType("packages.agentpanel_common.upstream")
-    upstream.__path__ = []  # type: ignore[attr-defined]
+def _stub(name: str) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    mod.__path__ = []  # type: ignore[attr-defined]
+    sys.modules[name] = mod
+    return mod
 
-    logging_mod = types.ModuleType("packages.agentpanel_common.gateway.logging")
+
+def _install_stubs(config_holder: Dict[str, Any]) -> None:
+    """伪造 service.py 顶层依赖，保证只读加载时不引入真实 DB / 插件栈。
+
+    service.py 迁移到 `services.gateway.gateway` 后，跨包依赖改为绝对导入
+    `packages.agentpanel_common.*`，同包依赖仍是相对导入 `.logging` / `.runtime`；
+    两侧模块链都要预置，否则 spec_from_file_location 加载会 ImportError。
+    """
+    packages = _stub("packages")
+    common = _stub("packages.agentpanel_common")
+    domain = _stub("packages.agentpanel_common.domain")
+    models = _stub("packages.agentpanel_common.models")
+    upstream = _stub("packages.agentpanel_common.upstream")
+
+    services = _stub("services")
+    gw_service = _stub("services.gateway")
+    gateway = _stub("services.gateway.gateway")
+
+    logging_mod = _stub("services.gateway.gateway.logging")
     logging_mod.gateway_logger = types.SimpleNamespace(
         info=lambda *a, **k: None,
         warning=lambda *a, **k: None,
         error=lambda *a, **k: None,
         exception=lambda *a, **k: None,
     )
-    runtime_mod = types.ModuleType("packages.agentpanel_common.gateway.runtime")
+    runtime_mod = _stub("services.gateway.gateway.runtime")
     runtime_mod.gateway_config = lambda: config_holder["config"]
-    quota_mod = types.ModuleType("packages.agentpanel_common.models.quota")
+
+    pricing_mod = _stub("packages.agentpanel_common.domain.pricing_service")
+    pricing_mod.ModelPriceService = type("ModelPriceService", (), {})
+    quota_mod = _stub("packages.agentpanel_common.models.quota")
     quota_mod.UsageRecord = type("UsageRecord", (), {})
 
-    sys.modules["packages"] = packages
-    sys.modules["packages.agentpanel_common"] = common
-    sys.modules["packages.agentpanel_common.gateway"] = gateway
-    sys.modules["packages.agentpanel_common.models"] = models
-    sys.modules["packages.agentpanel_common.upstream"] = upstream
-    sys.modules["packages.agentpanel_common.gateway.logging"] = logging_mod
-    sys.modules["packages.agentpanel_common.gateway.runtime"] = runtime_mod
-    sys.modules["packages.agentpanel_common.models.quota"] = quota_mod
-
+    # 父包属性链：绝对路径与相对导入都依赖 sys.modules 中的完整模块名
     packages.agentpanel_common = common  # type: ignore[attr-defined]
-    common.gateway = gateway  # type: ignore[attr-defined]
+    common.domain = domain  # type: ignore[attr-defined]
     common.models = models  # type: ignore[attr-defined]
     common.upstream = upstream  # type: ignore[attr-defined]
+    services.gateway = gw_service  # type: ignore[attr-defined]
+    gw_service.gateway = gateway  # type: ignore[attr-defined]
 
 
 def _load_egress(egress_path: str) -> None:

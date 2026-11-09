@@ -128,7 +128,7 @@ D base/common/gateway/service.py
 | `base/plugins/harness/services/dashboard_service.py` | 同上 |
 | `base/plugins/harness/services/gateway_lease_service.py` | `lease_auth/audit/budget/logging/lease_revoke` → 共享包；`issuance_config` 改从本地 `gateway_config` 导入（5 处减为 4 处） |
 | `base/plugins/harness/services/service_auth.py` | `gateway.constants` → 共享包；签名工具 → `agentpanel_common.security` |
-| `base/start.py` | 删除 `import base.common.gateway.*`；新增共享套餐注入与 `configure_shared_runtime()`（5 处减为 2 处）；embedded 挂载仍用 `packages.agentpanel_common.gateway.app` |
+| `base/start.py` | 删除 `import base.common.gateway.*`；新增共享套餐注入与 `configure_shared_runtime()`（5 处减为 2 处）；embedded 挂载仍用 `services.gateway.gateway.app` |
 | `base/plugins/harness/__init__.py` | 删除 shim 再导出（-1），改为本地 `gateway_config.validate_issuance_config` |
 | `base/plugins/harness/services/egress_policy_service.py` | 删除 shim 引用（-1），改为本地 `gateway_config.issuance_config/upstream_allowlist` |
 | `base/plugins/harness/services/reconcile_service.py` | 删除 shim 引用（-1），改为本地 `gateway_config.reconciliation_config` |

@@ -699,8 +699,8 @@ def init_app() -> FastAPI:
         gw_cfg = issuance_config()
         if gateway_enabled():
             if str(gw_cfg.get("deployment")) == "embedded":
-                from packages.agentpanel_common.gateway.constants import GATEWAY_DEPLOY_PREFIX
-                from packages.agentpanel_common.gateway.app import gateway_app
+                from services.gateway.gateway.constants import GATEWAY_DEPLOY_PREFIX
+                from services.gateway.gateway.app import gateway_app
                 app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
                 print(
                     f"[手动注册] 内部网关数据面子应用已挂载: {GATEWAY_DEPLOY_PREFIX}/chat/completions"

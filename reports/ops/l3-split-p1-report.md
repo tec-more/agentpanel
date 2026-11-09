@@ -35,7 +35,7 @@
 |---|---|---|
 | 1 | `base/common/masking.py` | `packages.agentpanel_common.masking` |
 | 2 | `base/common/upstream/__init__.py`、`client.py`、`config.py`、`egress.py`（4 文件） | `packages.agentpanel_common.upstream.*` |
-| 3 | `base/common/gateway/constants.py` | `packages.agentpanel_common.gateway.constants`（并转发 `contracts`） |
+| 3 | `base/common/gateway/constants.py` | `services.gateway.gateway.constants`（并转发 `contracts`） |
 | 4 | `base/common/model.py` | `packages.agentpanel_common.models.base` |
 | 5 | `base/common/quota/models/{quota,binding,reservation}.py`（3 文件） | `packages.agentpanel_common.models.*` |
 | 6 | `base/plugins/harness/models/{harness,model_price,service_credential}.py`（3 文件） | `packages.agentpanel_common.models.*` |

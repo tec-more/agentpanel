@@ -3,6 +3,8 @@
 > 状态：待评审。本文档只定义方案与任务拆解，**不修改代码、不创建容器**。
 > 前序：`reports/specs/harness-orchestration-split/spec.md`（L3 逻辑拆分，已完成）。
 > 本文解决其遗留问题：L3 仍以 `base/plugins/harness`、`base/common/gateway` 的形式寄生在业务仓库，无法独立构建/发布。
+>
+> **路径同步说明（2026-11-09）**：本文写作时的规划路径为 `packages/agentpanel_common/gateway/*`；同日目录整理已把该包整包迁入 `services/gateway/gateway/`，服务目录也去掉 `l3` 前缀。文中所有路径表述已机械同步为当前布局，但「（新）」「已存在」等时态描述仍属于当时的规划语境；**实际落地位置与依赖方向以 `reports/architecture/as-built-architecture-2026-11-09.md` 和代码为准**。
 
 ## 0. 目标与非目标
 
@@ -773,7 +775,7 @@ L2 业务后端 :9998（宿主进程）
 | G7 | `budget.py::maybe_auto_revoke` | `base.plugins.harness.services.gateway_lease_service.revoke_internal` | 可 | 吊销核心迁共享 `domain/lease_revoke.py`；L2 委托 |
 | G8 | `lease_auth.py` | `base.common.gateway.config.{gateway_config,lease_cache_ttl_seconds}` | 可 | 共享 `domain/lease_auth.py` 改为注入 config provider；L2 shim 注入 `issuance_config` |
 | G9 | `service.py` / `router.py` / `budget.py` | `base.common.upstream` | 已是 shim | 直接改共享 `packages.agentpanel_common.upstream` |
-| G10 | `auth.py` / `budget.py` | `base.common.gateway.constants` | 已是 shim | 直接改共享 `packages.agentpanel_common.gateway.constants` |
+| G10 | `auth.py` / `budget.py` | `base.common.gateway.constants` | 已是 shim | 直接改共享 `services.gateway.gateway.constants` |
 
 ### 13.2 决策结果（用户已确认 `1B 2A 3A 4A`）
 
@@ -805,10 +807,10 @@ L2 业务后端 :9998（宿主进程）
 
 | 文件 | 来源/说明 |
 |---|---|
-| `packages/agentpanel_common/gateway/runtime.py`（新） | `configure(config_provider, upstream_provider, lease_ttl_provider)` + 访问器；不 import `base` |
-| `packages/agentpanel_common/gateway/lease_auth.py`（新） | `base/common/gateway/lease_auth.py` 原样迁入；配置经 `runtime` 取 |
-| `packages/agentpanel_common/gateway/{auth,audit,service,budget,router,app,logging,health}.py`（新） | 原 8 个网关模块迁入；import 改共享模型/upstream/constants/domain/配额域；删除 embedded 形态 |
-| `packages/agentpanel_common/gateway/{constants,contracts}.py` | 已存在，按需补 `GatewayConfigError` |
+| `services/gateway/gateway/runtime.py`（新） | `configure(config_provider, upstream_provider, lease_ttl_provider)` + 访问器；不 import `base` |
+| `services/gateway/gateway/lease_auth.py`（新） | `base/common/gateway/lease_auth.py` 原样迁入；配置经 `runtime` 取 |
+| `services/gateway/gateway/{auth,audit,service,budget,router,app,logging,health}.py`（新） | 原 8 个网关模块迁入；import 改共享模型/upstream/constants/domain/配额域；删除 embedded 形态 |
+| `services/gateway/gateway/{constants,contracts}.py` | 已存在，按需补 `GatewayConfigError` |
 
 **共享包：配额域（D-P3-2=B）**
 
@@ -934,7 +936,7 @@ L2 业务后端 :9998（宿主进程）
   - `packages/agentpanel_common/quota/services/quota_service.py:215`
   - `packages/agentpanel_common/quota/services/quota_service.py:258`
   - `packages/agentpanel_common/quota/services/quota_service.py:1113`
-  - `packages/agentpanel_common/gateway/budget.py:290`
+  - `services/gateway/gateway/budget.py:290`
   - `base/plugins/agent/services/execution_service.py:174`
 - **新增调用点禁止**在 `in_transaction()` 内调用 `PlanService.resolve_plan()` / `SqlPlanResolver`；事务内读取不会被解析器感知，可能读到事务外的旧快照。
 - **如确需在事务内读取未提交数据**：必须先改造解析器为事务感知实现（复用当前事务连接执行同一只读 SQL），补充黄金用例覆盖该场景，并更新本节调用点清单；不得让业务代码直接调用裸 SQL 解析器绕过约束。

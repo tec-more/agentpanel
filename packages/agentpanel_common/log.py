@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 from typing_extensions import override
 
-from packages.agentpanel_common.gateway.constants import GATEWAY_LOG_COMPONENT
+from services.gateway.gateway.constants import GATEWAY_LOG_COMPONENT
 
 _logger_handlers = []
 _app_name = "AIPanelAdmin"

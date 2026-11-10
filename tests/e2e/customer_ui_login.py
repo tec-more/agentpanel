@@ -189,6 +189,16 @@ after = app_windows()
 print("WINDOWS_AFTER", [(t, r) for _, t, r in after], flush=True)
 shot("ui-login-04-after.png", full=True)
 
+# 打开左下角账号菜单，验证登录状态是否显示（登录成功应显示已登录身份而非「登录」项）
+try:
+    click(hwnd, 0.033, 0.955)   # 工作区侧边栏底部「更多」（账号菜单）
+    time.sleep(2 if SLOW else 1)
+    shot("ui-login-05-account-menu.png", full=True)
+    click(hwnd, 0.5, 0.5)       # 点空白处收起菜单
+    time.sleep(1)
+except Exception as e:
+    print("MENU_STEP_SKIPPED", type(e).__name__, str(e)[:120], flush=True)
+
 account_file = STORE / "account.json"
 account_info = "NOT_CREATED"
 if account_file.exists():

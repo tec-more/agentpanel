@@ -1,6 +1,6 @@
-"""共享日志配置（不读 L2 的 `settings`，由调用方注入参数）。
+"""共享日志配置（不读 app 的 `settings`，由调用方注入参数）。
 
-L2 仍以原有 `setup_logging()` 行为运行；L3 入口传入自己的 app 名/日志目录。
+app 仍以原有 `setup_logging()` 行为运行；独立服务入口传入自己的 app 名/日志目录。
 """
 import atexit
 import json

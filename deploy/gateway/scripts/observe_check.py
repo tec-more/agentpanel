@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""L3 拆分灰度观察期只读巡检。
+"""拆分灰度观察期只读巡检。
 
 对应 `reports/ops/l3-split-p7-grayscale.md` §6 的每日/每周检查清单。
 脚本只读取 HTTP 端点、docker 状态和 Redis 键，**不发起任何写操作**：
@@ -7,10 +7,10 @@
 刻意不纳入自动巡检，避免巡检本身触发 R5/R7。
 
 用法（仓库根目录执行）：
-    .venv/Scripts/python.exe deploy/l3/scripts/observe_check.py
-    .venv/Scripts/python.exe deploy/l3/scripts/observe_check.py --json
-    .venv/Scripts/python.exe deploy/l3/scripts/observe_check.py --append
-    .venv/Scripts/python.exe deploy/l3/scripts/observe_check.py --init-baseline
+    .venv/Scripts/python.exe deploy/gateway/scripts/observe_check.py
+    .venv/Scripts/python.exe deploy/gateway/scripts/observe_check.py --json
+    .venv/Scripts/python.exe deploy/gateway/scripts/observe_check.py --append
+    .venv/Scripts/python.exe deploy/gateway/scripts/observe_check.py --init-baseline
 
 状态含义：
     PASS / FAIL（硬项失败）/ WARN（需人工判断并登记）/ SKIP（检查不可用）
@@ -30,22 +30,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[3]
-BASELINE_FILE = ROOT / "deploy/l3/observation-baseline.json"
+BASELINE_FILE = ROOT / "deploy/gateway/observation-baseline.json"
 LOG_FILE = ROOT / "reports/ops/l3-split-p7-observation-log.md"
-REDIS_PASSWORD_FILE = ROOT / "deploy/l3/secrets/redis_password"
+REDIS_PASSWORD_FILE = ROOT / "deploy/gateway/secrets/redis_password"
 
-L2 = "http://127.0.0.1:9998"
+APP = "http://127.0.0.1:9998"
 GW = "http://127.0.0.1:9999"
 ORCH = "http://127.0.0.1:9100"
 PROM = "http://127.0.0.1:9090"
 
-L3_CONTAINERS = (
-    "agentpanel-l3-l2-1",
-    "agentpanel-l3-l3-gateway-1",
-    "agentpanel-l3-l3-orchestration-1",
+CONTAINERS = (
+    "agentpanel-app",
+    "agentpanel-gateway",
+    "agentpanel-orchestration",
 )
-L3_JOBS = ("aipaneladmin", "l3-gateway", "l3-orchestration")
-RULE_GROUP = "l3_split_alerts"
+JOBS = ("aipaneladmin", "gateway", "orchestration")
+RULE_GROUP = "agentpanel_alerts"
 EXPECTED_RULE_COUNT = 10
 # 监控栈目前只启动 prometheus 单服务，这两个辅助组件 down 属已知预期。
 EXPECTED_FIRING_JOBS = {"pushgateway", "node_exporter"}
@@ -104,7 +104,7 @@ class Report:
 def check_containers(rep: Report) -> None:
     try:
         proc = subprocess.run(
-            ["docker", "ps", "--filter", "name=agentpanel-l3", "--format", "{{.Names}}|{{.Status}}"],
+            ["docker", "ps", "--filter", "name=agentpanel-", "--format", "{{.Names}}|{{.Status}}"],
             capture_output=True, text=True, timeout=15,
         )
     except Exception as exc:  # noqa: BLE001
@@ -118,8 +118,8 @@ def check_containers(rep: Report) -> None:
         if "|" in line:
             name, _, status = line.partition("|")
             found[name.strip()] = status.strip()
-    missing = [c for c in L3_CONTAINERS if c not in found]
-    unhealthy = [c for c, s in found.items() if c in L3_CONTAINERS and "healthy" not in s]
+    missing = [c for c in CONTAINERS if c not in found]
+    unhealthy = [c for c, s in found.items() if c in CONTAINERS and "healthy" not in s]
     if missing or unhealthy:
         rep.add("容器 healthy", "FAIL", "缺失=%s 非healthy=%s" % (missing or "无", unhealthy or "无"))
     else:
@@ -128,7 +128,7 @@ def check_containers(rep: Report) -> None:
 
 def check_health(rep: Report) -> None:
     endpoints = (
-        ("L2 /health/health", L2 + "/health/health"),
+        ("App /health/health", APP + "/health/health"),
         ("网关 /health", GW + "/health"),
         ("编排 /health/health", ORCH + "/health/health"),
         ("编排 /health/orchestration", ORCH + "/health/orchestration"),
@@ -147,16 +147,16 @@ def check_health(rep: Report) -> None:
         rep.add("编排 mode", "FAIL", "响应非 JSON")
         return
     mode = payload.get("mode")
-    if mode != "proxy_l3":
-        rep.add("编排 mode", "FAIL", "mode=%s（期望 proxy_l3）" % mode)
+    if mode != "proxy":
+        rep.add("编排 mode", "FAIL", "mode=%s（期望 proxy）" % mode)
     else:
-        rep.add("编排 mode", "PASS", "mode=proxy_l3, write_enabled=%s" % payload.get("write_enabled"))
+        rep.add("编排 mode", "PASS", "mode=proxy, write_enabled=%s" % payload.get("write_enabled"))
 
 
 def check_proxy(rep: Report) -> None:
-    # 401 表示请求已到达 L3 并被内部鉴权拒绝；503 表示代理链路断裂（回切条件 R2）。
+    # 401 表示请求已到达编排并被内部鉴权拒绝；503 表示代理链路断裂（回切条件 R2）。
     targets = (
-        ("L2 代理可达", L2 + "/api/v1/harness/runs/nope"),
+        ("App 代理可达", APP + "/api/v1/harness/runs/nope"),
         ("编排直连可达", ORCH + "/v1/harness/runs/nope"),
     )
     for name, url in targets:
@@ -196,7 +196,7 @@ def init_baseline() -> int:
     payload = {
         "started_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "note": "观察期起算基线；used 变化需人工判断是否业务请求导致，再更新本文件",
-        "mode": "proxy_l3",
+        "mode": "proxy",
         "quota_used": snapshot["used"],
         "quota_held": snapshot["held"],
         "quota_holds_index": [],
@@ -253,8 +253,8 @@ def check_quota(rep: Report) -> None:
 
 def check_metrics(rep: Report) -> None:
     for name, base, service in (
-        ("网关 /metrics", GW, "l3-gateway"),
-        ("编排 /metrics", ORCH, "l3-orchestration"),
+        ("网关 /metrics", GW, "gateway"),
+        ("编排 /metrics", ORCH, "orchestration"),
     ):
         code, body = http(base + "/metrics")
         if code != 200:
@@ -262,7 +262,7 @@ def check_metrics(rep: Report) -> None:
             continue
         gauges = {}
         for line in body.splitlines():
-            if line.startswith("l3_health_check_status{"):
+            if line.startswith("health_check_status{"):
                 metric, _, value = line.rpartition(" ")
                 if 'service="%s"' % service in metric:
                     gauges[metric] = value.strip()
@@ -284,8 +284,8 @@ def check_prometheus(rep: Report, enabled: bool) -> None:
     jobs = {}
     for target in data.get("data", {}).get("activeTargets", []):
         jobs[target.get("labels", {}).get("job")] = target.get("health")
-    bad = {j: jobs.get(j, "缺失") for j in L3_JOBS if jobs.get(j) != "up"}
-    rep.add("Prometheus 抓取", "FAIL" if bad else "PASS", str(bad) if bad else "3 个 L3 job up")
+    bad = {j: jobs.get(j, "缺失") for j in JOBS if jobs.get(j) != "up"}
+    rep.add("Prometheus 抓取", "FAIL" if bad else "PASS", str(bad) if bad else "3 个服务 job up")
 
     code, data = http_json(PROM + "/api/v1/rules")
     if code != 200 or data is None:
@@ -325,7 +325,7 @@ def build_report(with_prometheus: bool) -> Report:
 
 def print_table(rep: Report) -> None:
     now = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
-    print("L3 灰度观察期巡检  %s" % now)
+    print("灰度观察期巡检  %s" % now)
     print("-" * 92)
     print("%-28s %-6s %s" % ("检查项", "状态", "说明"))
     print("-" * 92)
@@ -360,7 +360,7 @@ def append_log(rep: Report) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="L3 灰度观察期只读巡检")
+    parser = argparse.ArgumentParser(description="灰度观察期只读巡检")
     parser.add_argument("--json", action="store_true", help="只输出 JSON")
     parser.add_argument("--append", action="store_true", help="把结果写入观察期台账（当日去重）")
     parser.add_argument("--init-baseline", action="store_true", help="从当前 Redis 生成起算基线快照")

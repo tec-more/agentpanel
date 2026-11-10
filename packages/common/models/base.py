@@ -4,7 +4,7 @@ from pytz import utc
 
 from tortoise import fields, models
 
-# 共享包不依赖 L2 的 config.conf；时间格式与 L2 现有默认值保持一致
+# 共享包不依赖 app 的 config.conf；时间格式与 app 现有默认值保持一致
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 

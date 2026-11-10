@@ -1,7 +1,7 @@
-"""L2 额度执行后端：直调 `QuotaService`，并在启动时注册到共享分派器。
+"""app 额度执行后端：直调 `QuotaService`，并在启动时注册到共享分派器。
 
-P2 起 `quota_backend` 的共享实现不再做进程角色探测；L2 入口通过
-`configure_l2()` 显式注入本文件的实现（由 harness `on_startup` 调用）。
+P2 起 `quota_backend` 的共享实现不再做进程角色探测；app 入口通过
+`configure_app()` 显式注入本文件的实现（由 harness `on_startup` 调用）。
 """
 from typing import Any, Dict, List, Optional
 
@@ -44,16 +44,16 @@ async def release(hold_id: str, reason: str = "") -> bool:
     return await QuotaService.quota_release(hold_id)
 
 
-def configure_l2() -> None:
-    """显式注册 L2 实现（启动生命周期调用，禁止 import 副作用）。"""
-    _shared.configure(name="l2", reserve=reserve, settle=settle, release=release)
+def configure_app() -> None:
+    """显式注册 app 实现（启动生命周期调用，禁止 import 副作用）。"""
+    _shared.configure(name="app", reserve=reserve, settle=settle, release=release)
 
 
 __all__ = [
     "QuotaUnavailable",
     "QuotaError",
     "QuotaReservationConflict",
-    "configure_l2",
+    "configure_app",
     "reserve",
     "settle",
     "release",

@@ -1,7 +1,7 @@
-"""L2 -> L3 编排代理（兼容期只代理、不双写）
+"""app -> 编排代理（兼容期只代理、不双写）
 
-- 仅 orchestration.mode=proxy_l3 时启用，且只作用于 P1.2 已迁移的路径；
-- 转发原始客户端凭据与查询参数，由 L3 做业务鉴权；
+- 仅 orchestration.mode=proxy 时启用，且只作用于 P1.2 已迁移的路径；
+- 转发原始客户端凭据与查询参数，由 独立服务做业务鉴权；
 - 下游不可达/超时统一 503 fail-closed，不回落到本进程查询、不返回空数据。
 """
 from fastapi import Request
@@ -28,11 +28,11 @@ _FORWARD_HEADERS = (
 
 
 def proxy_mode_enabled() -> bool:
-    return str(orchestration_config().get("mode") or "") == "proxy_l3"
+    return str(orchestration_config().get("mode") or "") == "proxy"
 
 
 async def require_client_or_proxy(request: Request):
-    """proxy_l3 模式下跳过 L2 本地鉴权/触达，交由 L3 处理；否则维持原逻辑。"""
+    """proxy 模式下跳过 app 本地鉴权/触达，交由编排处理；否则维持原逻辑。"""
     if proxy_mode_enabled():
         return None
     from base.plugins.harness.services.client_service import require_harness_client
@@ -46,7 +46,7 @@ def _forward_headers(request: Request) -> dict:
         value = request.headers.get(name)
         if value:
             headers[name] = value
-    # 与 L2 本地模式保持一致的客户端 IP 口径：
+    # 与 app 本地模式保持一致的客户端 IP 口径：
     # 有原始 X-Forwarded-For 则透传，否则用直连地址填充。
     if "x-forwarded-for" not in headers:
         headers["x-forwarded-for"] = request.client.host if request.client else ""

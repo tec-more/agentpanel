@@ -1,6 +1,6 @@
 {
-    "name": "l3-gateway",
-    "display_name": "L3 网关（数据面）",
+    "name": "gateway",
+    "display_name": "网关（数据面）",
     "version": "0.1.0",
     "description": "桌面端租约鉴权、provider 转发、用量记账、预算/并发/额度耗尽控制",
     "config": {

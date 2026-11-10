@@ -73,7 +73,7 @@ class ASGIAppWithPrefix:
                 await self.app(scope, receive, send)
                 return
 
-            # 服务间内部接口（如 Harness L2 touch）不走前端 SPA，直接进入应用路由
+            # 服务间内部接口（如 Harness app touch）不走前端 SPA，直接进入应用路由
             if original_path.startswith("/internal/"):
                 await self.app(scope, receive, send)
                 return

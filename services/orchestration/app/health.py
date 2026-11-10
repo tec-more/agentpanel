@@ -1,21 +1,21 @@
-"""L3 编排健康探针（与 L2 `/health/health` 同形，依赖来自环境变量配置）。"""
+"""编排健康探针（与 app `/health/health` 同形，依赖来自环境变量配置）。"""
 import asyncio
 from typing import Any, Dict
 
 from fastapi import APIRouter
 from starlette.responses import JSONResponse
 
-from packages.common.config import L3CommonConfig
+from packages.common.config import ServicesCommonConfig
 
 router = APIRouter()
 
 DB_PROBE_TIMEOUT_SECONDS = 2.5
 DB_ALIAS = "postgres"
 
-_common_config: L3CommonConfig | None = None
+_common_config: ServicesCommonConfig | None = None
 
 
-def init_health(config: L3CommonConfig) -> None:
+def init_health(config: ServicesCommonConfig) -> None:
     global _common_config
     _common_config = config
 
@@ -75,7 +75,7 @@ async def check_redis() -> Dict[str, Any]:
 
 async def check_qdrant() -> Dict[str, Any]:
     """编排服务不使用向量库；保留该子项以维持响应契约形状。"""
-    return {"status": "skipped", "message": "Qdrant not used by l3-orchestration"}
+    return {"status": "skipped", "message": "Qdrant not used by orchestration"}
 
 
 @router.get("/health")

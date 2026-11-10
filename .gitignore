@@ -83,9 +83,9 @@ migrations/models/
 /config.conf.bak-*
 
 # P5 Docker 本地 secrets / env（禁止入库；仅提交 .env.example）
-deploy/l3/secrets/
-deploy/l3/.env
-!deploy/l3/.env.example
+deploy/gateway/secrets/
+deploy/gateway/.env
+!deploy/gateway/.env.example
 
 # Linux 容器验证原始证据：有意纳入版本控制，请勿在此添加 out*/ 忽略规则。
 # deploy/harness-linux-verify/out/ 与 out-network/ 是 VERIFICATION.md 与

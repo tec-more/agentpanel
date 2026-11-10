@@ -1,7 +1,7 @@
 {
   "started_at": "2026-11-09T13:33:40+08:00",
   "note": "观察期起算基线；used 变化需人工判断是否业务请求导致，再更新本文件",
-  "mode": "proxy_l3",
+  "mode": "proxy",
   "quota_used": {
     "quota:org:14:token:2026-11": "450",
     "quota:usr:4:token:2026-11": "93294",

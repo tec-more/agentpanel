@@ -18,7 +18,7 @@ def _as_instant(value: Optional[datetime]) -> Optional[datetime]:
     DB 字段是 timestamptz，Tortoise（use_tz=True + timezone=Asia/Shanghai）读出来
     是带 +08:00 的 aware datetime；容器进程本地时区通常是 UTC，`datetime.now()`
     是 naive UTC。直接 strip tzinfo 比较会得到“生效时间在未来”的错误结论，
-    导致 L3 容器内价格解析永远 missing_price。
+    导致 独立服务容器内价格解析永远 missing_price。
     """
     if value is None:
         return None

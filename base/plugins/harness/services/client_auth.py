@@ -1,8 +1,8 @@
-"""L3 编排业务路由的 Harness 客户端凭据校验（只读）
+"""编排业务路由的 Harness 客户端凭据校验（只读）
 
-- 与 L2 `require_harness_client` 行为对齐：同样的请求头、Bearer 解析、401/403 文案与 IP 白名单；
-- 区别：L3 只读 `harness_client`，不得写 `last_used_at`；
-- `last_used_at` 由 L3 异步调用 L2 内部接口更新（best-effort，失败只记日志）。
+- 与 app `require_harness_client` 行为对齐：同样的请求头、Bearer 解析、401/403 文案与 IP 白名单；
+- 区别：编排只读 `harness_client`，不得写 `last_used_at`；
+- `last_used_at` 由 编排异步调用 app 内部接口更新（best-effort，失败只记日志）。
 """
 import asyncio
 import hmac
@@ -58,7 +58,7 @@ def _expired(row: Dict[str, Any]) -> bool:
 
 
 def _schedule_touch(client_id: str) -> None:
-    from base.plugins.harness.services.l3_touch import touch_client_last_seen
+    from base.plugins.harness.services.client_touch import touch_client_last_seen
 
     try:
         task = asyncio.create_task(touch_client_last_seen(client_id))
@@ -75,7 +75,7 @@ def _schedule_touch(client_id: str) -> None:
 
 
 async def require_harness_client_readonly(request: Request) -> Dict[str, Any]:
-    """L3 业务路由依赖：校验客户端凭据，不写 harness_client。"""
+    """业务路由依赖：校验客户端凭据，不写 harness_client。"""
     header_id = request.headers.get("X-Harness-Client-Id")
     header_secret = request.headers.get("X-Harness-Secret")
     if header_id and header_secret:

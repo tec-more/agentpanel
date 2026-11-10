@@ -1,7 +1,7 @@
 """管理员目录（只读 SQL）。
 
 审批人解析只取 `user` 表四列：id / username / is_superuser / is_active。
-不注册 ORM 模型，避免 L3 进程依赖 L2 用户域模型（Spec §4.2 白名单）。
+不注册 ORM 模型，避免 独立进程依赖 app 用户域模型（Spec §4.2 白名单）。
 """
 from dataclasses import dataclass
 from typing import Any, Optional

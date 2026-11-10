@@ -1,6 +1,6 @@
-"""L3 编排内部认证：只接受服务凭据，不接受用户 JWT / 网关租约 key / 匿名。
+"""编排内部认证：只接受服务凭据，不接受用户 JWT / 网关租约 key / 匿名。
 
-签名协议与 L2 共用 `packages.common.security`。
+签名协议与 app 共用 `packages.common.security`。
 """
 import asyncio
 import hmac
@@ -253,16 +253,16 @@ def require_service_credential(*required_scopes: str):
 
 
 def ensure_write_enabled() -> None:
-    """写接口总开关；独立编排进程固定为写主（mode=proxy_l3）。"""
+    """写接口总开关；独立编排进程固定为写主（mode=proxy）。"""
     if not write_enabled():
         raise ServiceAuthError(
             ERROR_WRITE_DISABLED,
             "编排服务写接口未启用（orchestration.write_enabled=false）",
             status_code=409,
         )
-    if orchestration_config().get("mode") != "proxy_l3":
+    if orchestration_config().get("mode") != "proxy":
         raise ServiceAuthError(
             ERROR_NOT_PRIMARY,
-            "编排服务不是当前写主（orchestration.mode != proxy_l3）",
+            "编排服务不是当前写主（orchestration.mode != proxy）",
             status_code=409,
         )

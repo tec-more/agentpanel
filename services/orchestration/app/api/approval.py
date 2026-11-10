@@ -1,12 +1,12 @@
-"""Harness 审批联动（L3 原生）：三档策略判定、待审批列表、决策落库。
+"""Harness 审批联动（独立服务原生）：三档策略判定、待审批列表、决策落库。
 
-与 L2 `api/v1/approval_router.py` 同一共享域服务；鉴权复用 L3 的只读客户端校验，
-`last_used_at` 由 L3 异步回报 L2，不在 L3 直写。
+与 app `api/v1/approval_router.py` 同一共享域服务；鉴权复用 编排的只读客户端校验，
+`last_used_at` 由 编排异步回报 app，不在 编排直写。
 """
 from fastapi import APIRouter, Depends, Query
 
 from app.http import success_response
-from app.l3_client_auth import require_harness_client_readonly
+from app.client_auth import require_harness_client_readonly
 from packages.common.domain.approval_service import HarnessApprovalService
 from packages.common.domain.schemas import ApprovalDecide, ApprovalRequest
 

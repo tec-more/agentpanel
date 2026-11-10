@@ -1,4 +1,4 @@
-"""L3 网关健康探针。
+"""网关健康探针。
 
 - `GET /health` 由共享网关 router 提供（与旧网关形状一致）；
 - `GET /health/health`：DB `SELECT 1` + Redis `PING`（Spec §13.3 V1）；
@@ -10,17 +10,17 @@ from typing import Any, Dict
 from fastapi import APIRouter
 from starlette.responses import JSONResponse
 
-from packages.common.config import L3CommonConfig
+from packages.common.config import ServicesCommonConfig
 
 router = APIRouter()
 
 DB_PROBE_TIMEOUT_SECONDS = 2.5
 DB_ALIAS = "postgres"
 
-_common_config: L3CommonConfig | None = None
+_common_config: ServicesCommonConfig | None = None
 
 
-def init_health(config: L3CommonConfig) -> None:
+def init_health(config: ServicesCommonConfig) -> None:
     global _common_config
     _common_config = config
 

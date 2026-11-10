@@ -1,6 +1,6 @@
 """租约吊销（共享实现，P3 D-P3-4=A）。
 
-L2 `GatewayLeaseService.revoke_internal` 与网关预算自动吊销共用同一份语义：
+app `GatewayLeaseService.revoke_internal` 与网关预算自动吊销共用同一份语义：
 - 幂等：仅 active → revoked；
 - 写穿租约短缓存（下一次请求立即读到 revoked）；
 - 写审计 `gateway.lease_revoked`（高风险/拒绝）。

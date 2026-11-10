@@ -1,7 +1,7 @@
 """套餐解析器（共享包唯一实现，P4 E/T4.11 方案 A）。
 
-原网关只读 SQL 版迁入共享包，L2 与网关共用同一份实现：
-- L2 启动期显式 `plan_service.configure(SqlPlanResolver())`
+原网关只读 SQL 版迁入共享包，app 与网关共用同一份实现：
+- app 启动期显式 `plan_service.configure(SqlPlanResolver())`
 - 网关启动期同样显式注入（`services/gateway/app/main.py`）
 
 语义冻结（spec §13.6，黄金用例见 `services/gateway/tests/plan_golden.py`）：

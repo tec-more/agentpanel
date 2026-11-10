@@ -49,7 +49,7 @@ from code」。准确边界是：**PyPI 的这两个 wheel 内不含桌面客户
    `no approval channel is available` 为已知限制，业务侧改用编排审批 API）。
 2. **真实 DeepSeek 模型调用**：未使用真实 `DEEPSEEK_API_KEY`，未联网访问 provider。
 3. **当前 L3 网关 / 编排端到端联调**：需要有效 Harness 客户端凭据、网关虚拟 key 与租约；
-   本轮未读取任何 `config.conf`、`deploy/l3/.env`、secrets，也未调用 9998/9999/9100。
+   本轮未读取任何 `config.conf`、`deploy/gateway/.env`、secrets，也未调用 9998/9999/9100。
 4. **桌面客户端**：见第 5 节——不在下载物内，本轮未安装、未运行。
 5. **Web UI 可用性**：本轮补充实测 `dsh web`（绑定 127.0.0.1、`--no-open`、隔离
    `DSH_HOME`），**启动失败**，详见第 5 节；未做任何修复或联网插件加载。
@@ -202,7 +202,7 @@ Windows 桌面完成双击验证**，我据实回填本节。
 2. 登录 / 配置 provider 是否正常（请用**你自己的 DeepSeek 凭据**，不要复用项目密钥）。
 3. 能否跑一个最小任务（如发起一次对话 / 调用一个工具），界面有无正常响应。
 4. （可选）是否与本项目 L3 网关联动——如需，请提供**网关虚拟 key**，由你侧配好后再测；
-   **不要**读取项目 `config.conf` / `deploy/l3/.env` / secrets。
+   **不要**读取项目 `config.conf` / `deploy/gateway/.env` / secrets。
 
 ### 7.3 出问题时请反馈
 - 报错截图 / 文字；应用日志路径通常在

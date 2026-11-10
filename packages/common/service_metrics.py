@@ -1,9 +1,11 @@
-"""L3 独立服务（网关 / 编排）观测指标，复用共享 registry。
+"""独立服务（网关 / 编排）观测指标，复用共享 registry。
 
 T7.4：为物理拆分后的两个容器补齐 health、5xx、预占失败、租约缓存命中指标。
+（2026-11-10 更名：模块由 `l3_metrics` 更名为 `service_metrics`，指标名去掉 `l3_` 前缀，
+类 `L3HttpMetricsMiddleware` 更名为 `HttpMetricsMiddleware`。）
 
 设计约束：
-- 复用 `prometheus.py` 的 registry 与 HTTP 指标名，使 L2/L3 告警表达式可跨 job 复用；
+- 复用 `prometheus.py` 的 registry 与 HTTP 指标名，使 app / gateway / orchestration 告警表达式可跨 job 复用；
 - HTTP 采集使用**纯 ASGI 中间件**而非 `PrometheusMiddleware`（BaseHTTPMiddleware），
   避免包装 StreamingResponse 破坏网关 `/chat/completions` 的 SSE 原样透传；
 - `endpoint` 标签做路径归一化，防止 `run_no` / `hold_id` 等高基数段撑爆序列；
@@ -54,40 +56,40 @@ def endpoint_from_scope(scope: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# L3 专属业务指标
+# 独立服务专属业务指标
 # ---------------------------------------------------------------------------
 
 lease_cache_lookups = Counter(
-    "l3_lease_cache_lookups_total",
+    "lease_cache_lookups_total",
     "Gateway lease cache lookups by result",
     ["result"],  # hit | miss | unavailable | error
     registry=registry,
 )
 
 quota_operations = Counter(
-    "l3_quota_operations_total",
+    "quota_operations_total",
     "Orchestration -> L2 quota API operations",
     ["action", "result", "reason"],  # reserve|settle|release / ok|failed / 异常类名
     registry=registry,
 )
 
 health_check_status = Gauge(
-    "l3_health_check_status",
+    "health_check_status",
     "Last health probe result (1=healthy/skipped, 0=unhealthy/unknown)",
     ["service", "check"],
     registry=registry,
 )
 
 health_check_last_success = Gauge(
-    "l3_health_check_last_success_timestamp_seconds",
+    "health_check_last_success_timestamp_seconds",
     "Unix timestamp of the last successful full health probe",
     ["service"],
     registry=registry,
 )
 
 service_info = Gauge(
-    "l3_service_info",
-    "Static L3 service identity (always 1 while the process is alive)",
+    "service_info",
+    "Static service identity (always 1 while the process is alive)",
     ["service", "version"],
     registry=registry,
 )
@@ -126,7 +128,7 @@ def mark_service(service: str, version: str) -> None:
 # 纯 ASGI HTTP 指标中间件
 # ---------------------------------------------------------------------------
 
-class L3HttpMetricsMiddleware:
+class HttpMetricsMiddleware:
     """统计 method/endpoint/status_code、耗时、响应体大小与在途请求数。
 
     不包装响应对象、不消费 body，SSE 流式响应保持逐帧原样透传。
@@ -203,7 +205,7 @@ def make_metrics_endpoint(
     """返回不依赖 L2 settings 的 /metrics 端点（L2 端点受 PROMETHEUS_ENABLED 控制）。
 
     每次抓取最多做一次 DB/Redis 探测（10s 内复用），把结果写入 Gauge，
-    从而使 `l3_health_check_status` 与 `up` 一起覆盖灰度方案 R1。
+    从而使 `health_check_status` 与 `up` 一起覆盖灰度方案 R1。
     """
 
     async def _endpoint(request: Request) -> Response:
@@ -241,7 +243,7 @@ def make_metrics_endpoint(
 
 
 __all__ = [
-    "L3HttpMetricsMiddleware",
+    "HttpMetricsMiddleware",
     "make_metrics_endpoint",
     "normalize_path",
     "endpoint_from_scope",

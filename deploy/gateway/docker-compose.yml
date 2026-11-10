@@ -1,4 +1,4 @@
-# P5 Docker 交付：L2 + L3 编排 + L3 网关
+# P5 Docker 交付：APP + L3 编排 + L3 网关
 #
 # 端口约定（容器接管宿主机 9998/9999/9100，客户端地址不变）：
 #   宿主机 127.0.0.1:9998  -> L2 容器 9998
@@ -10,20 +10,21 @@
 # 依赖前置：
 #   1. docker network create --subnet 172.28.0.0/16 agentpanel-net
 #   2. docker network connect agentpanel-net agentredis   # 热接入，不重启容器
-#   3. 执行 deploy/l3/scripts/prepare-secrets.ps1 生成本地 secrets 与 .env
+#   3. 执行 deploy/gateway/scripts/prepare-secrets.ps1 生成本地 secrets 与 .env
 #   4. 宿主 8080 入口需要 legacy 项目 `app` 的 app_default 网络（external）；
 #      无 legacy 栈的干净机器先 docker network create app_default 再 up，见 runbook §4.1
 #
 # 迁移不随容器启动执行；需要迁移时单独运行一次性任务（见 P5 runbook）。
 
-name: agentpanel-l3
+name: agentpanel
 
 services:
-  l2:
+  app:
     build:
       context: ../..
-      dockerfile: deploy/l3/Dockerfile.l2
-    image: agentpanel-l2:${TAG:-local}
+      dockerfile: deploy/gateway/Dockerfile.app
+    image: agentpanel-app:${TAG:-local}
+    container_name: agentpanel-app
     restart: unless-stopped
     ports:
       - "127.0.0.1:9998:9998"
@@ -36,8 +37,8 @@ services:
       RUN_DB_MIGRATIONS: "false"
       DB_HOST: host.docker.internal
       DB_PORT: "15432"
-      DB_NAME: ${DB_NAME:?set DB_NAME in deploy/l3/.env}
-      DB_USER: ${DB_USER:?set DB_USER in deploy/l3/.env}
+      DB_NAME: ${DB_NAME:?set DB_NAME in deploy/gateway/.env}
+      DB_USER: ${DB_USER:?set DB_USER in deploy/gateway/.env}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
       REDIS_HOST: agentredis
@@ -45,37 +46,36 @@ services:
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       # 编排容器使用固定 IP，internal_allowed_ips 为精确匹配，不能写 CIDR
       ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
-      # L2 的 orchestration_proxy 在 proxy_l3 模式下把用户请求转发到该地址
-      ORCH_PUBLIC_BASE_URL: "http://l3-orchestration:9100"
+      # L2 的 orchestration_proxy 在 proxy 模式下把用户请求转发到该地址
+      ORCH_PUBLIC_BASE_URL: "http://orchestration:9100"
     secrets:
-      - source: l2_config
+      - source: app_config
         target: /app/config.conf
         mode: 0444
       - db_password
       - redis_password
-    # agentpanel-net: L3 内部网络（编排固定 IP 172.28.0.10、agentredis、l2 服务名解析）
-    # app_default: 对外 8080 nginx 所在网络。别名由 compose 声明，容器重建后自动恢复，
-    #   不再依赖手工 `docker network connect --alias agentpanel-l2`（见 runbook §4.1）。
+    # agentpanel-net: L3 内部网络（编排固定 IP 172.28.0.10、agentredis、app 服务名解析）
+    # app_default: 对外 8080 nginx 所在网络。8080 nginx upstream 已改用容器名
+    #   agentpanel-app（Docker DNS 按容器名解析，2026-11-10 起不再需要任何别名）。
     networks:
       agentpanel-net: {}
-      app_default:
-        aliases:
-          - agentpanel-l2
+      app_default: {}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - l2_storage:/app/storage
+      - app_storage:/app/storage
     security_opt:
       - no-new-privileges:true
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  l3-gateway:
+  gateway:
     build:
       context: ../..
       dockerfile: services/gateway/Dockerfile
-    image: agentpanel-l3-gateway:${TAG:-local}
+    image: agentpanel-gateway:${TAG:-local}
+    container_name: agentpanel-gateway
     restart: unless-stopped
     ports:
       - "127.0.0.1:9999:9999"
@@ -108,11 +108,12 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  l3-orchestration:
+  orchestration:
     build:
       context: ../..
       dockerfile: services/orchestration/Dockerfile
-    image: agentpanel-l3-orchestration:${TAG:-local}
+    image: agentpanel-orchestration:${TAG:-local}
+    container_name: agentpanel-orchestration
     restart: unless-stopped
     ports:
       - "127.0.0.1:9100:9100"
@@ -120,7 +121,7 @@ services:
     tmpfs:
       - /tmp
     depends_on:
-      l2:
+      app:
         condition: service_healthy
     environment:
       TMPDIR: /tmp
@@ -137,7 +138,7 @@ services:
       ORCH_PORT: "9100"
       ORCH_ALLOW_REMOTE_BIND: "true"
       ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:9100}
-      ORCH_L2_BASE_URL: http://l2:9998
+      ORCH_APP_BASE_URL: http://app:9998
       ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
     secrets: [db_password, redis_password, orchestration_service_secret]
     command:
@@ -170,8 +171,8 @@ secrets:
     file: ./secrets/redis_password
   orchestration_service_secret:
     file: ./secrets/orchestration_service_secret
-  l2_config:
-    file: ./secrets/l2_config.conf
+  app_config:
+    file: ./secrets/app_config.conf
 
 volumes:
-  l2_storage:
+  app_storage:

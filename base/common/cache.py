@@ -1,6 +1,6 @@
 """兼容层：Redis 缓存实现已迁至 `packages.common.cache`（P3 T3.6）。
 
-L2 既有 import 路径保持不变；导入时用 settings 注入连接参数。
+app 既有 import 路径保持不变；导入时用 settings 注入连接参数。
 """
 from base.common.setting import settings
 from packages.common.cache import configure as _configure

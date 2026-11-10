@@ -1,4 +1,4 @@
-"""L3 编排独立服务入口（services/orchestration）。
+"""编排独立服务入口（services/orchestration）。
 
 与 P1 `base/plugins/harness/server.py` 的行为契约一致：
 - 端口 9100、`/health/*` 与 `/internal/v1/harness/*` 路径不变；
@@ -14,14 +14,14 @@ from typing import AsyncIterator, Tuple
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from packages.common.config import ConfigError, load_l3_common
+from packages.common.config import ConfigError, load_services_common
 from packages.common.db import (
     build_tortoise_orm,
     shared_model_modules,
     stabilize_shared_model_fields,
 )
-from packages.common.l3_metrics import (
-    L3HttpMetricsMiddleware,
+from packages.common.service_metrics import (
+    HttpMetricsMiddleware,
     make_metrics_endpoint,
     mark_service,
 )
@@ -29,9 +29,9 @@ from packages.common.l3_metrics import (
 from app import health as health_module
 from app import quota_backend
 from app.api.approval import approval_router
-from app.api.business import l3_business_router
+from app.api.business import business_router
 from app.api.internal import internal_router
-from app.api.write import l3_write_router
+from app.api.write import write_router
 from app.auth import ServiceAuthError
 from app.config import (
     OrchestrationConfigError,
@@ -44,7 +44,7 @@ from app.schema_check import check_schema
 
 # P2：仍是环境变量契约；必填缺失/类型非法 → 退出码 2（与 P1 一致）
 try:
-    _L3_CONFIG = load_l3_common(source="orchestration")
+    _SERVICES_CONFIG = load_services_common(source="orchestration")
 except ConfigError as exc:
     print(f"❌ [orchestration] {exc}", flush=True)
     raise SystemExit(2)
@@ -68,12 +68,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """共享库连接 + 只读连接/schema 自检；任一不满足即 fail-closed。"""
     from tortoise import Tortoise
 
-    init_readonly_db(_L3_CONFIG.db)
-    health_module.init_health(_L3_CONFIG)
-    quota_backend.configure_l3()
+    init_readonly_db(_SERVICES_CONFIG.db)
+    health_module.init_health(_SERVICES_CONFIG)
+    quota_backend.configure_orchestration()
 
     await Tortoise.init(
-        config=build_tortoise_orm(_L3_CONFIG.db, shared_model_modules())
+        config=build_tortoise_orm(_SERVICES_CONFIG.db, shared_model_modules())
     )
     stabilize_shared_model_fields()
     try:
@@ -124,7 +124,7 @@ def build_app() -> FastAPI:
     app = FastAPI(
         title="AgentPanel Harness 编排服务",
         description=(
-            "L3 编排独立服务：/health 与 /internal/v1/harness/*；"
+            "编排独立服务：/health 与 /internal/v1/harness/*；"
             "内部接口仅接受服务凭据（HMAC），不接受用户 JWT、网关租约 key 或匿名。"
         ),
         version="0.2.0",
@@ -136,7 +136,7 @@ def build_app() -> FastAPI:
 
     @app.exception_handler(ServiceAuthError)
     async def _service_auth_error_handler(request, exc: ServiceAuthError):
-        # 与 L2 HttpExcHandle 同形：{code, msg, data}，错误码放在 data.error_code
+        # 与 app HttpExcHandle 同形：{code, msg, data}，错误码放在 data.error_code
         return JSONResponse(
             status_code=exc.status_code,
             content={"code": exc.status_code, "msg": exc.message, "data": exc.to_dict()},
@@ -155,25 +155,25 @@ def build_app() -> FastAPI:
 
     register_exceptions(app)
 
-    # /health/health、/health/live、/health/ready（与 L2 同口径，含真实 SELECT 1）
+    # /health/health、/health/live、/health/ready（与 app 同口径，含真实 SELECT 1）
     app.include_router(health_module.router, prefix="/health")
     app.include_router(internal_router)
-    app.include_router(l3_business_router)
-    app.include_router(l3_write_router)
+    app.include_router(business_router)
+    app.include_router(write_router)
     app.include_router(approval_router, prefix="/v1/harness")
 
     # T7.4：与网关同口径的 HTTP 指标 + 健康 Gauge；/metrics 不纳入业务鉴权。
-    app.add_middleware(L3HttpMetricsMiddleware)
+    app.add_middleware(HttpMetricsMiddleware)
     app.add_api_route(
         "/metrics",
         make_metrics_endpoint(
-            "l3-orchestration",
+            "orchestration",
             {"database": health_module.check_database, "redis": health_module.check_redis},
         ),
         methods=["GET"],
         include_in_schema=False,
     )
-    mark_service("l3-orchestration", "0.2.0")
+    mark_service("orchestration", "0.2.0")
 
     @app.get("/health/orchestration", include_in_schema=True, tags=["编排-健康"])
     async def orchestration_health():
@@ -209,12 +209,12 @@ def main() -> None:
     cfg = orchestration_config()
     host, port = listen_address()
     print("=" * 70, flush=True)
-    print("L3 Harness 编排服务（standalone，独立工程）启动中...", flush=True)
+    print("Harness 编排服务（standalone，独立工程）启动中...", flush=True)
     print(f"监听地址: http://{host}:{port}", flush=True)
     print(f"deployment: {cfg.get('deployment')}", flush=True)
     print(f"mode: {cfg.get('mode')}  write_enabled: {bool(cfg.get('write_enabled'))}", flush=True)
     print(f"public_base_url: {cfg.get('public_base_url')}", flush=True)
-    print(f"L2 内部额度 API: {cfg.get('l2_internal_base_url')}", flush=True)
+    print(f"app 内部额度 API: {cfg.get('app_internal_base_url')}", flush=True)
     print("内部接口仅接受服务凭据；用户 JWT / 网关租约 key / 匿名一律拒绝。", flush=True)
     print("=" * 70, flush=True)
 

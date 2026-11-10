@@ -490,7 +490,7 @@ class HarnessEventService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": 503, "msg": "额度服务不可用，事件批次未确认",
                         "data": {"error_code": "orchestration_dependency_unavailable",
-                                 "message": str(e), "downstream": "l2_quota"}},
+                                 "message": str(e), "downstream": "app_quota"}},
             )
         counters["usage_records"] += int(result.get("settled", 0))
 

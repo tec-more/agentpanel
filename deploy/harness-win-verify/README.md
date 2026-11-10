@@ -63,7 +63,7 @@
 
 - 假 provider 只监听 `127.0.0.1:18081`，返回固定文本、不触发任何工具调用。
 - `DEEPSEEK_API_KEY` 用占位值 `sk-agentpanel-verify-placeholder`；**不读取**项目的
-  `config.conf`、`deploy/l3/.env`、secrets，也不使用真实模型凭据。
+  `config.conf`、`deploy/gateway/.env`、secrets，也不使用真实模型凭据。
 - `DSH_HOME` 与 workspace 都限制在 `state/` 内，`DSH_TELEMETRY_MODE=DISABLED`。
 - **Windows 宿主没有 `--network none` 等价隔离**，因此这里不跑出网对照，也不跑
   `bash_escape` / `fs_escape` / `web_fetch` / 原生审批用例；那四项由 Linux 容器验证链负责。

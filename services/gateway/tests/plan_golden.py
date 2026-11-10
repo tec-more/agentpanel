@@ -1,6 +1,6 @@
 """套餐解析器黄金用例（P4 E/T4.11 方案 A）。
 
-唯一实现：`packages/common/quota/services/plan_resolver.py`（L2 与网关共用）。
+唯一实现：`packages/common/quota/services/plan_resolver.py`（app 与网关共用）。
 原双解析器对拍（`plan_parity.py`）退役，本文件保留同一组 fixture，改为对唯一实现的
 行为断言（20 个黄金断言，覆盖 spec §13.6 P1–P14）。
 
@@ -22,7 +22,7 @@ sys.path.insert(0, ROOT)
 
 from tortoise import Tortoise
 
-from packages.common.config import load_l3_common
+from packages.common.config import load_services_common
 from packages.common.db import (
     build_tortoise_orm,
     shared_model_modules,
@@ -56,14 +56,14 @@ def check(name: str, actual: Any, expected: Any) -> None:
 
 
 async def main() -> int:
-    cfg = load_l3_common(source="gateway")
+    cfg = load_services_common(source="gateway")
     await Tortoise.init(
         config=build_tortoise_orm(cfg.db, shared_model_modules() + EXTRA_MODEL_MODULES)
     )
     stabilize_shared_model_fields()
     conn = Tortoise.get_connection("postgres")
 
-    # 唯一实现：显式注入（与 L2 / 网关启动期一致）
+    # 唯一实现：显式注入（与 app / 网关启动期一致）
     plan_service.configure(SqlPlanResolver())
 
     async def q(sql: str, params: Optional[list] = None) -> List[Dict[str, Any]]:

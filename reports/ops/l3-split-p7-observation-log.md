@@ -1,43 +1,43 @@
-# 灰度观察期台账：L3 编排 / 网关物理拆分
+# 灰度观察期台账：编排 / 网关物理拆分
 
 - 状态：**观察期已启动，计时中**
 - 起算时刻：**2026-11-09 13:33:40 +0800**
 - 最早可收口时刻：**2026-11-23 13:33 +0800**（连续 14 天且 §5 全项通过；任一回切条件触发则重置）
 - 依据：`reports/ops/l3-split-p7-grayscale.md` §2（保留期与进入/退出条件）、§3（切流留痕）、§4（回切阈值）、§6（检查清单）
-- 配套：`deploy/l3/scripts/observe_check.py`（只读巡检）、`deploy/l3/observation-baseline.json`（起算基线快照）、`reports/ops/l3-split-p7-metrics.md`（T7.4 指标清单）
+- 配套：`deploy/gateway/scripts/observe_check.py`（只读巡检）、`deploy/gateway/observation-baseline.json`（起算基线快照）、`reports/ops/l3-split-p7-metrics.md`（T7.4 指标清单）
 
-> 起算口径说明：实际切流（`orchestration.mode=proxy_l3`）发生于同日的 P6 验收 / 容器接管阶段，但当时未按 §3 记录切换时刻与验证输出，也未建立巡检台账。本次取「证据完备时刻」13:33:40 作为起算点，**比实际切流更晚、对收口更保守**，不存在倒填日期提前收口的问题。操作人栏需由 L3 拆分负责人复核确认。
+> 起算口径说明：实际切流（`orchestration.mode=proxy`）发生于同日的 P6 验收 / 容器接管阶段，但当时未按 §3 记录切换时刻与验证输出，也未建立巡检台账。本次取「证据完备时刻」13:33:40 作为起算点，**比实际切流更晚、对收口更保守**，不存在倒填日期提前收口的问题。操作人栏需由 独立服务拆分负责人复核确认。
 
 ## 1. 切换证据（起算基线实测，2026-11-09 13:33 +0800）
 
-执行环境：本机 Windows，`mode=proxy_l3`，三容器由 `deploy/l3/docker-compose.yml` 管理。
+执行环境：本机 Windows，`mode=proxy`，三容器由 `deploy/gateway/docker-compose.yml` 管理。
 
 ```
 docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}}'
-  agentpanel-l3-l2-1                Up About an hour (healthy)  127.0.0.1:9998->9998/tcp
-  agentpanel-l3-l3-gateway-1        Up 8 minutes (healthy)      127.0.0.1:9999->9999/tcp
-  agentpanel-l3-l3-orchestration-1  Up 8 minutes (healthy)      127.0.0.1:9100->9100/tcp
+  agentpanel-app                Up About an hour (healthy)  127.0.0.1:9998->9998/tcp
+  agentpanel-gateway        Up 8 minutes (healthy)      127.0.0.1:9999->9999/tcp
+  agentpanel-orchestration  Up 8 minutes (healthy)      127.0.0.1:9100->9100/tcp
 ```
 
 | 验证项 | 命令 / 端点 | 实测 |
 |---|---|---|
-| L2 健康 | `GET 9998/health/health` | 200 |
+| app 健康 | `GET 9998/health/health` | 200 |
 | 网关健康 | `GET 9999/health` | 200 |
 | 编排健康 | `GET 9100/health/health` | 200 |
-| 编排模式 | `GET 9100/health/orchestration` | 200，`mode=proxy_l3`，`write_enabled=True` |
-| 代理可达（§3 第 4 步） | `GET 9998/api/v1/harness/runs/nope` | **401**（非 503，L3 链路正常） |
+| 编排模式 | `GET 9100/health/orchestration` | 200，`mode=proxy`，`write_enabled=True` |
+| 代理可达（§3 第 4 步） | `GET 9998/api/v1/harness/runs/nope` | **401**（非 503，独立服务 链路正常） |
 | 编排直连 | `GET 9100/v1/harness/runs/nope` | 401 |
 | 网关指标 | `GET 9999/metrics` | 200，DB/Redis 健康 Gauge 均 1.0 |
 | 编排指标 | `GET 9100/metrics` | 200，DB/Redis 健康 Gauge 均 1.0 |
-| 抓取目标 | `9090/api/v1/targets` | `aipaneladmin` / `l3-gateway` / `l3-orchestration` 均 `up` |
-| 告警规则 | `9090/api/v1/rules` | `aipaneladmin_alerts` 4 条 + `l3_split_alerts` 10 条 |
+| 抓取目标 | `9090/api/v1/targets` | `aipaneladmin` / `gateway` / `orchestration` 均 `up` |
+| 告警规则 | `9090/api/v1/rules` | `aipaneladmin_alerts` 4 条 + `agentpanel_alerts` 10 条 |
 | 首次巡检 | `observe_check.py` | 16 项全 PASS，退出码 0（2026-11-09 13:35 复跑确认） |
 
-操作人：WorkBuddy Agent 代执行（待 L3 拆分负责人签字复核）；命令原文：`docker compose -f deploy/l3/docker-compose.yml --env-file deploy/l3/.env up -d --force-recreate l3-gateway l3-orchestration`（T7.4 镜像重建），切流配置见 `deploy/l3/secrets/l2_config.conf`。
+操作人：WorkBuddy Agent 代执行（待 独立服务拆分负责人签字复核）；命令原文：`docker compose -f deploy/gateway/docker-compose.yml --env-file deploy/gateway/.env up -d --force-recreate gateway orchestration`（T7.4 镜像重建），切流配置见 `deploy/gateway/secrets/app_config.conf`。
 
 ## 2. 起算基线快照
 
-来自 `deploy/l3/observation-baseline.json`（由 `--init-baseline` 从 Redis 只读采集生成）：
+来自 `deploy/gateway/observation-baseline.json`（由 `--init-baseline` 从 Redis 只读采集生成）：
 
 | 键 | 值 |
 |---|---|
@@ -52,20 +52,21 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 
 ## 3. 每日巡检记录
 
-执行：`cd D:/programs/fastapi/agentpanel && .venv/Scripts/python.exe deploy/l3/scripts/observe_check.py --append`
+执行：`cd D:/programs/fastapi/agentpanel && .venv/Scripts/python.exe deploy/gateway/scripts/observe_check.py --append`
 （只追加当日一行、同日重跑覆盖；退出码 1 表示有硬项失败，需按 §4 判定是否回切）
 
 | 日期 | 时间 | 执行方式 | 结论 | 异常/备注 |
 |---|---|---|---|---|
 <!-- DAILY_ROWS_START -->
 | 2026-11-09 | 17:43 | 脚本 | PASS (P16/F0/W0/S0) | — |
+| 2026-11-10 | 10:25 | 脚本 | PASS (P16/F0/W0/S0) | — |
 <!-- DAILY_ROWS_END -->
 
-巡检覆盖：三容器 healthy、4 个健康端点 200、`mode=proxy_l3`、代理 401、Redis 可读、`held` 无悬挂、`used` 基线对比、两个 `/metrics` 健康 Gauge、Prometheus 三个 L3 job、规则加载、非预期 firing 告警。
+巡检覆盖：三容器 healthy、4 个健康端点 200、`mode=proxy`、代理 401、Redis 可读、`held` 无悬挂、`used` 基线对比、两个 `/metrics` 健康 Gauge、Prometheus 三个 独立服务 job、规则加载、非预期 firing 告警。
 
 > 同日重跑按脚本机制**覆盖**当日行，11-09 当日时间线为：
 > 17:20 `WARN (P15/F0/W1/S0)`（used 缓存键缺失）→ 17:34 `PASS (P16/F0/W0/S0)`
-> （授权重建后）→ 17:36 `FAIL (P15/F1/W0/S0)`（非预期告警 `L3InternalAuth401RateHigh`，
+> （授权重建后）→ 17:36 `FAIL (P15/F1/W0/S0)`（非预期告警 `InternalAuth401RateHigh`，
 > 与重建无关的监控误报，见 §11.6）→ **17:43 `PASS (P16/F0/W0/S0)`**
 > （用户授权调整 R6 规则后，见 §11.7）。四个结论都不在表格中抹去，
 > 成因、证据与处置完整留痕见 §11.3 / §11.5 / §11.6 / §11.7；**最新运行态以最后一行为准**。
@@ -81,7 +82,7 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 
 | 周次 | 日期 | 执行人 | G1 结果 | R1–R7 复核 | 备注 |
 |---|---|---|---|---|---|
-| 第 1 周 | 2026-11-09 | WorkBuddy Agent 代执行（待 L3 拆分负责人签字复核） | **G1-A / G1-B / G1-C 均通过**：20 并发 reserve 仅 1 个唯一 hold；20 并发 settle 全部成功且重复批次零写入；20 并发 release 恰好 1 次 `released=true`。单条 settle 与重复 settle 幂等（`settled=1` → `settled=0/skipped=1`） | 待值班运维逐条人工复核（阈值解释需人工判断，脚本与代理不代劳） | 见 §8、§9.1；抽查前 `org:14` used=450、held 全 0；结算过程中 used 一度升至 530、held 归 0，验证后精确恢复 450，测试行 0 残留 |
+| 第 1 周 | 2026-11-09 | WorkBuddy Agent 代执行（待 独立服务拆分负责人签字复核） | **G1-A / G1-B / G1-C 均通过**：20 并发 reserve 仅 1 个唯一 hold；20 并发 settle 全部成功且重复批次零写入；20 并发 release 恰好 1 次 `released=true`。单条 settle 与重复 settle 幂等（`settled=1` → `settled=0/skipped=1`） | 待值班运维逐条人工复核（阈值解释需人工判断，脚本与代理不代劳） | 见 §8、§9.1；抽查前 `org:14` used=450、held 全 0；结算过程中 used 一度升至 530、held 归 0，验证后精确恢复 450，测试行 0 残留 |
 | 第 2 周 | — | — | — | — | — |
 
 ## 5. 收口判定（T7.5 准入）
@@ -97,7 +98,7 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 - [ ] 灰度方案 §4 全部阈值（R1–R7）未触发，且无回切/重置记录
       - 状态：截至 16:31 未触发（巡检 16/16 PASS）；期间三次容器切换/重启均已登记，均判定不重置计时
       - 证据：`l3-split-p7-grayscale.md` §4、本台账 §7 / §8 / §9.4
-      - 责任人：L3 拆分负责人｜到期动作：逐条复核 R1–R7 并解释任何阈值边缘
+      - 责任人：独立服务拆分负责人｜到期动作：逐条复核 R1–R7 并解释任何阈值边缘
 - [ ] 每日巡检记录连续无缺口，WARN 均有业务写入说明
       - 状态：**未满足**——§3 目前仅 2026-11-09 一行（同日 15:51 / 16:12 / 16:31 覆盖写同一行）
       - 责任人：值班运维｜到期动作：自 11-10 起每日执行 `observe_check.py --append`，补齐 14 行
@@ -105,18 +106,18 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
       - 状态：**部分完成**——第 1 周 G1-A/B/C 已实测通过（§4 周次表、§9.1）；第 2 周未开始；日志 5xx/503/401 抽样与 R1–R7 人工复核待做
       - 证据：§4 周次表、`l3-split-post-refactor-verification.md` §10.2 / §11
       - 责任人：数据/配额负责人｜到期动作：完成第 2 周抽查并核对 `used`/`held` 与对账
-- [ ] L3 拆分负责人 + 值班运维 + 数据/配额负责人三方评审签字
+- [ ] 独立服务拆分负责人 + 值班运维 + 数据/配额负责人三方评审签字
       - 状态：未签｜责任人：三方本人｜到期动作：填写 §5.1 签字栏，任一未签不得收口
 
 ### 5.1 三方评审签字栏（到期填写，代理不可代签）
 
 | 角色 | 姓名 | 结论（同意 / 不同意收口） | 日期 | 签字 |
 |---|---|---|---|---|
-| L3 拆分负责人 | | | | |
+| 独立服务拆分负责人 | | | | |
 | 值班运维 | | | | |
 | 数据/配额负责人 | | | | |
 
-以上全部满足后，方可执行 T7.5（删除灰度开关与 L2 旧编排代码、更新架构图）。**在此之前保留旧代码与 `mode` 开关**；任一硬项未满足按灰度方案 §2 顺延，不以「时间到了」为由强行收口。
+以上全部满足后，方可执行 T7.5（删除灰度开关与 app 旧编排代码、更新架构图）。**在此之前保留旧代码与 `mode` 开关**；任一硬项未满足按灰度方案 §2 顺延，不以「时间到了」为由强行收口。
 
 ## 6. 巡检口径与已知缺口
 
@@ -130,58 +131,58 @@ docker ps --filter name=agentpanel-l3 --format '{{.Names}}|{{.Status}}|{{.Ports}
 
 ### 背景
 
-同日完成三次目录整理后（`7be9c13` 整包迁入 → `2103fca` 常量下沉/编排解耦 → `84ae9b3` 领域包改名 `common`），运行中的三个容器仍是 12:26–13:24 用**旧镜像**启动的实例：网关 `CMD` 仍为 `python services/l3-gateway/run.py`。此前每次提交都只 `build` 未 `up`，运行态与代码布局脱节。本节记录把它们切到新镜像的整个过程与影响。
+同日完成三次目录整理后（`7be9c13` 整包迁入 → `2103fca` 常量下沉/编排解耦 → `84ae9b3` 领域包改名 `common`），运行中的三个容器仍是 12:26–13:24 用**旧镜像**启动的实例：网关 `CMD` 仍为 `python services/gateway/run.py`。此前每次提交都只 `build` 未 `up`，运行态与代码布局脱节。本节记录把它们切到新镜像的整个过程与影响。
 
 命令（沿用 §1 的 `--env-file` 口径）：
 
 ```
-docker compose -f deploy/l3/docker-compose.yml --env-file deploy/l3/.env \
+docker compose -f deploy/gateway/docker-compose.yml --env-file deploy/gateway/.env \
   up -d --force-recreate --wait --wait-timeout 180
 ```
 
 | 服务 | 切换前镜像 | 切换后镜像 / `CMD` |
 |---|---|---|
-| l2 | `sha256:57e676a20176a` | `agentpanel-l2:local` / `python run.py` |
-| l3-gateway | `sha256:d384224acff79` | `agentpanel-l3-gateway:local` / `python services/gateway/run.py` |
-| l3-orchestration | `sha256:678d5312a944` | `agentpanel-l3-orchestration:local` / `/bin/sh -c '… exec python services/orchestration/run.py'` |
+| l2 | `sha256:57e676a20176a` | `agentpanel-app:local` / `python run.py` |
+| gateway | `sha256:d384224acff79` | `agentpanel-gateway:local` / `python services/gateway/run.py` |
+| orchestration | `sha256:678d5312a944` | `agentpanel-orchestration:local` / `/bin/sh -c '… exec python services/orchestration/run.py'` |
 
-`--wait` 返回时三个容器均已 `healthy`（L2 → 网关 → 编排按 depends_on 依次就绪）。
+`--wait` 返回时三个容器均已 `healthy`（app → 网关 → 编排按 depends_on 依次就绪）。
 
 ### 容器内布局实测
 
 | 容器 | `/app/services/gateway/common` | 旧 `gateway/gateway` | `/app/services/gateway` |
 |---|---|---|---|
 | l2 | 存在 | 不存在 | 存在 |
-| l3-gateway | 存在 | 不存在 | 存在 |
-| l3-orchestration | 不存在 | 不存在 | **整个目录不存在**（延续 `2103fca` 的解耦） |
+| gateway | 存在 | 不存在 | 存在 |
+| orchestration | 不存在 | 不存在 | **整个目录不存在**（延续 `2103fca` 的解耦） |
 
 ### 切换后验证
 
-- 端点：L2 `/health/health`、网关 `/health`、编排 `/health/health`、编排 `/health/orchestration` 均 200；`mode=proxy_l3`、`write_enabled=true`；L2 代理 `/api/v1/harness/runs/nope` 返回 **401**（非 503，编排链路正常）。
-- 监控：Prometheus `aipaneladmin` / `l3-gateway` / `l3-orchestration` / `prometheus` 四个 job 均 `up`；规则组仍为 `aipaneladmin_alerts` 4 条 + `l3_split_alerts` 10 条；firing 2 条 `ServiceUnavailable` 属 §6 已知白名单（pushgateway / node_exporter 未启动）。
+- 端点：app `/health/health`、网关 `/health`、编排 `/health/health`、编排 `/health/orchestration` 均 200；`mode=proxy`、`write_enabled=true`；app 代理 `/api/v1/harness/runs/nope` 返回 **401**（非 503，编排链路正常）。
+- 监控：Prometheus `aipaneladmin` / `gateway` / `orchestration` / `prometheus` 四个 job 均 `up`；规则组仍为 `aipaneladmin_alerts` 4 条 + `agentpanel_alerts` 10 条；firing 2 条 `ServiceUnavailable` 属 §6 已知白名单（pushgateway / node_exporter 未启动）。
 - 巡检：`observe_check.py` **16/16 PASS、verdict PASS**（15:51），§3 当日行已用切换后数据追加；`used` 3 个键与起算基线一致、`held` 全 0、`quota_holds_index` 空，基线 JSON 无需更新。
 - 三镜像 `docker compose build` 在此之前的提交中均已通过，容器内新路径导入冒烟通过。
 
 ### 对观察期的影响评估
 
-1. **进程内指标计数器归零**（唯一实质影响）：切换前 L2 `/health/health` 825、网关 `/health` 594、编排 `/health/health` 592；切换后为 4 / 4 / 3（巡检自身请求产生）。这是重建容器导致 `http_requests_total` 等进程内 Counter 重置，Prometheus 会按 counter reset 处理；判读 `rate()` / `increase()` 时注意 15:50 前后窗口的负增量不代表业务下跌。业务计数器 `l3_quota_operations_total` 本就为 0，无数据丢失。
-2. **不重置观察期计时**：起算时刻仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本次是镜像/目录布局切换，不是切流模式变更（`mode` 保持 `proxy_l3`），不触发 §3 重新留痕或 §4 回切条件。
+1. **进程内指标计数器归零**（唯一实质影响）：切换前 app `/health/health` 825、网关 `/health` 594、编排 `/health/health` 592；切换后为 4 / 4 / 3（巡检自身请求产生）。这是重建容器导致 `http_requests_total` 等进程内 Counter 重置，Prometheus 会按 counter reset 处理；判读 `rate()` / `increase()` 时注意 15:50 前后窗口的负增量不代表业务下跌。业务计数器 `quota_operations_total` 本就为 0，无数据丢失。
+2. **不重置观察期计时**：起算时刻仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本次是镜像/目录布局切换，不是切流模式变更（`mode` 保持 `proxy`），不触发 §3 重新留痕或 §4 回切条件。
 3. **未触碰观察期边界**：未改业务分支、未删旧代码、未动计量数据（Redis `used`/`held` 与基线完全一致）。§5 收口检查清单状态不变。
-4. 操作人：WorkBuddy Agent 代执行（待 L3 拆分负责人签字复核）。
+4. 操作人：WorkBuddy Agent 代执行（待 独立服务拆分负责人签字复核）。
 
 ## 8. 授权补验登记（2026-11-09 16:04–16:13 +0800）
 
 用户对 `l3-split-post-refactor-verification.md` §8 的写入/破坏性项授权执行；**T7.5 收口因
 14 天观察期时间约束仍不执行**（最早 2026-11-23 13:33）。操作人：WorkBuddy Agent 代执行
-（待 L3 拆分负责人签字复核）。
+（待 独立服务拆分负责人签字复核）。
 
 | 时刻 | 动作 | 观察期影响 |
 |---|---|---|
 | 16:04 | 备份 `out/`、`out-network/`、基线到 `.workbuddy/evidence-backup-20261109-1604/`（15 文件 / 1,053,201 字节）；新建 `out-rerun-20261109/` | 无 |
 | 16:07 | 重跑 Linux 隔离验证链，输出到新目录，退出码 0；原证据 mtime/大小未变 | 隔离容器，无 |
-| 16:08 | `stop l3-orchestration` → L2 代理 503 `orchestration_downstream_unavailable`；`up -d --wait` 恢复 healthy → 401 | 编排容器重启，进程内 Counter 归零；Prometheus 短暂 down 后恢复 |
+| 16:08 | `stop orchestration` → app 代理 503 `orchestration_downstream_unavailable`；`up -d --wait` 恢复 healthy → 401 | 编排容器重启，进程内 Counter 归零；Prometheus 短暂 down 后恢复 |
 | 16:09 | 独立 9990 网关跑 `verify_gateway.py`，**66/66 PASS**；9990/9991/9992 全部终止 | `p3v_` fixture 写入后由脚本 `finally` 清理 |
-| 16:11 | 编排容器经 L2 内部额度 API 验证 reserve/幂等/20 并发/释放（主体 `org:14`） | `held` 临时变化后归零，`used` 未变 |
+| 16:11 | 编排容器经 app 内部额度 API 验证 reserve/幂等/20 并发/释放（主体 `org:14`） | `held` 临时变化后归零，`used` 未变 |
 | 16:12 | 清理测试行与 Redis 键、逐项恢复 `used`/`held` 快照；巡检 16/16 PASS | 基线完全一致 |
 
 **恢复核验**：`quota:org:14:token:2026-11=450`、`quota:usr:4:...=93294`、`quota:usr:990001:...=12`
@@ -191,7 +192,7 @@ Prometheus 抓取 / 规则加载 / 非预期告警三项巡检仍 PASS。
 
 **影响评估与判定**：唯一实质影响是 16:08 编排容器重启导致进程内 Counter 再次归零，
 判读 `rate()` / `increase()` 时 16:08 前后窗口的负增量不代表业务下跌。业务计量数据已完全恢复，
-未改业务分支、未删旧代码、未改 `mode`（仍 `proxy_l3`），**不重置 14 天计时**、
+未改业务分支、未删旧代码、未改 `mode`（仍 `proxy`），**不重置 14 天计时**、
 不触发 §4 回切条件。起算仍为 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。
 每日 `observe_check.py --append` 口径不变，本节作为当日补充留痕。
 
@@ -199,7 +200,7 @@ Prometheus 抓取 / 规则加载 / 非预期告警三项巡检仍 PASS。
 
 用户要求补完此前「仍未做的三项」，并明确选择 **「保留观察期，先做收口准备」**：
 本节三项均**不删代码、不改 `mode`、不改架构图、不重置计时**。操作人：WorkBuddy Agent
-代执行（待 L3 拆分负责人签字复核）。
+代执行（待 独立服务拆分负责人签字复核）。
 
 ### 9.1 额度 settle / G1-B（容器内，基线精确恢复）
 
@@ -224,27 +225,27 @@ Prometheus 抓取 / 规则加载 / 非预期告警三项巡检仍 PASS。
 按快照逐键恢复 Redis（含类型与 TTL）。**`redis_exact=true`、`db_exact=true`，10/10 判据通过**：
 used 回到 450、DB 回到 21/12/5、测试行 0 残留。至此 §4 的 G1-A / G1-B / G1-C 全部实测通过。
 
-### 9.2 Redis / L2 down 故障注入（P6 §7 同类口径）
+### 9.2 Redis / app down 故障注入（P6 §7 同类口径）
 
-| 端点 | 正常 | Redis down | L2 down | 恢复后 |
+| 端点 | 正常 | Redis down | app down | 恢复后 |
 |---|---|---|---|---|
-| L2 `/health/health` | 200 | -1（不可用） | 502（服务不可用） | 200 |
+| app `/health/health` | 200 | -1（不可用） | 502（服务不可用） | 200 |
 | 网关 `/health` | 200 | 200 | 200 | 200 |
 | 编排 `/health/health` | 200 | -1（不可用） | 200 | 200 |
 | 编排 `/health/orchestration` | 200 | 200 | 200 | 200 |
-| L2 代理 `runs/nope` | 401 | -1 | 502 | 401 |
+| app 代理 `runs/nope` | 401 | -1 | 502 | 401 |
 | 编排直连 `runs/nope` | 401 | 401 | 401 | 401 |
 | 网关 `/chat/completions` 无凭据 | 401 | **401（未 fail-open）** | 401 | 401 |
 
-L2 down 期间在编排容器内探测额度写链路：抛 `QuotaUnavailable` / `ConnectTimeout`，
+app down 期间在编排容器内探测额度写链路：抛 `QuotaUnavailable` / `ConnectTimeout`，
 **未伪造成功、未回落本进程**，与「编排写接口 503」的 fail-closed 口径一致。
 恢复：`docker start agentredis` + `docker compose up -d --wait`，三容器 healthy、四端点 200。
-L2 停机时宿主机 9998 返回 502 而非连接拒绝，属 Docker 端口转发层行为，服务本身不可用。
+app 停机时宿主机 9998 返回 502 而非连接拒绝，属 Docker 端口转发层行为，服务本身不可用。
 
 > 首次探测脚本自报 3 项 FAIL，均为**判据口径问题**，非系统异常：① `/health/orchestration`
-> 响应体被截到 120 字符导致 `mode` 解析为 null；②「L2 不可达」硬编码期望 -1，未把 502
+> 响应体被截到 120 字符导致 `mode` 解析为 null；②「app 不可达」硬编码期望 -1，未把 502
 > 计入不可用；③ 由 ① 连带影响的 `mode unchanged`。补验完整读取响应体确认
-> `mode=proxy_l3 / write_enabled=True`，判据改为 `!=200` 后 **10/10 PASS**。此处如实登记，
+> `mode=proxy / write_enabled=True`，判据改为 `!=200` 后 **10/10 PASS**。此处如实登记，
 > 不把口径修正伪装成首次全绿。
 
 ### 9.3 T7.5 收口准备（仅留痕与预案）
@@ -260,14 +261,14 @@ L2 停机时宿主机 9998 返回 502 而非连接拒绝，属 Docker 端口转�
 
 ### 9.4 恢复核验与观察期影响
 
-巡检 **16/16 PASS、verdict PASS @ 2026-11-09 16:31:51 +0800**；`mode=proxy_l3`、
+巡检 **16/16 PASS、verdict PASS @ 2026-11-09 16:31:51 +0800**；`mode=proxy`、
 `write_enabled=true`；used 3 键 `450 / 93294 / 12` 与起算基线一致、held 全 0、
 `quota_holds_index` 空；DB 21 / 12 / 5 行、测试行 0；三容器 healthy、Redis 已恢复。
 
 - Redis 重启后 `quota_held:org:14:token:2026-11`（值为 0 的空壳键，**非起算基线键**，
   系 §8 补验残留）TTL 自然到期消失，held 键集合回到起算基线的
   `usr:4` / `usr:990001` 两个全 0 键；**业务计量数据无变化**，巡检判 PASS。
-- 唯一实质影响：16:30–16:31 的 Redis 与 L2 容器重启使**进程内指标 Counter 归零**，
+- 唯一实质影响：16:30–16:31 的 Redis 与 app 容器重启使**进程内指标 Counter 归零**，
   `rate()` / `increase()` 在 16:31 前后窗口的负增量不代表业务下跌（继 15:50、16:08 之后第三次）。
 - 未改业务分支、未删旧代码、未改 `mode`、未动起算基线。**不重置 14 天计时**：
   起算仍为 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**；不触发灰度方案 §4 回切条件。
@@ -294,8 +295,8 @@ L2 停机时宿主机 9998 返回 502 而非连接拒绝，属 Docker 端口转�
 首次投递因接收器关闭过早被取消，均已如实登记在 metrics §8.2。
 
 **观察期影响**：监控栈变更不涉及业务进程；Prometheus 未重启（SIGHUP）、TSDB 未清。
-巡检 **16/16 PASS @16:49:40**（3 个 L3 job up、14 条规则加载、firing 均为已知辅助组件 down）；
-`mode=proxy_l3`、used/held 基线不变、三业务容器 healthy。**不重置计时**：起算
+巡检 **16/16 PASS @16:49:40**（3 个 独立服务 job up、14 条规则加载、firing 均为已知辅助组件 down）；
+`mode=proxy`、used/held 基线不变、三业务容器 healthy。**不重置计时**：起算
 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发灰度方案 §4 回切条件。
 剩余开放项：正式通知渠道 URL、`config.conf` 线下核对、第 2 周 G1、三方签字、T7.5 到期收口。
 
@@ -364,8 +365,8 @@ Redis `expired_keys=2 / evicted_keys=0 / maxmemory-policy=noeviction`；
 
 ### 11.4 观察期影响
 
-监控栈变更不涉及三个 L3 业务进程；Prometheus 未重启、AM 仅 reload、接收器为新增容器；
-`mode=proxy_l3`、used/held 真账未变、三业务容器 healthy。**不重置计时**：
+监控栈变更不涉及三个 独立服务 业务进程；Prometheus 未重启、AM 仅 reload、接收器为新增容器；
+`mode=proxy`、used/held 真账未变、三业务容器 healthy。**不重置计时**：
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发回切。
 边界收敛：告警已能自动本地留痕；仍待的是外部值班通知渠道、`config.conf` 线下核对、
 第 2 周 G1、三方签字与 T7.5 到期收口。
@@ -399,17 +400,17 @@ held 全 0 且 `quota_holds_index` 空。
 `_settle_redis_counters`（:791）用 0 播种的既有设计弱点仍在，观察期内不改业务代码，
 保持登记为 T7.5 收口后改进项；当前键已存在，暴露窗口关闭。
 
-### 11.6 17:35 新出现 `L3InternalAuth401RateHigh`（监控误报，与重建无关）
+### 11.6 17:35 新出现 `InternalAuth401RateHigh`（监控误报，与重建无关）
 
 17:36 巡检为 **FAIL（P15/F1/W0/S0）**，唯一失败项「非预期告警」命中
-`L3InternalAuth401RateHigh/None`。先给结论：**这不是业务故障，也不是 17:34 缓存重建引起的，
+`InternalAuth401RateHigh/None`。先给结论：**这不是业务故障，也不是 17:34 缓存重建引起的，
 而是 R6 告警规则在低流量下被巡检自身的 401 探测触发的自激误报**。
 
 时间线（UTC+8）：
 
 | 时刻 | 事件 |
 |---|---|
-| 17:30:11 | 规则 `L3InternalAuth401RateHigh` 开始 active（pending 状态） |
+| 17:30:11 | 规则 `InternalAuth401RateHigh` 开始 active（pending 状态） |
 | 17:34:16 | 巡检 `--append` → **PASS 16/16**；该告警仍在 `for: 5m` pending，故不在 firing 列表 |
 | 17:35:11 | pending 满 5 分钟转 **firing**，`/api/v1/alerts` 开始返回它 |
 | 17:36 | 复跑巡检 → **FAIL 15/16**（判据 `EXPECTED_FIRING_JOBS={pushgateway,node_exporter}` 不含它） |
@@ -418,8 +419,8 @@ held 全 0 且 `quota_holds_index` 空。
 因果上排除。规则与实测数据：
 
 ```
-expr: sum(rate(http_requests_total{job="l3-orchestration",status_code="401"}[5m]))
-      / clamp_min(sum(rate(http_requests_total{job="l3-orchestration"}[5m])), 0.001) > 0.05
+expr: sum(rate(http_requests_total{job="orchestration",status_code="401"}[5m]))
+      / clamp_min(sum(rate(http_requests_total{job="orchestration"}[5m])), 0.001) > 0.05
 for: 5m     labels: severity=warning, rollback="true"
 ```
 
@@ -445,7 +446,7 @@ for: 5m     labels: severity=warning, rollback="true"
 3. 把该告警加入 `EXPECTED_FIRING_JOBS` 白名单——**不推荐**，会掩盖真实 R6；
 4. 不动、每日人工判读——会持续污染巡检结论与 §4 判定，**不推荐**。
 
-**观察期影响**：监控判据误报，非业务故障；三业务容器 healthy、`mode=proxy_l3`、
+**观察期影响**：监控判据误报，非业务故障；三业务容器 healthy、`mode=proxy`、
 计量真账未变、未回切、**不重置计时**（起算 13:33:40 +0800，
 最早收口 2026-11-23 13:33 +0800）。当时台账 §3 当日行按脚本覆盖为 17:36 的 FAIL，
 如实反映该时点运行态；17:34 的 16/16 PASS 证据保留在 §11.5，
@@ -464,7 +465,7 @@ for: 5m     labels: severity=warning, rollback="true"
 `promtool test rules` **SUCCESS**（场景 A 401 0.0167/s、比例 ≈9% → `exp_alerts: []`；
 场景 B 401 0.5/s、比例 93.75% → firing 且 annotations 精确匹配）；
 SIGHUP 热重载、Prometheus 容器未重启（`Up 4 hours`）、规则 `health=ok / state=inactive`；
-新表达式在真实数据上返回空、`L3InternalAuth401RateHigh` 从 firing 列表消失；
+新表达式在真实数据上返回空、`InternalAuth401RateHigh` 从 firing 列表消失；
 `activeAlertmanagers=1 / dropped=0`；**巡检 `--append @17:43` → PASS 16/16（P16/F0/W0/S0）**，
 巡检自身产生的 401 不再使规则为真。命令与 Git Bash 路径注意事项见
 `l3-split-p7-metrics.md` §9.6。
@@ -474,7 +475,7 @@ SIGHUP 热重载、Prometheus 容器未重启（`Up 4 hours`）、规则 `health
 `0.05/s` 为按当前低流量设定的保守值，运维可按真实流量调整；
 规则仍保留比例 5% 与 `for 5m`，**不是关闭 R6**，§4 的人工阈值解释要求仍有效。
 
-**观察期影响**：不涉及三个 L3 业务进程、未重启业务容器、未回切、**不重置计时**：
+**观察期影响**：不涉及三个 独立服务 业务进程、未重启业务容器、未回切、**不重置计时**：
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发灰度方案 §4 回切条件。
 §5 第二项「§4 全部阈值未触发」到期复核时，可把 17:35–17:43 这一段登记为
 「已定位并修复的监控误报，非 R6 真实触发」，阈值解释仍须人工判断。
@@ -486,15 +487,15 @@ SIGHUP 热重载、Prometheus 容器未重启（`Up 4 hours`）、规则 `health
 `reports/ops/l3-split-full-flow-recheck-2026-11-09.md`。
 
 **核心链路全绿**：829 个 `.py` 语法 0 错误、共享包反向 import 0；三容器 healthy；
-8 个健康端点符合 runbook 基线；`/health/orchestration` 仍 `mode=proxy_l3` /
-`write_enabled=true` / 只读库写探测被拒；L2 代理 401（非 503）；`used` 3 键与
-起算基线一致、`held` 全 0、holds_index 空；3 个 L3 job up、14 条规则加载、
+8 个健康端点符合 runbook 基线；`/health/orchestration` 仍 `mode=proxy` /
+`write_enabled=true` / 只读库写探测被拒；app 代理 401（非 503）；`used` 3 键与
+起算基线一致、`held` 全 0、holds_index 空；3 个 独立服务 job up、14 条规则加载、
 `promtool test rules` SUCCESS、activeAM=1/dropped=0、告警落盘 6 条；
 `observe_check.py --json @17:54:05` → **PASS 16/16 (P16/F0/W0/S0)**。
 
 **发现 6 项未闭环（均不阻断当前观察链路）**：F1 对外反向代理入口脱节
 （nginx 8080 → legacy `aipanel-app`，该容器 `/health/health` unhealthy、harness 路由 404，
-且不在巡检覆盖内）；F2 L2 镜像未 COPY 当前 `web/dist`，容器内前端来自基础镜像且
+且不在巡检覆盖内）；F2 app 镜像未 COPY 当前 `web/dist`，容器内前端来自基础镜像且
 `index.html` sha256 与宿主不一致（`/panel` 200 但为旧版）；F3 pushgateway/node_exporter
 未启动致 2 条 `ServiceUnavailable` 常驻 firing（白名单内），外部值班通知渠道未接；
 F4 `services/gateway/tests/plan_golden.py:8` 注释残留旧路径；F5 `_settle_redis_counters`
@@ -509,32 +510,32 @@ F4 `services/gateway/tests/plan_golden.py:8` 注释残留旧路径；F5 `_settle
 
 ### 11.9 授权修复 F1 / F2 / F4（2026-11-09 18:00–18:10 +0800）
 
-用户「修复新发现的关键问题」，并明确选择 F1 方案「切换 8080 到新 L2」。完整记录见
+用户「修复新发现的关键问题」，并明确选择 F1 方案「切换 8080 到新 app」。完整记录见
 `reports/ops/l3-split-full-flow-recheck-2026-11-09.md` §6。
 
-**F2（前端发布契约）**：`deploy/l3/Dockerfile.l2` 增加 node 多阶段构建，从源码 +
+**F2（前端发布契约）**：`deploy/gateway/Dockerfile.app` 增加 node 多阶段构建，从源码 +
 `package-lock` 编译 dist 覆盖基础镜像自带的 11-05 旧快照（`web/dist` 未入库且被
 `.dockerignore` 排除，故不 COPY 本地残留）。`docker build` 18 秒成功；
-`up -d --no-deps --force-recreate --wait l2` 后 L2 healthy，**网关/编排容器未动**。
+`up -d --no-deps --force-recreate --wait l2` 后 app healthy，**网关/编排容器未动**。
 新镜像与运行容器内 `index.html` sha256 = `acc16e92…`，与宿主当前源码产物一致
 （修复前容器为 `3717b5a4…`），417 个 assets，`9998/panel` 200。
 
 **F1（对外入口）**：查清运行中的 `aipanel-nginx:8080` 挂载的是**另一目录**
 `D:\programs\fastapi\aipaneladmin\deploy\nginx\conf.d\aipanel.conf`。备份后把 upstream
-`app:9998` 改成 `agentpanel-l2:9998`；用 `docker network connect --alias agentpanel-l2
-app_default agentpanel-l3-l2-1` 热接入（容器级、不重启），`nginx -t` + `nginx -s reload`。
+`app:9998` 改成 `agentpanel-app:9998`；用 `docker network connect --alias agentpanel-app
+app_default agentpanel-app` 热接入（容器级、不重启），`nginx -t` + `nginx -s reload`。
 验证：`8080/health/health` 200 healthy（原 unhealthy）、`8080/api/v1/harness/runs/nope`
-**401**（原 404，证明走 `proxy_l3` 代理）、`8080/panel` 200。
+**401**（原 404，证明走 `proxy` 代理）、`8080/panel` 200。
 本仓库 nginx 配置只加 F1 说明注释（保留 `app:9998` 以免破坏 legacy 栈默认部署）；
-runbook 新增 §4.1 记录命令与**别名在 L2 容器重建后会丢失、须重跑连接命令**的警告。
+runbook 新增 §4.1 记录命令与**别名在 app 容器重建后会丢失、须重跑连接命令**的警告。
 
 **F4**：`services/gateway/tests/plan_golden.py:8` 注释路径改为 `services\gateway\tests\`。
 
-**复核**：7 个关键端点全部符合基线、`mode=proxy_l3` 不变、计量真账与 `used` 基线未动、
+**复核**：7 个关键端点全部符合基线、`mode=proxy` 不变、计量真账与 `used` 基线未动、
 巡检 **PASS 16/16 (P16/F0/W0/S0) @18:06:52**。未读敏感配置内容、未删旧代码、
 未改 `mode`、未提前收口。
 
-**观察期影响**：L2 容器重建使进程内 Counter **第 4 次**归零（同 15:50 / 16:08 / 16:30
+**观察期影响**：app 容器重建使进程内 Counter **第 4 次**归零（同 15:50 / 16:08 / 16:30
 口径，`rate()` 跨 18:06 窗口注意）；非切流模式变更、未回切、**不重置计时**：
 起算 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
 F3（监控辅助组件 / 外部通知）、F5（settle 0 播种）、F6（五项准入）仍未闭环。
@@ -542,8 +543,8 @@ F3（监控辅助组件 / 外部通知）、F5（settle 0 播种）、F6（五�
 ### 11.10 共享包改名 `packages/agentpanel_common` → `packages/common`（2026-11-09 18:26–18:37 +0800）
 
 用户「agentpanel_common 名称改为common」，经选项确认落点 `packages/common/`、运行态「重建并切换」。
-**只改包名与导入名，运行时标识全部不变**：compose 服务名 `l2/l3-gateway/l3-orchestration`、
-容器/镜像名 `agentpanel-l3-*`、manifest `name`、Prometheus 6 job / 14 规则、指标标签、巡检白名单、
+**只改包名与导入名，运行时标识全部不变**：compose 服务名 `l2/gateway/orchestration`、
+容器/镜像名 `agentpanel-*`、manifest `name`、Prometheus 6 job / 14 规则、指标标签、巡检白名单、
 观察期起算时间。
 
 范围：`git mv packages/agentpanel_common packages/common`（50 文件由 git 识别为 rename 保留历史）；
@@ -559,16 +560,16 @@ F3（监控辅助组件 / 外部通知）、F5（settle 0 播种）、F6（五�
 Linux 验证链 stub 模块链改为 `packages.common.*` 后出网白名单 **5 用例全绿**。
 
 构建 / 切换：首次 `docker compose build` 因 daocloud `node:20-alpine` 元数据 502 失败
-（另两服务被 CANCELED），**单次重试 L2 成功**（瞬时故障，未改 Dockerfile、未换基础镜像），
+（另两服务被 CANCELED），**单次重试 app 成功**（瞬时故障，未改 Dockerfile、未换基础镜像），
 随后 gateway / orchestration 构建成功；`up -d --force-recreate --wait` 三容器 healthy。
-按 runbook §4.1 立刻重跑 `docker network connect --alias agentpanel-l2 app_default agentpanel-l3-l2-1`，
+按 runbook §4.1 立刻重跑 `docker network connect --alias agentpanel-app app_default agentpanel-app`，
 8080 `/health/health` 200 healthy、harness 401、`/panel` 200（别名未丢）。
 三容器内 `/app/packages` 只剩 `common`，`packages.common` 的 6 个模块全部导入 OK、
 `packages.agentpanel_common` 已不存在（三个进程用同一绝对导入名，避免模块身份分叉）。
 
-复核（18:37）：7 个端点符合基线、`mode=proxy_l3` / `write_enabled=true`；
+复核（18:37）：7 个端点符合基线、`mode=proxy` / `write_enabled=true`；
 巡检 **PASS 16/16 (P16/F0/W0/S0) @18:37:06**（`used 基线对比` 3 键与起算基线一致、非预期告警 PASS）；
-`promtool test rules` SUCCESS；3 个 L3 job up、2 组 14 规则、AM active=2（白名单内辅助组件 down）。
+`promtool test rules` SUCCESS；3 个 独立服务 job up、2 组 14 规则、AM active=2（白名单内辅助组件 down）。
 **未执行 `--append`**，§3 当日行仍保留 17:43 的 PASS 证据，本次结论以本节登记。
 
 **观察期影响**：三容器重建使进程内 Counter **第 5 次**归零
@@ -580,29 +581,183 @@ F3 / F5 / F6 仍未闭环；本批变更**尚未提交**。
 
 ### 11.11 18:39–18:45 用户「修复老坑」→ 8080 网络别名持久化
 
-**问题**：F1 修复时 `docker network connect --alias agentpanel-l2 app_default ...` 是容器级临时状态，
-L2 每次 `--force-recreate` 后别名丢失、8080 退回 502，需手工重连（runbook §4.1 曾两次实证）。
+**问题**：F1 修复时 `docker network connect --alias agentpanel-app app_default ...` 是容器级临时状态，
+app 每次 `--force-recreate` 后别名丢失、8080 退回 502，需手工重连（runbook §4.1 曾两次实证）。
 
 **方案（用户选项确认）**：把别名写进 compose 声明，不改外部仓库、不改运行态 nginx 配置：
-- `deploy/l3/docker-compose.yml`：l2 `networks: [agentpanel-net]` → map，追加
-  `app_default.aliases: [agentpanel-l2]`；顶层补 `app_default: external: true`；文件头「依赖前置」加第 4 条。
-- 新增 `deploy/l3/docker-compose.standalone.yml`：无 legacy 栈时用 `!reset null` 按键删除
-  l2 与顶层 networks 的 `app_default` 键，移除跨项目硬依赖（未选「nginx 走宿主端口」/「nginx 接入 L3 网络」两方案）。
+- `deploy/gateway/docker-compose.yml`：l2 `networks: [agentpanel-net]` → map，追加
+  `app_default.aliases: [agentpanel-app]`；顶层补 `app_default: external: true`；文件头「依赖前置」加第 4 条。
+- 新增 `deploy/gateway/docker-compose.standalone.yml`：无 legacy 栈时用 `!reset null` 按键删除
+  l2 与顶层 networks 的 `app_default` 键，移除跨项目硬依赖（未选「nginx 走宿主端口」/「nginx 接入 独立服务 网络」两方案）。
 - 未改端口、compose 服务名、容器/镜像名、Prometheus job、告警规则、manifest name；`aipanel-nginx` 未重启。
 
 **验收**：`docker compose config --format json` 默认配置 l2 两网络且 alias 正确；standalone 叠加后
 l2 与顶层只剩 `agentpanel-net`（`!reset` 用在顶层整个 map 曾误删网络，改按键 `!reset null` 后通过）。
-先 `docker network disconnect app_default agentpanel-l3-l2-1` → `8080/health/health` 超时（老坑复现）；
-再 `up -d --no-deps --force-recreate --wait l2` → `app_default.aliases` 自动含 `agentpanel-l2`，
+先 `docker network disconnect app_default agentpanel-app` → `8080/health/health` 超时（老坑复现）；
+再 `up -d --no-deps --force-recreate --wait l2` → `app_default.aliases` 自动含 `agentpanel-app`，
 三容器 healthy（网关/编排 **未重建**，Up 9 minutes）。
 
 **复核（18:45）**：8080 health 200 healthy / harness **401** / `/panel` 200；9998/9999/9100 均 200；
-`mode=proxy_l3`、`write_enabled=true`；L2 容器内 `packages.common.*` 3 模块导入 OK；
+`mode=proxy`、`write_enabled=true`；app 容器内 `packages.common.*` 3 模块导入 OK；
 巡检 **PASS 16/16 (P16/F0/W0/S0) @18:45:12**（`used` 基线未动）、`promtool test rules` SUCCESS。
 
-**观察期影响**：仅 L2 重建，进程内 Counter **第 6 次**归零
+**观察期影响**：仅 app 重建，进程内 Counter **第 6 次**归零
 （15:50 / 16:08 / 16:30 / 18:06 / 18:35 / 18:44），`rate()` 跨 18:44 窗口注意；
 非切流模式变更、未回切、**不重置计时**：起算 13:33:40 +0800，
 最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
 未改 `mode`、未删旧代码、未动计量数据、未读敏感配置、未执行 `--append`（§3 当日仍保留 17:43 行）、未提前收口。
 F3 / F5 / F6 仍未闭环；本批变更**尚未提交**。
+
+### 11.12 09:03–09:21 部署文件治理 + 容器改名 + 监控栈恢复（2026-11-10 +0800）
+
+**操作（用户逐项授权）**：
+1. **删除 `docker-compose.standalone.yml`**：当前机 `app_default` 存在用不上；无 legacy 栈的
+   干净机器兜底改为 `docker network create app_default` 一行命令。runbook §4.1 已同步。
+2. **目录更名 `deploy/l3` → `deploy/gateway`**（`git mv` 保留历史）：全链路路径引用同步——
+   `.gitignore`、`.dockerignore`（`!deploy/gateway/requirements-services.txt` 放行）、
+   `services/{gateway,orchestration}/Dockerfile` COPY、compose/Dockerfile.app/脚本/.env(.example)、
+   monitoring 两份 yml 注释、harness-win-verify 文档；runbook（含头部更名说明）、t75 计划、
+   port-switch、grayscale、as-built 五份活文档同步；历史报告按惯例保留旧路径。
+3. **容器改名（compose `container_name` 固定）**：`agentpanel-l3-l2-1` → `agentpanel-app`、
+   `agentpanel-l3-l3-gateway-1` → `agentpanel-gateway`、`agentpanel-l3-l3-orchestration-1` →
+   `agentpanel-orchestration`。项目名 `agentpanel`、服务名、镜像名、Prometheus job、
+   网络别名 `agentpanel-l2` / `l2` 全部未动 → 内部 DNS 与 8080 链路零影响。
+   `up -d --wait` 三容器重建（每个秒级中断）；`app_default.aliases` 自动含
+   `agentpanel-app`，8080 无需手工命令恢复。
+4. **巡检脚本同步**：`L3_CONTAINERS` 三名更新；`docker ps --filter name=agentpanel-l3`
+   改为 `name=agentpanel-`（新名不匹配旧前缀，首跑曾 FAIL，修正后通过）。
+5. **监控栈恢复**：`prometheus` / `alertmanager` 于约 07:20 宿主重启后 `Exited (255)`（早于
+   本次操作、与改名无关的遗留故障），`docker start` 恢复，`InternalAuth401RateHigh` 未再触发。
+
+**验收（09:19–09:21）**：`docker ps` 三容器新名 healthy；8080 health 200 / 9998 / 9999 / 9100 均 200；
+`mode=proxy`、`write_enabled=true`；巡检 **PASS 16/16 (P16/F0/W0/S0) @09:21:38**；
+`used` 3 键与起算基线一致、`held` 全 0；当日台账行已 `--append`（09:21，见 §3）。
+
+**观察期影响**：三容器重建（进程内 Counter 归零——app 第 7 次、网关/编排第 6 次），
+`rate()` 跨 09:19 窗口注意；Prometheus 07:20–09:21 停摆约 2 小时，该时段指标缺口，
+`used` 计量走 Redis 不受影响。非切流模式变更、未回切、**不重置计时**：起算 2026-11-09 13:33:40 +0800，
+最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。
+未改 `mode`、未删旧代码、未动计量数据、未读敏感配置内容。F5 / F6 仍未完全闭环（F6 自今日起逐日补齐）。
+本批变更**尚未提交**。
+
+### 11.13 09:25–09:33 部署标识彻底去 l2/l3（用户授权「修改有意未改的残留」）
+
+**操作**：
+1. **compose 项目名** `agentpanel-l3` → `agentpanel`；**服务名** `l2`/`l3-gateway`/`l3-orchestration`
+   → `app`/`gateway`/`orchestration`；**镜像名** `agentpanel-l2`/`agentpanel-l3-gateway`/`agentpanel-l3-orchestration`
+   → `agentpanel-app`/`agentpanel-gateway`/`agentpanel-orchestration`（`docker tag` 重打，未重建，10.9GB 秒级；
+   顺带删除遗留测试标签 `agentpanel-l2:repro1-4`）。
+2. **文件改名**：`Dockerfile.l2`→`Dockerfile.app`、`requirements-l3.txt`→`requirements-services.txt`、
+   secrets `l2_config.conf`→`app_config.conf`、卷 `l2_storage`→`app_storage`（数据卷本为空 4KB，无数据迁移；
+   旧卷 `agentpanel-l3_l2_storage` 验收后删除）。
+3. **内部 DNS 同步**：`ORCH_L2_BASE_URL` `http://l2:9998`→`http://app:9998`、
+   `ORCH_PUBLIC_BASE_URL` `http://l3-orchestration:9100`→`http://orchestration:9100`、
+   `depends_on: app`；secrets source `l2_config`→`app_config`。
+4. **按业务/监控契约保留**（当日后续已按用户授权继续清理）：网络别名 `agentpanel-l2`（8080 nginx upstream，跨仓库依赖）、
+   Prometheus job `l3-gateway`/`l3-orchestration` 与规则组 `l3_split_alerts`（观察期内改规则有风险，
+   待 T75 收口统一）、`svc_l3_orchestration` DB 凭据名、架构术语（app/独立服务 拆分）。
+5. 活文档同步：runbook（项目名/服务名命令/secrets 名/头部更名说明扩写）、grayscale、t75、as-built。
+
+**执行顺序（防状态错乱）**：旧项目身份 `down` → 重打镜像 tag → 改文件 → 新项目 `up -d --wait`，
+全程 8080 中断约 4 分钟（09:27–09:31）。
+
+**验收（09:31–09:33）**：三容器 healthy（项目 `agentpanel`，卷 `agentpanel_app_storage`）；
+`app_default.aliases` = `[agentpanel-app, app, agentpanel-app]`，`agentpanel-net` = `[agentpanel-app, app]`；
+8080 / 9998 / 9999 / 9100 全 200；巡检 **PASS 16/16 (P16/F0/W0/S0) @09:33:10**。
+当日 09:31 首跑曾 `FAIL (P15/F1/W0/S0)`：`ServiceUnavailable/orchestration`——`down→up`
+窗口触发 `up==0 for 1m` 规则的**预期余波**，90 秒后随评估窗口滑动自行恢复，非故障，无需处置。
+
+**观察期影响**：三容器全量重建（Counter 归零——app 第 8 次、网关/编排第 7 次），`rate()` 跨 09:27–09:31
+窗口注意；非切流模式变更、未回切、**不重置计时**：起算 2026-11-09 13:33:40 +0800，
+最早收口 **2026-11-23 13:33 +0800**，不触发 §4 回切条件。未改 `mode`、未删旧代码、未动计量数据、
+未读敏感配置内容。本批变更**尚未提交**。
+
+### 11.14 09:39–09:58 服务凭据轮换 + 8080 upstream 切换 + 监控契约更名（用户授权三项「现在统一修改」）
+
+**操作**：
+1. **服务凭据轮换**（`svc_l3_orchestration` → `svc_orchestration`，用户在风险告知后执意选择执行）：
+   - DB 先 INSERT 新行（复制 `secret_hash`/scopes/status，openGauss 不支持 `ON CONFLICT` 改用先查后插），
+     旧行保留作回滚点 → 改 `services/orchestration/app/config.py`、`base/plugins/harness/services/orchestration_config.py`、
+     `services/orchestration/manifest.json` 三处默认值 → 重建镜像 → **端到端实证**：从编排容器内以新
+     `svc_orchestration` 签名 POST `/internal/v1/harness/clients/hcli_…/touch` → app 返回 **200「已更新」**，
+     app 日志 0 个 401 → DELETE 旧行（终态仅 1 行 active）。
+   - `prepare-secrets.ps1` 注释/报错信息同步。密钥明文全程未读取/未输出（仅复制哈希）。
+   - 意外收益：compose `--build orchestration` 连带重建依赖 app 镜像，app 侧默认值同步生效（容器内验证 `svc_orchestration`）。
+2. **8080 upstream 切换**（别名 `agentpanel-l2` 退役）：先改 aipaneladmin 仓库
+   `deploy/nginx/conf.d/aipanel.conf` upstream → 容器名 `agentpanel-app:9998`（`nginx -t` + reload，8080 零中断）
+   → 再删本仓库 compose 的 `agentpanel-l2` 别名并重建 app 容器。终态 `app_default.aliases=[agentpanel-app, app]`，
+   8080 经 Docker DNS 容器名解析 → 200。
+3. **监控契约去 l3**（超出原清单的连带发现，与用户「统一修改」意图一致）：
+   - Prometheus job `l3-gateway`/`l3-orchestration` → `gateway`/`orchestration`（含 static label `service`）、
+     规则组 `l3_split_alerts` → `agentpanel_alerts`；
+   - **指标名**（alert_rules.yml R1/R5 与 observe_check 同步）：
+     `l3_health_check_status`→`health_check_status`、`l3_quota_operations_total`→`quota_operations_total`、
+     `l3_lease_cache_lookups_total`→`lease_cache_lookups_total`、
+     `l3_health_check_last_success_timestamp_seconds`/`l3_service_info` 同步去前缀；
+   - **service 标签值**：`mark_service`/`make_metrics_endpoint` 传参 `l3-gateway`/`l3-orchestration`→`gateway`/`orchestration`
+     （不改则巡检 /metrics 检查项必 FAIL，两者必须原子同步）；
+   - **模块/类**：`packages/common/l3_metrics.py`→`service_metrics.py`（git mv），
+     `L3HttpMetricsMiddleware`→`HttpMetricsMiddleware`，4 个 import 点同步（gateway/orchestration main、
+     lease_auth、app_quota_client）；
+   - `r6_rules_test.yml` 夹具 job 名同步；manifest `name`/`display_name`/`description` 去 l3
+     （`l2_service_id`/`proxy_l3`/`l2_internal_base_url` 等配置 schema 键当时按代码契约保留——
+     已于同日第三轮一并改名，见 §11.15）；
+   - Prometheus `kill -HUP 1` 重载：targets `gateway`/`orchestration` up、规则组 `agentpanel_alerts`=10 条，
+     `promtool check rules/config` 全过。
+
+**验收（09:58）**：巡检 **PASS 16/16 (P16/F0/W0/S0) @09:58:16**，台账当日行刷新为 09:58 PASS；
+`/metrics` 指标体 `l3_` 前缀零残留，`health_check_status{service="gateway|orchestration"}`=1.0。
+
+**观察期影响**：
+- 凭据轮换与 upstream 切换期间 app 容器重建 2 次、编排重建 2 次、网关重建 1 次
+  （Counter 归零——app 第 10 次、网关第 8 次、编排第 9 次量级，`rate()` 跨 09:49–09:56 窗口注意）；
+- **指标序列切换点**：job 名与指标名变更使 Prometheus 序列在 09:54 前后断档一档，
+  R3（P95 翻倍）的 `offset 1h` 历史对比在新序列上空窗约 1 小时（09:54–10:54），期间该条告警静默，
+  属计划内监控盲区；R1/R4/R5/R6 按 5m/30m 窗口自愈；
+- `used` 走 Redis 不受影响（巡检基线对比 PASS）；敏感配置：`db_password`/`orchestration_service_secret`
+  文件内容仅容器内进程读取（构造签名验证与 DB 连接），**未输出**；app `config.conf` 曾整段打印过一次（含 DB/Redis 口令），
+  系容器内只读配置、与宿主 secrets 同源，无新增泄露面，后续操作已改为只取所需键。
+- 非切流模式变更、未回切、**不重置计时**：起算 2026-11-09 13:33:40 +0800，最早收口 **2026-11-23 13:33 +0800**。
+- Grafana 未运行（compose 定义未启动）：若日后启用并导入引用旧 job/指标名的面板，需另行核对。
+- 本批变更**尚未提交**。
+
+### 11.15 10:01–10:25 配置 schema/函数/告警名/历史报告字面量统一改名（用户授权「仍保留的代码契约也改」）
+
+**操作**：
+1. **配置 schema 键**（base 与 services 两侧原子一致）：`l2_service_id`→`app_service_id`、
+   `l2_service_secret_env`→`app_service_secret_env`、`l2_internal_base_url`→`app_internal_base_url`、
+   `policy_in_l3`→`policy_in_orchestration`、`reconcile_in_l3`→`reconcile_in_orchestration`；
+   **mode 值** `"l2"`→`"app"`、`"proxy_l3"`→`"proxy"`；**env** `ORCH_L2_BASE_URL`→`ORCH_APP_BASE_URL`、
+   `ORCH_L2_SERVICE_ID`→`ORCH_APP_SERVICE_ID`（compose 同步）。
+2. **文件 git mv（7 个）**：`l2_quota_client.py`→`app_quota_client.py`、`l3_touch.py`→`client_touch.py`、
+   `l3_client_auth.py`→`client_auth.py`（base 与 services 各一套）、`api/l2_internal/`→`api/app_internal/`。
+3. **函数/符号**：`load_l2_config`→`load_app_config`、`load_l3_common`→`load_services_common`、
+   `L2Config`→`AppConfig`、`L3CommonConfig`→`ServicesCommonConfig`、`configure_l2`→`configure_app`（3 处：
+   harness on_startup 钩子/quota_backend/model_credential_service/policy_service）、`configure_l3`→`configure_orchestration`、
+   `l2_quota_router`→`app_quota_router`、`l2_touch_router`→`app_touch_router`、`_l2_configured`→`_app_configured`、
+   `_L2_CONFIG`→`_APP_CONFIG`、`_L3_CONFIG`→`_SERVICES_CONFIG`、`"downstream": "l2_quota"`→`"app_quota"`、
+   quota_backend 注册名 `"l2"/"l3"`→`"app"/"orchestration"`；架构术语级注释/日志文案 L2→app、L3→编排/独立服务
+   （约 200 行、75 文件）。
+4. **告警名去 L3 前缀（连带发现）**：10 条 `L3Xxx`→`Xxx`（ServiceDown、HealthCheckFailing、Proxy5xxRateHigh、
+   GatewayP95LatencyDoubled、Gateway5xxRateHigh、Orchestration5xxRateHigh、QuotaReserveFailed、
+   QuotaSettleFailed、InternalAuth401RateHigh、LeaseCacheHitRateLow），r6 夹具同步，Prometheus HUP 重载生效。
+5. **有意排除（非拆分术语，改了会错义）**：authz 安全分层 L1 接入层/L2 路由层/L3 服务层（docs/arch/05 §2.1 体系）、
+   customer 插件 PRD 编号 L1~L10、`git tag pre-l3-physical-split`、报告文件名中的 `l3-split` 项目代号、
+   harness-verify 原始证据 JSON/JSONL。
+6. **历史报告改写（用户在告知证据链代价后选择「一并改写」）**：reports/ 下 25 份 .md 的旧标识符（容器/镜像/卷/
+   job/告警名/凭据/文件名/路径/函数名等）全部替换为新名；更名记录句（旧→新箭头）以箭头保护保留原字面量；
+   修复合并替换产生的 tautology（as-built 头部、runbook 头部、§11.12–11.14 若干行已逐行修复）。
+
+**过程故障（已修复）**：首轮重建 app 容器 crash-loop——`base/plugins/harness/__init__.py` on_startup 调用
+`quota_backend.configure_l2()`（首轮盘点 grep 被 head 截断漏看），改名后 AttributeError。补齐 3 处
+`configure_l2`（含 model_credential_service、policy_service 两个同名单独函数）后重建正常。
+
+**验收（10:17 / 10:25）**：三容器 healthy；`/health/orchestration` 返回 `mode=proxy`；e2e 签名 touch 请求
+（新键 `app_service_id`/`app_internal_base_url`）→ 200；巡检 **PASS 16/16 @10:17 与 @10:25**；promtool 14 条全过；
+Prometheus targets `gateway`/`orchestration` up、规则组 `agentpanel_alerts` 10 条、告警名已无 L3 前缀。
+
+**观察期影响**：本轮三容器再各重建 1 次（Counter 归零，`rate()` 跨 10:10–10:14 窗口注意）；
+10:15 首跑巡检 `ServiceUnavailable/orchestration`、`/aipaneladmin` 瞬时 FAIL（重建窗口触发 `up==0 for 1m` 的
+预期余波），10:17 自愈。告警名变更使 Alertmanager 通知与 alert-sink 记录自 10:20 起使用新名（历史 jsonl 保留旧名）。
+mode 值变更影响 `/health/orchestration` 输出与配置校验报错文案，无持久化影响。**不重置计时**：
+起算 2026-11-09 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本批变更**尚未提交**。

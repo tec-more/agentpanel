@@ -1,6 +1,6 @@
-"""HTTP 传输层：响应封装与异常映射（与 L2 契约同形）。
+"""HTTP 传输层：响应封装与异常映射（与 app 契约同形）。
 
-只承载传输层契约，不含业务逻辑；L2 侧对应实现位于 `base/common/response.py`
+只承载传输层契约，不含业务逻辑；app 侧对应实现位于 `base/common/response.py`
 与 `base/common/exceptions.py`（P4 收口时再合并到共享包 platform/）。
 """
 from datetime import datetime

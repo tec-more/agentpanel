@@ -5,8 +5,8 @@ from pydantic_settings import BaseSettings
 from typing import Any, List, Optional, Literal
 from pathlib import Path
 
-# P1：共享包为配置解析与模型的唯一来源（L2 仅保留 config.conf 读取入口）
-from packages.common.config import load_l2_config, read_env_value
+# P1：共享包为配置解析与模型的唯一来源（app 仅保留 config.conf 读取入口）
+from packages.common.config import load_app_config, read_env_value
 from packages.common.db import shared_model_modules
 
 
@@ -109,7 +109,7 @@ def get_model_list() -> List[str]:
 		models = get_plugin_models_from_manifest(plugin_name)
 		plugin_models.extend(models)
 
-	# 共享包模型（L2/L3 同一份类定义，注册路径唯一）
+	# 共享包模型（app/独立服务同一份类定义，注册路径唯一）
 	model_list = core_models + plugin_models + shared_model_modules() + [
 		"base.common.events.models.event_record",
 		"base.common.events.models.replay_audit_log",
@@ -117,18 +117,18 @@ def get_model_list() -> List[str]:
 	] + ['aerich.models']
 	return model_list
 
-# 数据库配置（与 L3 共用 packages.common.config 的解析代码）
-# 环境变量优先（L2 容器化 / L3 env-only 均复用同一套字段名）；配置文件仅作默认值。
-_L2_CONFIG = load_l2_config()
-db_host: str = read_env_value("DB_HOST", "str", default=_L2_CONFIG.db_host)
-db_name: str = read_env_value("DB_NAME", "str", default=_L2_CONFIG.db_name)
-db_user: str = read_env_value("DB_USER", "str", default=_L2_CONFIG.db_user)
-db_password: str = read_env_value("DB_PASSWORD", "str", secret=True, default=_L2_CONFIG.db_password)
-db_port: int = read_env_value("DB_PORT", "int", default=_L2_CONFIG.db_port)
-minsize: int = read_env_value("DB_MINSIZE", "int", default=_L2_CONFIG.minsize)
-maxsize: int = read_env_value("DB_MAXSIZE", "int", default=_L2_CONFIG.maxsize)
-timeout: int = read_env_value("DB_TIMEOUT", "int", default=_L2_CONFIG.timeout)
-command_timeout: int = read_env_value("DB_COMMAND_TIMEOUT", "int", default=_L2_CONFIG.command_timeout)
+# 数据库配置（与 独立服务共用 packages.common.config 的解析代码）
+# 环境变量优先（app 容器化 / 独立服务env-only 均复用同一套字段名）；配置文件仅作默认值。
+_APP_CONFIG = load_app_config()
+db_host: str = read_env_value("DB_HOST", "str", default=_APP_CONFIG.db_host)
+db_name: str = read_env_value("DB_NAME", "str", default=_APP_CONFIG.db_name)
+db_user: str = read_env_value("DB_USER", "str", default=_APP_CONFIG.db_user)
+db_password: str = read_env_value("DB_PASSWORD", "str", secret=True, default=_APP_CONFIG.db_password)
+db_port: int = read_env_value("DB_PORT", "int", default=_APP_CONFIG.db_port)
+minsize: int = read_env_value("DB_MINSIZE", "int", default=_APP_CONFIG.minsize)
+maxsize: int = read_env_value("DB_MAXSIZE", "int", default=_APP_CONFIG.maxsize)
+timeout: int = read_env_value("DB_TIMEOUT", "int", default=_APP_CONFIG.timeout)
+command_timeout: int = read_env_value("DB_COMMAND_TIMEOUT", "int", default=_APP_CONFIG.command_timeout)
 # 模块级别的TORTOISE_ORM配置，用于aerich命令
 TORTOISE_ORM: dict = {
 	"connections": {

@@ -10,21 +10,21 @@
 
 ## 1. 补齐前的问题
 
-P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 `/metrics`，仅有 Docker HEALTHCHECK 与 `/health*`；5xx、预占失败、租约缓存命中未暴露，无告警规则。灰度方案 §4 因此只能靠日志人工统计 R2/R4。
+P7 报告 §1 与验收报告 §8.4 记录的缺口：网关/编排镜像无 `/metrics`，仅有 Docker HEALTHCHECK 与 `/health*`；5xx、预占失败、租约缓存命中未暴露，无告警规则。灰度方案 §4 因此只能靠日志人工统计 R2/R4。
 
-仓库其实已有共享 Prometheus 基础设施（`packages/common/prometheus.py` 的 registry、HTTP 指标、`metrics_endpoint`），L2 在 `base/start.py:729-734` 挂载；L3 两个 `build_app()` 从未挂载，也未接入业务埋点。本阶段复用该 registry，不新建第二套指标系统。
+仓库其实已有共享 Prometheus 基础设施（`packages/common/prometheus.py` 的 registry、HTTP 指标、`metrics_endpoint`），app 在 `base/start.py:729-734` 挂载；独立服务 两个 `build_app()` 从未挂载，也未接入业务埋点。本阶段复用该 registry，不新建第二套指标系统。
 
 ## 2. 实现
 
 | 文件 | 变更 |
 |---|---|
-| `packages/common/l3_metrics.py` | **新增**。共享 registry 上的 L3 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
+| `packages/common/service_metrics.py` | **新增**。共享 registry 上的 独立服务 业务指标、纯 ASGI HTTP 中间件、`/metrics` 端点工厂 |
 | `services/gateway/app/main.py` | 挂载中间件 + `/metrics`，注入 DB/Redis 健康探针 |
 | `services/orchestration/app/main.py` | 同上 |
 | `services/gateway/common/lease_auth.py` | `_get_cached_lease()` 记录 hit/miss/unavailable/error |
-| `services/orchestration/app/l2_quota_client.py` | `_post()` 观测包装，记录 reserve/settle/release 成败与异常类型 |
-| `monitoring/prometheus.yml` | 新增 `l3-gateway` / `l3-orchestration` 两个抓取 job |
-| `monitoring/alert_rules.yml` | 新增 `l3_split_alerts` 组 10 条规则，对齐灰度方案 R1–R6 |
+| `services/orchestration/app/app_quota_client.py` | `_post()` 观测包装，记录 reserve/settle/release 成败与异常类型 |
+| `monitoring/prometheus.yml` | 新增 `gateway` / `orchestration` 两个抓取 job |
+| `monitoring/alert_rules.yml` | 新增 `agentpanel_alerts` 组 10 条规则，对齐灰度方案 R1–R6 |
 | `monitoring/monitoring-deployment.yml` | 挂载 `alert_rules.yml`（此前未挂载，规则实际未加载）；prometheus 加 `host.docker.internal:host-gateway`；node_exporter 宿主端口 `9100→9101` |
 
 关键设计：
@@ -44,11 +44,11 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 | `http_request_duration_seconds` | Histogram | method, endpoint | 复用共享指标；P95（R3） |
 | `http_active_requests` | Gauge | — | 复用共享指标 |
 | `http_response_size_bytes` | Histogram | method, endpoint | 复用共享指标 |
-| `l3_lease_cache_lookups_total` | Counter | result=`hit\|miss\|unavailable\|error` | `_get_cached_lease()`；`gw:lease:state:*` 命中情况 |
-| `l3_quota_operations_total` | Counter | action=`reserve\|settle\|release`, result=`ok\|failed`, reason | `l2_quota_client._post()`；reason 为异常类名（`QuotaError`/`QuotaReservationConflict`/`QuotaUnavailable`）或 `none` |
-| `l3_health_check_status` | Gauge | service, check=`database\|redis` | 1=healthy/skipped，0=unhealthy；随 `/metrics` 抓取刷新 |
-| `l3_health_check_last_success_timestamp_seconds` | Gauge | service | 最近一次全绿探测时间 |
-| `l3_service_info` | Gauge | service, version | 进程存活即 1，便于 join |
+| `lease_cache_lookups_total` | Counter | result=`hit\|miss\|unavailable\|error` | `_get_cached_lease()`；`gw:lease:state:*` 命中情况 |
+| `quota_operations_total` | Counter | action=`reserve\|settle\|release`, result=`ok\|failed`, reason | `app_quota_client._post()`；reason 为异常类名（`QuotaError`/`QuotaReservationConflict`/`QuotaUnavailable`）或 `none` |
+| `health_check_status` | Gauge | service, check=`database\|redis` | 1=healthy/skipped，0=unhealthy；随 `/metrics` 抓取刷新 |
+| `health_check_last_success_timestamp_seconds` | Gauge | service | 最近一次全绿探测时间 |
+| `service_info` | Gauge | service, version | 进程存活即 1，便于 join |
 
 零值序列已预注册，无业务流量时 `/metrics` 也能看到完整口径。
 
@@ -56,15 +56,15 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 
 | 告警 | 对应 | 阈值 / 表达式要点 |
 |---|---|---|
-| `L3ServiceDown` | R1 | `up{job=~"l3-(gateway\|orchestration)"} == 0`，for 2m |
-| `L3HealthCheckFailing` | R1 | `l3_health_check_status == 0`，for 5m |
-| `L3Proxy5xxRateHigh` | R2 | L2 job 上 `/ (api/)?v1/harness/.*` 的 5xx 比例 > 1%，for 5m |
-| `L3GatewayP95LatencyDoubled` | R3 | P95 相对 1 小时前 > 2 倍，且有流量，for 10m |
-| `L3Gateway5xxRateHigh` | R4 | 网关 5xx 比例 > 1%，for 5m |
-| `L3Orchestration5xxRateHigh` | 补充 | 编排 5xx 比例 > 1%，for 5m |
-| `L3QuotaReserveFailed` / `L3QuotaSettleFailed` | R5 | 5m 内出现预占/结算失败即告警，for 1m |
-| `L3InternalAuth401RateHigh` | R6 | 编排 401 比例 > 5% **且** 401 速率 > 0.05/s，for 5m（低流量保护，§9.6） |
-| `L3LeaseCacheHitRateLow` | 观察项 | 30m 命中率 < 50%（非回切条件） |
+| `ServiceDown` | R1 | `up{job=~"l3-(gateway\|orchestration)"} == 0`，for 2m |
+| `HealthCheckFailing` | R1 | `health_check_status == 0`，for 5m |
+| `Proxy5xxRateHigh` | R2 | app job 上 `/ (api/)?v1/harness/.*` 的 5xx 比例 > 1%，for 5m |
+| `GatewayP95LatencyDoubled` | R3 | P95 相对 1 小时前 > 2 倍，且有流量，for 10m |
+| `Gateway5xxRateHigh` | R4 | 网关 5xx 比例 > 1%，for 5m |
+| `Orchestration5xxRateHigh` | 补充 | 编排 5xx 比例 > 1%，for 5m |
+| `QuotaReserveFailed` / `QuotaSettleFailed` | R5 | 5m 内出现预占/结算失败即告警，for 1m |
+| `InternalAuth401RateHigh` | R6 | 编排 401 比例 > 5% **且** 401 速率 > 0.05/s，for 5m（低流量保护，§9.6） |
+| `LeaseCacheHitRateLow` | 观察项 | 30m 命中率 < 50%（非回切条件） |
 
 所有比例表达式的分母用 `clamp_min(..., 0.001)` 保护，低流量/零流量不误报。带 `rollback: "true"` 标签的规则即灰度方案中的回切条件。
 
@@ -73,9 +73,9 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 ## 5. 部署拓扑变更说明
 
 - `monitoring/monitoring-deployment.yml` 此前**只挂载了 `prometheus.yml`，没有挂载 `alert_rules.yml`**，而 `prometheus.yml` 的 `rule_files: ["alert_rules.yml"]` 指向容器内路径——即规则此前实际未被加载。本次补上挂载。
-- `deploy/l3/docker-compose.yml` 已把宿主 `9100` 分配给 L3 编排容器，而 `monitoring-deployment.yml` 的 node_exporter 原本也映射宿主 `9100`，两栈无法并存。改为宿主 `9101`（容器内仍 9100，`prometheus.yml` 的 `node_exporter:9100` 不变）。
+- `deploy/gateway/docker-compose.yml` 已把宿主 `9100` 分配给 编排容器，而 `monitoring-deployment.yml` 的 node_exporter 原本也映射宿主 `9100`，两栈无法并存。改为宿主 `9101`（容器内仍 9100，`prometheus.yml` 的 `node_exporter:9100` 不变）。
 - Prometheus 容器加 `extra_hosts: host.docker.internal:host-gateway`，保证 `host.docker.internal:9998/9999/9100` 可解析。
-- 目标地址实测可用：三个 job（`aipaneladmin`、`l3-gateway`、`l3-orchestration`）在 Prometheus 中均为 `up`。
+- 目标地址实测可用：三个 job（`aipaneladmin`、`gateway`、`orchestration`）在 Prometheus 中均为 `up`。
 
 ## 6. 验证证据（2026-11-09 实测）
 
@@ -84,12 +84,12 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 | `promtool check rules` | `SUCCESS: 14 rules found`（4 条原有 + 10 条新增） |
 | `promtool check config` | `SUCCESS`，1 个 rule file |
 | 本地 FastAPI/ASGI 中间件测试 | 200/401/500 计数、SSE 三帧完整不缓冲、`/metrics` 自排除、短 `run_no` 折叠为 `:id`、静态路径不误伤 —— 全通过 |
-| 镜像重建 / 容器恢复 | `build` 成功；`up -d --force-recreate` 后三容器 healthy，`9998/health/health`、`9999/health`、`9100/health/health`、`9100/health/orchestration` 全 200；编排 `mode=proxy_l3`、`write_enabled=true` |
+| 镜像重建 / 容器恢复 | `build` 成功；`up -d --force-recreate` 后三容器 healthy，`9998/health/health`、`9999/health`、`9100/health/health`、`9100/health/orchestration` 全 200；编排 `mode=proxy`、`write_enabled=true` |
 | `/metrics` | `9999` → 200（5781 B）、`9100` → 200（7905 B） |
-| 指标增量（生产） | 网关 `http_requests_total{endpoint="/chat/completions",status_code="401"}` +2；`l3_lease_cache_lookups_total{result="miss"}` +1；编排 `http_requests_total{endpoint="/v1/harness/runs/:id",status_code="401"}` +3（两个不同短 run_no 合并到同一序列） |
+| 指标增量（生产） | 网关 `http_requests_total{endpoint="/chat/completions",status_code="401"}` +2；`lease_cache_lookups_total{result="miss"}` +1；编排 `http_requests_total{endpoint="/v1/harness/runs/:id",status_code="401"}` +3（两个不同短 run_no 合并到同一序列） |
 | 健康 Gauge | 两容器 `database` / `redis` 均为 1 |
-| Prometheus 端到端 | `/api/v1/targets`：两个 L3 job 均 `up`；`/api/v1/rules`：`l3_split_alerts` 10 条已加载；`l3_health_check_status` 等查询有数据 |
-| 告警表达式求值 | 14 条全部 `status=success`、无异常；当前无 L3 告警触发（`ServiceUnavailable` 命中 2 个未启动的辅助组件，属预期） |
+| Prometheus 端到端 | `/api/v1/targets`：两个 独立服务 job 均 `up`；`/api/v1/rules`：`agentpanel_alerts` 10 条已加载；`health_check_status` 等查询有数据 |
+| 告警表达式求值 | 14 条全部 `status=success`、无异常；当前无 独立服务 告警触发（`ServiceUnavailable` 命中 2 个未启动的辅助组件，属预期） |
 | 数据不变性 | Redis `quota:org:14:token:2026-11 = 450`、`quota:usr:4:token:2026-11 = 93294`，与 P7 报告 §4 基线一致 |
 
 复现命令（仓库根目录）：
@@ -97,8 +97,8 @@ P7 报告 §1 与验收报告 §8.4 记录的缺口：L3 网关/编排镜像无 
 ```powershell
 $ROOT = 'd:\programs\fastapi\agentpanel'
 $COMPOSE = "$ROOT\deploy\l3\docker-compose.yml"; $ENV = "$ROOT\deploy\l3\.env"
-docker compose -f $COMPOSE --env-file $ENV build l3-gateway l3-orchestration
-docker compose -f $COMPOSE --env-file $ENV up -d --force-recreate l3-gateway l3-orchestration
+docker compose -f $COMPOSE --env-file $ENV build gateway orchestration
+docker compose -f $COMPOSE --env-file $ENV up -d --force-recreate gateway orchestration
 docker compose -f "$ROOT\monitoring\monitoring-deployment.yml" up -d prometheus
 curl.exe http://127.0.0.1:9999/metrics
 curl.exe http://127.0.0.1:9100/metrics
@@ -108,9 +108,9 @@ curl.exe "http://127.0.0.1:9090/api/v1/targets?state=active"
 ## 7. 已知限制
 
 1. **5xx 与预占/结算失败未在生产真实触发**：会改动计量数据，故只在本地 ASGI 测试与埋点函数注入层面验证计数路径；告警表达式通过 promtool 与 Prometheus 实求值验证。
-2. **辅助组件未启动**：`pushgateway` / `node_exporter` 在 targets 中显示 `down`/`unknown`，不影响 L3 三个 job；其 `ServiceUnavailable` 持续 firing 属预期（巡检判 PASS）。Alertmanager 已于 2026-11-09 16:46 接入、17:18 起告警自动落盘留痕（见 §9），但**短信/邮件等外部值班通知渠道仍待运维配置或书面接受**，见 §8.3 / §9.4。
-3. **标签冲突**：`prometheus.yml` 给两个 job 加了外部 `service` 标签，而 `l3_health_check_status` / `l3_service_info` 自带同名标签，Prometheus 按标准行为把后者重命名为 `exported_service`；告警规则统一使用 `job` 标签，不受影响。
-4. **两个 L3 进程共享指标定义**：编排也暴露恒 0 的租约缓存计数器、网关也暴露恒 0 的额度计数器；按 `job` 过滤即可。
+2. **辅助组件未启动**：`pushgateway` / `node_exporter` 在 targets 中显示 `down`/`unknown`，不影响 独立服务 三个 job；其 `ServiceUnavailable` 持续 firing 属预期（巡检判 PASS）。Alertmanager 已于 2026-11-09 16:46 接入、17:18 起告警自动落盘留痕（见 §9），但**短信/邮件等外部值班通知渠道仍待运维配置或书面接受**，见 §8.3 / §9.4。
+3. **标签冲突**：`prometheus.yml` 给两个 job 加了外部 `service` 标签，而 `health_check_status` / `service_info` 自带同名标签，Prometheus 按标准行为把后者重命名为 `exported_service`；告警规则统一使用 `job` 标签，不受影响。
+4. **两个 独立进程共享指标定义**：编排也暴露恒 0 的租约缓存计数器、网关也暴露恒 0 的额度计数器；按 `job` 过滤即可。
 5. **R5/R7 仍靠人工**：见 §4 末。
 6. **保留期未开始计时**：T7.5 需 T7.4 补齐（已完成）且连续 14 天无 P1 故障、阈值未触发、G1 抽查通过后才能执行；本次未删除任何旧代码或灰度开关。
 
@@ -118,7 +118,7 @@ curl.exe "http://127.0.0.1:9090/api/v1/targets?state=active"
 
 ## 8. Alertmanager 接入（2026-11-09 16:46–16:49 +0800，观察期内补齐）
 
-T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部在监控旁路，未改三个 L3 业务进程、
+T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部在监控旁路，未改三个 独立服务 业务进程、
 未改 `mode`、未改业务分支、未删旧代码。操作人：WorkBuddy Agent 代执行（待运维复核）。
 
 ### 8.1 变更清单
@@ -128,7 +128,7 @@ T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部
 | `monitoring/alertmanager.yml`（新增） | route 按 `alertname`/`job` 分组（`group_wait=10s`、`group_interval=30s`、`repeat_interval=4h`）；receiver `default-webhook`；`send_resolved: true`；critical 抑制同组 warning |
 | `monitoring/monitoring-deployment.yml` | 新增 `alertmanager` 服务（9093:9093、`alertmanager_data` volume、`host.docker.internal:host-gateway`） |
 | `monitoring/prometheus.yml` | `alerting.alertmanagers` 由空 targets 改为 `alertmanager:9093` |
-| `deploy/l3/scripts/prepare-secrets.ps1` | 顺带修复 `.env` 端口遗留：`19999/19100` → `9999/9100`（与 compose 头部、运行 `.env` 一致） |
+| `deploy/gateway/scripts/prepare-secrets.ps1` | 顺带修复 `.env` 端口遗留：`19999/19100` → `9999/9100`（与 compose 头部、运行 `.env` 一致） |
 
 镜像 `prom/alertmanager:latest`（0.34.2）直连 docker.io 超时，经 daocloud / quay 加速源拉取
 后本地 tag 复用；该版本**不支持 `--config.expand-env`**（`amtool check-config` 会把 `${VAR}`
@@ -144,7 +144,7 @@ T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部
 | 真实规则告警送达 AM | `/api/v2/alerts`：2 条 `ServiceUnavailable`（`job=node_exporter` / `pushgateway`，state=active，`generatorURL` 指向 Prometheus） |
 | AM → receiver（真实告警） | AM 日志 16:47:23 `Notify success ... aggrGroup={alertname="ServiceUnavailable", job="node_exporter"} attempts=8 numAlerts=1` |
 | AM → receiver（探针） | 临时本地 webhook（9094）收到 `firing` + `resolved` 两个 POST，`receiver=default-webhook`，payload 含 `groupLabels`/`alerts` |
-| 恢复核验 | 巡检 **16/16 PASS @16:49:40**；3 个 L3 job up、14 条规则加载、三业务容器 healthy、`mode=proxy_l3` |
+| 恢复核验 | 巡检 **16/16 PASS @16:49:40**；3 个 独立服务 job up、14 条规则加载、三业务容器 healthy、`mode=proxy` |
 
 首次端到端脚本把 webhook payload 当作数组解析（实际是含 `alerts` 字段的对象）而报错，
 未产生结论；重跑改用「AM 内真实告警 + 探针投递」两段判据，如实登记，不把重跑伪装成首次全绿。
@@ -196,7 +196,7 @@ T7.4 遗留项「告警只求值、不外发」的链路已补齐。变更全部
 
 | 来源 | 网关 | 编排 |
 |---|---|---|
-| `deploy/l3/.env` | `9999` | `9100` |
+| `deploy/gateway/.env` | `9999` | `9100` |
 | 容器内环境变量 | `GW_PUBLIC_BASE_URL=...9999` | `ORCH_PUBLIC_BASE_URL=...9100` |
 | 宿主端口映射 | `127.0.0.1:9999->9999` | `127.0.0.1:9100->9100` |
 
@@ -235,15 +235,15 @@ DB 真账零变化；**不建议**改基线或改脚本口径。执行细节见
 
 ### 9.4 观察期影响
 
-监控栈变更不涉及三个 L3 业务进程；Prometheus 未重启、AM 仅 reload、接收器为新增容器。
-恢复后 `repeat_interval=4h`、`mode=proxy_l3`、used/held 真账未变、三业务容器 healthy。
+监控栈变更不涉及三个 独立服务 业务进程；Prometheus 未重启、AM 仅 reload、接收器为新增容器。
+恢复后 `repeat_interval=4h`、`mode=proxy`、used/held 真账未变、三业务容器 healthy。
 **不重置计时**：起算 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。
 边界收敛：告警已能自动本地留痕，但**短信/邮件等外部值班通知渠道仍待运维提供或书面接受**；
 `config.conf` 线下核对、第 2 周 G1、三方签字、T7.5 到期收口仍待。
 
 ### 9.5 R6 自激误报分析（17:35 发现，17:43 已修复）
 
-`l3_split_alerts` 的 R6 规则（401 比例 > 5%、`for: 5m`、`rollback: "true"`）在低流量环境下
+`agentpanel_alerts` 的 R6 规则（401 比例 > 5%、`for: 5m`、`rollback: "true"`）在低流量环境下
 被**巡检自身的预期 401 探测**触发：17:36 实测编排侧 5 分钟窗口只有两个健康 200 与
 `/v1/harness/runs/:id` 401，`401_rate=0.0140/s` / `total_rate=0.1053/s` → 比例 13.3%，
 分母过小。时间线 17:30:11 pending → 17:35:11 firing，恰好使 17:34 巡检 PASS 16/16、
@@ -272,7 +272,7 @@ DB 真账零变化；**不建议**改基线或改脚本口径。执行细节见
 | 静态校验 | `promtool check rules` 14 条 SUCCESS；`promtool check config` SUCCESS |
 | **规则单元测试** | `promtool test rules` **SUCCESS**：场景 A 低流量探测（200 0.167/s + 401 0.0167/s，比例 ≈9%）**不触发**；场景 B 真实凭据故障（401 0.5/s，比例 93.75%）**触发**，labels/annotations 精确匹配 |
 | 热重载 | SIGHUP 重载，Prometheus 容器未重启（`Up 4 hours`）；规则 `health=ok / state=inactive`、`for=300s`、labels 保留 |
-| 运行态 | 新表达式在真实数据上返回空；`L3InternalAuth401RateHigh` 从 firing 列表消失，仅剩 2 条已知 `ServiceUnavailable`；巡检产生的 401 未使表达式为真 |
+| 运行态 | 新表达式在真实数据上返回空；`InternalAuth401RateHigh` 从 firing 列表消失，仅剩 2 条已知 `ServiceUnavailable`；巡检产生的 401 未使表达式为真 |
 | 巡检 | `observe_check.py --append @17:43` → **PASS 16/16（P16/F0/W0/S0）** |
 | 告警链路 | `activeAlertmanagers=1 / dropped=0`，未受影响 |
 

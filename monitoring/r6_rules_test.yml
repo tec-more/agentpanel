@@ -18,13 +18,13 @@ tests:
   - interval: 1m
     name: low traffic probe 401 must NOT fire
     input_series:
-      - series: 'http_requests_total{job="l3-orchestration",endpoint="/health/health",method="GET",status_code="200"}'
+      - series: 'http_requests_total{job="orchestration",endpoint="/health/health",method="GET",status_code="200"}'
         values: '0+10x15'
-      - series: 'http_requests_total{job="l3-orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
+      - series: 'http_requests_total{job="orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
         values: '0+1x15'
     alert_rule_test:
       - eval_time: 12m
-        alertname: L3InternalAuth401RateHigh
+        alertname: InternalAuth401RateHigh
         exp_alerts: []
 
   # 场景 B：真实服务凭据故障，401 成批出现
@@ -33,16 +33,16 @@ tests:
   - interval: 1m
     name: real credential failure MUST fire
     input_series:
-      - series: 'http_requests_total{job="l3-orchestration",endpoint="/health/health",method="GET",status_code="200"}'
+      - series: 'http_requests_total{job="orchestration",endpoint="/health/health",method="GET",status_code="200"}'
         values: '0+2x15'
-      - series: 'http_requests_total{job="l3-orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
+      - series: 'http_requests_total{job="orchestration",endpoint="/v1/harness/runs/:id",method="GET",status_code="401"}'
         values: '0+30x15'
     alert_rule_test:
       - eval_time: 12m
-        alertname: L3InternalAuth401RateHigh
+        alertname: InternalAuth401RateHigh
         exp_alerts:
           - exp_labels:
-              alertname: L3InternalAuth401RateHigh
+              alertname: InternalAuth401RateHigh
               severity: warning
               rollback: "true"
             # 401 比例 = 0.5 / (0.5 + 0.0333) = 93.75%，模板变量按实测值渲染

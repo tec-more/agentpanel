@@ -10,9 +10,9 @@
 
 | 项 | 实测值 |
 |---|---|
-| compose | `deploy/l3/docker-compose.yml`（`name: agentpanel-l3`） |
-| 容器 | `agentpanel-l3-l2-1` / `agentpanel-l3-l3-gateway-1` / `agentpanel-l3-l3-orchestration-1`，三者 `Up (healthy)` |
-| 镜像 | `agentpanel-l2:local`、`agentpanel-l3-gateway:local`、`agentpanel-l3-orchestration:local` |
+| compose | `deploy/gateway/docker-compose.yml`（`name: agentpanel`） |
+| 容器 | `agentpanel-app` / `agentpanel-gateway` / `agentpanel-orchestration`，三者 `Up (healthy)` |
+| 镜像 | `agentpanel-app:local`、`agentpanel-gateway:local`、`agentpanel-orchestration:local` |
 | 启动命令 | `python run.py`；`python services/gateway/run.py`；`sh -c 'export ORCHESTRATION_SERVICE_SECRET=$(cat /run/secrets/…); exec python services/orchestration/run.py'` |
 | 端口 | `127.0.0.1:9998` / `9999` / `9100`，无 `0.0.0.0` |
 | 运行用户 | 三容器 `uid=10001` |
@@ -22,15 +22,15 @@
 | 判据 | 实测 | 结论 |
 |---|---|---|
 | 三容器 healthy | compose `ps` 三者 `Up (healthy)` | 通过 |
-| L2 `/health/health` | 200 `status=healthy`，`database/redis/qdrant` 均 healthy | 通过 |
+| app `/health/health` | 200 `status=healthy`，`database/redis/qdrant` 均 healthy | 通过 |
 | 网关 `/health` | 200 `status=ok`、`deployment=standalone`、`fail_closed=true` | 通过 |
 | 网关 `/health/health`、`/health/live` | 200 `healthy` / 200 `alive` | 通过 |
 | 编排 `/health/health` | 200 `status=healthy` | 通过 |
-| 编排 `/health/orchestration` | 200 `mode=proxy_l3`、`write_enabled=true` | 通过 |
+| 编排 `/health/orchestration` | 200 `mode=proxy`、`write_enabled=true` | 通过 |
 | 非 root | 三容器 `id -u` → `10001` | 通过 |
 | 端口仅回环 | `docker port` 三条均 `127.0.0.1` | 通过 |
 | 镜像层明文密钥 | `docker history --no-trunc` 扫 `requirepass\|SERVICE_SECRET=\|DB_PASSWORD=\|REDIS_PASSWORD=`，三镜像命中 0 | 通过 |
-| 镜像内配置文件 | 网关/编排容器 0 命中；L2 容器命中 `/app/config.conf` → **见 §7.1** | 待人工核对 |
+| 镜像内配置文件 | 网关/编排容器 0 命中；app 容器命中 `/app/config.conf` → **见 §7.1** | 待人工核对 |
 
 ## 3. 依赖连通、配置契约与 fail-closed（T6.2 / P1）
 
@@ -51,15 +51,15 @@
 
 | 判据 | 实测 | 结论 |
 |---|---|---|
-| L2 → L3 代理链路 | `9998/api/v1/harness/runs/nope` → **401**（编排侧返回，非 503），证明代理可达且不回落本进程 | 通过 |
-| L2 内部额度接口拒绝匿名 | `/internal/v1/harness/quota/reserve`、`/settle`、`/clients/x/touch` 匿名 POST 均 401 | 通过 |
-| L2 内部接口拒绝用户 JWT | 伪造 `Bearer eyJ…` POST reserve → 401 | 通过 |
+| app → 独立服务 代理链路 | `9998/api/v1/harness/runs/nope` → **401**（编排侧返回，非 503），证明代理可达且不回落本进程 | 通过 |
+| app 内部额度接口拒绝匿名 | `/internal/v1/harness/quota/reserve`、`/settle`、`/clients/x/touch` 匿名 POST 均 401 | 通过 |
+| app 内部接口拒绝用户 JWT | 伪造 `Bearer eyJ…` POST reserve → 401 | 通过 |
 | 网关匿名 / 错误租约 key | `POST /chat/completions` 匿名 401；`dgw.gl_invalid.secret` 401 | 通过 |
 | 网关非法 JSON（无合法租约） | 401（鉴权先于解析，符合 fail-closed） | 通过 |
 | 出网白名单 | `gateway_allowlist_check.py` 以 `services/gateway/common/service.py` 复跑，5 用例全部符合预期 | 通过 |
 | 三入口 `/metrics` | 9998 / 9999 / 9100 均 200（7905 / 12199 / 11943 bytes） | 通过 |
 
-> 「合法租约 + 非法 JSON → 400」需先由 L2 签发租约，属写入项，列入 §8 未执行。
+> 「合法租约 + 非法 JSON → 400」需先由 app 签发租约，属写入项，列入 §8 未执行。
 
 ## 5. 目录整理专项（三次提交后的回归）
 
@@ -68,31 +68,31 @@
 | 旧导入名 `services.gateway.gateway.*` | 活代码 0 处；仅 `common/constants.py:4`、`common/__init__.py:8` 两处 docstring 为历史时间线说明 | 通过 |
 | `packages` 反向依赖 | `packages → services.* / base.*` 0 处 | 通过 |
 | 编排依赖网关目录 | `services/orchestration → services.gateway` 0 处 | 通过 |
-| 运行容器内布局 | L2、网关：`common/` 存在、`gateway/gateway/` 消失；编排：`/app/services/gateway` 整体不存在 | 通过 |
-| manifest 三拆 | `base/plugins/harness/manifest.json` 含 `config.gateway_issuance`；`services/gateway/manifest.json` `name=l3-gateway`；`services/orchestration/manifest.json` `name=l3-orchestration`，后两者顶层键仅 `config/description/display_name/name/version`，无 `plugin_manager` | 通过 |
+| 运行容器内布局 | app、网关：`common/` 存在、`gateway/gateway/` 消失；编排：`/app/services/gateway` 整体不存在 | 通过 |
+| manifest 三拆 | `base/plugins/harness/manifest.json` 含 `config.gateway_issuance`；`services/gateway/manifest.json` `name=gateway`；`services/orchestration/manifest.json` `name=orchestration`，后两者顶层键仅 `config/description/display_name/name/version`，无 `plugin_manager` | 通过 |
 | 运行时标识连续性 | compose 服务名、容器/镜像名、manifest `name`、Prometheus job、指标 `service` 标签均未改 | 通过 |
 
 ## 6. 监控与观察期
 
 | 项 | 实测 |
 |---|---|
-| Prometheus targets | 6 job：`aipaneladmin` / `l3-gateway` / `l3-orchestration` / `prometheus` **up**；`pushgateway` / `node_exporter` **down**（未起，白名单内） |
-| 规则 | `aipaneladmin_alerts` 4 条 + `l3_split_alerts` 10 条 = **14 条** |
+| Prometheus targets | 6 job：`aipaneladmin` / `gateway` / `orchestration` / `prometheus` **up**；`pushgateway` / `node_exporter` **down**（未起，白名单内） |
+| 规则 | `aipaneladmin_alerts` 4 条 + `agentpanel_alerts` 10 条 = **14 条** |
 | firing 告警 | 2 条 `ServiceUnavailable`（`pushgateway` / `node_exporter`），巡检白名单内，无业务告警 |
-| 观察期巡检 | `observe_check.py --json` @ `2026-11-09T16:01:26+08:00` → **16/16 PASS，verdict PASS**（容器健康、五端点、L2 代理、编排直连、配额 Redis 可读、held 无悬挂、used 基线一致、两 `/metrics`、Prometheus 抓取、规则加载、非预期告警） |
+| 观察期巡检 | `observe_check.py --json` @ `2026-11-09T16:01:26+08:00` → **16/16 PASS，verdict PASS**（容器健康、五端点、app 代理、编排直连、配额 Redis 可读、held 无悬挂、used 基线一致、两 `/metrics`、Prometheus 抓取、规则加载、非预期告警） |
 | 观察期状态 | 起算 `2026-11-09 13:33:40 +0800`，最早收口 `2026-11-23 13:33 +0800`，本次未重置计时 |
 
-**指标命名备忘**（避免后续误用）：HTTP 计数器实际名为共享 registry 的 `http_requests_total`（非 `l3_http_requests_total`）；L3 业务指标为 `l3_lease_cache_lookups_total`、`l3_quota_operations_total`、`l3_health_check_status`、`l3_health_check_last_success_timestamp_seconds`、`l3_service_info`。零值序列已预注册。
+**指标命名备忘**（避免后续误用）：HTTP 计数器实际名为共享 registry 的 `http_requests_total`（非 `l3_http_requests_total`）；独立服务 业务指标为 `lease_cache_lookups_total`、`quota_operations_total`、`health_check_status`、`health_check_last_success_timestamp_seconds`、`service_info`。零值序列已预注册。
 
 ## 7. 发现与差异
 
-### 7.1 L2 容器内存在 `config.conf`（需人工线下核对）
+### 7.1 app 容器内存在 `config.conf`（需人工线下核对）
 
-- 实测：L2 运行容器 `/app/config.conf`，2394 字节，含 `db_password`、`password`、`api_key`、`sender_password`、`wechat_api_key` 等键名；另有两份 `.env.*.example` 示例文件。
+- 实测：app 运行容器 `/app/config.conf`，2394 字节，含 `db_password`、`password`、`api_key`、`sender_password`、`wechat_api_key` 等键名；另有两份 `.env.*.example` 示例文件。
 - 与 P6 验收 §6「镜像无配置/密钥，find 仅命中 sysfs」的记录不一致。
 - **未判定部分**：该文件是镜像自带还是运行时挂载、键值为真实凭据还是占位符。核查需读取敏感值，用户已明确选择**拒绝共享敏感内容**，因此本次未读取、未复述、未以任何方式推断或绕过该拒绝。
 - 建议：由负责人在受控环境只读核对（只看键名/长度，不打印值）；若确为真实凭据，应从镜像构建中剔除并改用 env / secrets 注入，并复核 `.dockerignore`。
-- 归属：本项**不是三次目录整理引入**（整理未改 L2 的配置复制规则），登记为安全项待办，不阻断本次验证结论。
+- 归属：本项**不是三次目录整理引入**（整理未改 app 的配置复制规则），登记为安全项待办，不阻断本次验证结论。
 
 ### 7.2 其它
 
@@ -103,14 +103,14 @@
 ## 8. 首次验证时未执行的项（16:04 已授权补验，结果见 §10）
 
 > 下表是 16:02 首次只读验证时的状态；用户于 16:04 授权后已执行除 T7.5 外的全部项；
-> 16:23 后又补完 settle、Redis / L2 down 注入与收口准备，见 §11。表格保留历史状态不改。
+> 16:23 后又补完 settle、Redis / app down 注入与收口准备，见 §11。表格保留历史状态不改。
 
 | 项 | 判据来源 | 未执行原因 / 影响 |
 |---|---|---|
-| 租约签发 → 网关 `/chat/completions` 200、SSE 透传、`usage_record` 记账、租约吊销 | P6 §4 | 需 L2 签发租约并写 `usage_record`，**动计量数据** |
+| 租约签发 → 网关 `/chat/completions` 200、SSE 透传、`usage_record` 记账、租约吊销 | P6 §4 | 需 app 签发租约并写 `usage_record`，**动计量数据** |
 | 合法租约 + 非法 JSON → 400 | P1 清单 | 同上，需真实租约 |
 | 预占 / 结算 / 释放、幂等、G1-A/B/C 20 并发 | P6 §5 | 改 `used` / `held`，巡检 `used 基线对比` 会 WARN，观察期需单独登记 |
-| 停编排容器 → L2 代理 503；Redis / L2 down 故障注入 | P6 §7 | 中断服务或依赖，观察期内不擅自破坏 |
+| 停编排容器 → app 代理 503；Redis / app down 故障注入 | P6 §7 | 中断服务或依赖，观察期内不擅自破坏 |
 | Linux 验证链 `deploy/harness-linux-verify/run.ps1` 重跑 | `VERIFICATION.md` §复现 | `-v out:/out` 会**覆盖 `out/` 14 个原始证据孤本**，需先备份到新目录再跑 |
 | T7.5 收口（删灰度开关 / 旧编排代码 / 更新架构图） | `checklist.md` | 14 天观察期最早 2026-11-23 13:33 结束，未到期；16:32 仅完成收口准备（§11.3） |
 
@@ -118,7 +118,7 @@
 
 三次目录整理与容器切换后的**只读回归验证全部通过**：健康端点、依赖只读、配置契约 fail-closed、代理链路、内部接口鉴权、出网白名单、镜像布局、依赖方向、监控抓取与 16 项观察期巡检均无回归。运行态与新代码布局一致（网关 CMD 已是 `services/gateway/run.py`，编排镜像内无网关目录）。
 
-观察期继续有效，起算与最早收口时间不变。§7.1 的安全差异仍需人工线下核对；§8 的写入与破坏性项已于 16:04 获授权并全部完成（T7.5 除外），见 §10，且 Linux 验证链重跑前已备份原始证据、实际输出到新目录未覆盖孤本。16:23–16:32 另补完 settle、Redis / L2 down 注入与 T7.5 收口准备，见 §11；三项均未改运行代码。
+观察期继续有效，起算与最早收口时间不变。§7.1 的安全差异仍需人工线下核对；§8 的写入与破坏性项已于 16:04 获授权并全部完成（T7.5 除外），见 §10，且 Linux 验证链重跑前已备份原始证据、实际输出到新目录未覆盖孤本。16:23–16:32 另补完 settle、Redis / app down 注入与 T7.5 收口准备，见 §11；三项均未改运行代码。
 
 ## 10. 授权后补验（2026-11-09 16:04–16:13 +0800）
 
@@ -147,9 +147,9 @@
 脚本 `finally` 执行 `cleanup_db` + `cleanup_redis`；9990/9991/9992 端口实测均已关闭。
 fixture 使用 `p3v_` 前缀与 `usr/999001`，与观察期基线键 `usr/990001`、`org/14` 不同。
 
-### 10.2 L2 内部额度链路（真实主体，基线精确恢复）
+### 10.2 app 内部额度链路（真实主体，基线精确恢复）
 
-在编排容器内经 `app/l2_quota_client._post` 调用 L2 内部额度 API；服务凭据由容器内 shell
+在编排容器内经 `app/app_quota_client._post` 调用 app 内部额度 API；服务凭据由容器内 shell
 读取 `/run/secrets/` 后 export、脚本经 stdin 注入，**密钥未进入任何输出**。
 先用独立 `usr/999002` 探测得到 `hold_id=""` —— 这是 `quota_estimate` 对未绑定套餐主体
 「不计量」的设计行为（未写任何数据），不是回归；改用 P6 使用过的 `org:14`：
@@ -169,10 +169,10 @@ fixture 使用 `p3v_` 前缀与 `usr/999001`，与观察期基线键 `usr/990001
 
 ### 10.3 故障注入
 
-`docker compose stop l3-orchestration` 后，L2 代理 `/api/v1/harness/runs/nope` 返回
+`docker compose stop orchestration` 后，app 代理 `/api/v1/harness/runs/nope` 返回
 **503 `orchestration_downstream_unavailable`**（`ConnectError: Name or service not known`），
 未回落本进程；`up -d --wait` 恢复后回到 401，三容器 healthy。
-当时未做 Redis / L2 down 注入（会扩大中断面，且 P6 §7 已记录同类结果）；
+当时未做 Redis / app down 注入（会扩大中断面，且 P6 §7 已记录同类结果）；
 这两项已于 16:30–16:31 补做，见 §11.2。
 
 ### 10.4 Linux 容器验证链重跑
@@ -196,7 +196,7 @@ Prometheus 抓取与非预期告警仍 PASS。
 
 唯一观察期影响是故障注入使编排容器重启，**进程内指标 Counter 再次归零**，
 `rate()` / `increase()` 在 16:08 前后窗口需人工注意；业务计量数据最终完全恢复。
-未改业务分支、未删旧代码、`mode` 仍 `proxy_l3`，起算 13:33:40 与最早收口
+未改业务分支、未删旧代码、`mode` 仍 `proxy`，起算 13:33:40 与最早收口
 2026-11-23 13:33 不变，不触发回切。完整登记见 `l3-split-p7-observation-log.md` §8。
 
 
@@ -224,17 +224,17 @@ Prometheus 抓取与非预期告警仍 PASS。
 
 **10/10 判据通过**，§4 的 G1-A / G1-B / G1-C 至此全部实测通过。
 
-### 11.2 Redis / L2 down 故障注入（补齐 §10.3 的省略项）
+### 11.2 Redis / app down 故障注入（补齐 §10.3 的省略项）
 
 | 判据 | 实测 |
 |---|---|
-| Redis down | L2 `/health/health` 与编排 `/health/health` 不可用；网关 `/health` 200；编排 `/health/orchestration` 200；编排直连读 401；**网关无凭据 `/chat/completions` 仍 401，未 fail-open** |
-| L2 down | L2 端口 502（服务不可用）；编排健康 200、编排直连读 401；网关 `/health` 200；**编排额度写链路抛 `QuotaUnavailable` / `ConnectTimeout`，未伪造成功、未回落本进程** |
+| Redis down | app `/health/health` 与编排 `/health/health` 不可用；网关 `/health` 200；编排 `/health/orchestration` 200；编排直连读 401；**网关无凭据 `/chat/completions` 仍 401，未 fail-open** |
+| app down | app 端口 502（服务不可用）；编排健康 200、编排直连读 401；网关 `/health` 200；**编排额度写链路抛 `QuotaUnavailable` / `ConnectTimeout`，未伪造成功、未回落本进程** |
 | 恢复 | `docker start agentredis` + `compose up -d --wait` → 三容器 healthy、四健康端点 200、代理 401 |
 
 首次探测脚本自报 3 项 FAIL 均为判据口径问题（响应体截断致 `mode` 解析 null、
-「L2 不可达」硬编码期望 -1 而实际 502、由此连带的 `mode unchanged`），**非系统异常**；
-补验完整读取确认 `mode=proxy_l3 / write_enabled=True`，判据改为 `!=200` 后 **10/10 PASS**。
+「app 不可达」硬编码期望 -1 而实际 502、由此连带的 `mode unchanged`），**非系统异常**；
+补验完整读取确认 `mode=proxy / write_enabled=True`，判据改为 `!=200` 后 **10/10 PASS**。
 此处如实登记，不把口径修正伪装成首次全绿。
 
 ### 11.3 T7.5 收口准备（仅留痕与预案，不执行）
@@ -251,13 +251,13 @@ Prometheus 抓取与非预期告警仍 PASS。
 
 ### 11.4 恢复核验与观察期影响
 
-巡检 **16/16 PASS @ 2026-11-09 16:31:51 +0800**；`mode=proxy_l3`、`write_enabled=true`；
+巡检 **16/16 PASS @ 2026-11-09 16:31:51 +0800**；`mode=proxy`、`write_enabled=true`；
 used 3 键 `450 / 93294 / 12` 与起算基线一致、held 全 0、`quota_holds_index` 空；
 DB 21 / 12 / 5 行、测试行 0；三容器 healthy、Redis 已恢复。Redis 重启后一个值为 0 的
 `quota_held:org:14` 空壳键（非起算基线键，§10 补验残留）TTL 自然到期消失，held 键集合
 回到起算基线，业务计量数据无变化。
 
-唯一实质影响：16:30–16:31 的 Redis 与 L2 容器重启使**进程内指标 Counter 归零**，
+唯一实质影响：16:30–16:31 的 Redis 与 app 容器重启使**进程内指标 Counter 归零**，
 `rate()` / `increase()` 在 16:31 前后窗口的负增量不代表业务下跌（继 15:50、16:08 之后第三次）。
 未改业务分支、未删旧代码、未改 `mode`、未动起算基线，**不重置 14 天计时**：
 起算 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800，不触发回切。

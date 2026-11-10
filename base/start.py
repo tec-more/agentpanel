@@ -16,8 +16,8 @@ from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
 
 # 网关共享运行时显式装配（P4 B：原 base/common/gateway 兼容层已删除）：
-# 1) 共享缓存绑定 L2 Redis 配置；2) 共享套餐服务注入唯一 SQL 解析器；
-# 3) 共享网关运行时注入 L2 的配置/上游/租约缓存 TTL provider。
+# 1) 共享缓存绑定 app Redis 配置；2) 共享套餐服务注入唯一 SQL 解析器；
+# 3) 共享网关运行时注入 app 的配置/上游/租约缓存 TTL provider。
 import base.common.cache  # noqa: F401,E402
 from packages.common.quota.services import plan_service as _shared_plan_service  # noqa: E402
 from packages.common.quota.services.plan_resolver import SqlPlanResolver  # noqa: E402
@@ -675,22 +675,22 @@ def init_app() -> FastAPI:
     except ImportError as e:
         print(f"[警告] 无法导入配额路由: {e}")
 
-    # Harness 内部接口：L3 编排上报客户端活跃时间（harness_client 只由 L2 写）。
+    # Harness 内部接口：编排上报客户端活跃时间（harness_client 只由 app 写）。
     # 不放在 api/v1，避免被插件路由前缀 /v1/harness 包裹；仅在插件启用时挂载。
     try:
         from base.common.plugin_manager import get_plugin_manager
         harness_manifest = get_plugin_manager().get_manifest("harness") or {}
         if harness_manifest.get("is_installed") and harness_manifest.get("is_enabled"):
-            from base.plugins.harness.api.l2_internal.quota_router import l2_quota_router
-            from base.plugins.harness.api.l2_internal.touch_router import l2_touch_router
-            app.include_router(l2_touch_router)
-            app.include_router(l2_quota_router)
+            from base.plugins.harness.api.app_internal.quota_router import app_quota_router
+            from base.plugins.harness.api.app_internal.touch_router import app_touch_router
+            app.include_router(app_touch_router)
+            app.include_router(app_quota_router)
             print("[手动注册] Harness 内部路由已注册: touch / quota")
     except ImportError as e:
         print(f"[警告] 无法注册 Harness 内部路由: {e}")
 
     # 内部网关数据面：deployment 配置决定部署形态，切换不改代码。
-    # - standalone（默认）：由 `services/gateway/run.py` 作为 L3 独立进程服务，
+    # - standalone（默认）：由 `services/gateway/run.py` 作为独立进程服务，
     #   业务 API 不挂载 /v1/gateway；
     # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
     #   作为可选退回方式。

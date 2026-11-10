@@ -1,4 +1,4 @@
-"""L3 编排服务配置与启动校验（fail-closed）
+"""编排服务配置与启动校验（fail-closed）
 
 - 配置来源：`services/orchestration/manifest.json` 的 `config.orchestration`，
   由 `ORCH_*` 环境变量覆盖；不再经过 `plugin_manager`。
@@ -26,17 +26,17 @@ DEFAULTS: Dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 9100,
     "public_base_url": "http://127.0.0.1:9100",
-    "mode": "proxy_l3",
+    "mode": "proxy",
     "write_enabled": True,
-    "l2_internal_base_url": "http://127.0.0.1:9998",
+    "app_internal_base_url": "http://127.0.0.1:9998",
     "internal_timeout_seconds": 5,
     "internal_allowed_ips": ["127.0.0.1", "::1"],
     "allow_remote_bind": False,
-    "policy_in_l3": False,
-    "reconcile_in_l3": False,
+    "policy_in_orchestration": False,
+    "reconcile_in_orchestration": False,
     "auth_timestamp_window_seconds": 60,
-    "l2_service_id": "svc_l3_orchestration",
-    "l2_service_secret_env": "ORCHESTRATION_SERVICE_SECRET",
+    "app_service_id": "svc_orchestration",
+    "app_service_secret_env": "ORCHESTRATION_SERVICE_SECRET",
     "schema_min_version": "",
 }
 
@@ -45,8 +45,8 @@ ORCH_ENV_OVERRIDES: tuple[EnvOverride, ...] = (
     EnvOverride("host", "ORCH_HOST", "str"),
     EnvOverride("port", "ORCH_PORT", "int"),
     EnvOverride("public_base_url", "ORCH_PUBLIC_BASE_URL", "str"),
-    EnvOverride("l2_internal_base_url", "ORCH_L2_BASE_URL", "str"),
-    EnvOverride("l2_service_id", "ORCH_L2_SERVICE_ID", "str"),
+    EnvOverride("app_internal_base_url", "ORCH_APP_BASE_URL", "str"),
+    EnvOverride("app_service_id", "ORCH_APP_SERVICE_ID", "str"),
     EnvOverride("internal_timeout_seconds", "ORCH_INTERNAL_TIMEOUT_SECONDS", "int"),
     EnvOverride("write_enabled", "ORCH_WRITE_ENABLED", "bool"),
     EnvOverride("auth_timestamp_window_seconds", "ORCH_AUTH_TIMESTAMP_WINDOW_SECONDS", "int"),
@@ -127,10 +127,10 @@ def validate_orchestration_config() -> Dict[str, Any]:
         raise OrchestrationConfigError("orchestration.port 必须在 1-65535")
 
     mode = str(cfg.get("mode") or "")
-    if mode not in ("l2", "proxy_l3"):
-        raise OrchestrationConfigError("orchestration.mode 仅支持 l2/proxy_l3")
+    if mode not in ("app", "proxy"):
+        raise OrchestrationConfigError("orchestration.mode 仅支持 app/proxy")
 
-    for key in ("public_base_url", "l2_internal_base_url"):
+    for key in ("public_base_url", "app_internal_base_url"):
         url = str(cfg.get(key) or "").strip()
         if not url.startswith(("http://", "https://")):
             raise OrchestrationConfigError(f"orchestration.{key} 必须显式配置为 http(s) 地址")

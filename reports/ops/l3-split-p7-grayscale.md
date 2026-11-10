@@ -1,26 +1,26 @@
-# 灰度方案：L3 编排 / 网关物理拆分
+# 灰度方案：编排 / 网关物理拆分
 
 - 日期：2026-11-09
 - 状态：**观察期已启动，计时中**（2026-11-09 起算；最早收口 2026-11-23 13:33 +0800）
 - 台账：`reports/ops/l3-split-p7-observation-log.md`（切换证据、基线快照、每日/每周记录、收口判定）
-- 巡检：`deploy/l3/scripts/observe_check.py`（只读，16 项）、`deploy/l3/observation-baseline.json`（起算基线）
+- 巡检：`deploy/gateway/scripts/observe_check.py`（只读，16 项）、`deploy/gateway/observation-baseline.json`（起算基线）
 - 相关：`reports/ops/l3-split-acceptance.md`、`reports/ops/l3-split-p7-runbook.md`、`reports/ops/l3-split-p7-report.md`、`reports/ops/l3-split-p7-metrics.md`
 
 ## 1. 当前实现能做什么
 
 | 能力 | 实际实现 |
 |---|---|
-| 切流开关 | L2 配置 `orchestration.mode`，仅支持 `l2` / `proxy_l3` |
-| `proxy_l3` | L2 对已迁移的编排路径只代理，不双写；下游不可达统一 503，不回落本进程 |
-| `l2` | 维持 L2 本地行为；L3 进程在 `mode != proxy_l3` 时拒绝写（409），避免同一 run 双写 |
+| 切流开关 | app 配置 `orchestration.mode`，仅支持 `l2` / `proxy` |
+| `proxy` | app 对已迁移的编排路径只代理，不双写；下游不可达统一 503，不回落本进程 |
+| `l2` | 维持 app 本地行为；独立进程在 `mode != proxy` 时拒绝写（409），避免同一 run 双写 |
 | 切流粒度 | **部署级二元切换**：一次切换影响全部租户；没有按比例、按租户或按接口的切流实现 |
-| 回切 | 改回 `mode=l2` 并重建 L2；或按端口回滚手册切回旧容器端口/宿主进程 |
+| 回切 | 改回 `mode=app` 并重建 app；或按端口回滚手册切回旧容器端口/宿主进程 |
 
 > 结论：所谓“灰度”在当前代码里是“整机切换 + 观察期”，不是百分比灰度。若需要按租户逐步放量，必须新增路由层，本阶段未做，也不应宣称已具备。
 
 ## 2. 保留期与进入/退出条件
 
-- 保留期：`mode=proxy_l3` 自 P6 验收通过起保留 **14 天**（观察期）；期间不删除 L2 旧编排代码与 `mode` 开关。
+- 保留期：`mode=proxy` 自 P6 验收通过起保留 **14 天**（观察期）；期间不删除 app 旧编排代码与 `mode` 开关。
 - 最短观察：7 天；若 7 天内出现任一回切条件（§4），立即回切并重置观察期。
 - 提前收口：连续 14 天无 P1 故障、§4 阈值全部未触发、G1 抽查通过，才允许进入 T7.5（删除灰度开关与旧代码、更新架构图）。
 - 延期：任一硬项未满足，保留期顺延，不以“时间到了”为由强行收口。T7.4 监控缺口已于 2026-11-09 补齐（见 `l3-split-p7-metrics.md`），不再构成顺延理由。
@@ -29,28 +29,28 @@
 ## 3. 切流方式与操作
 
 1. 确认前置：P6 验收通过、三容器 healthy、回滚 A/B 演练通过（本文件配套报告）。
-2. 将 L2 的 `orchestration.mode` 设为 `proxy_l3`（当前 manifest 默认值即 `proxy_l3`；容器部署下通过 `l2_config.conf` / L2 配置覆盖显式固定）。
-3. 重建 L2：`docker compose ... up -d --force-recreate l2`，等待 healthy。
-4. 验证：`9998/health/health` 200；`9998/api/v1/harness/runs/nope` 401（代理可达，非 503）；`9100/health/orchestration` 的 `mode=proxy_l3`。
-5. 记录切换时间、操作人、验证输出；观察期从切换时刻起算。**已补留痕**：见 `l3-split-p7-observation-log.md` §1（含 `docker ps` 输出、4 个健康端点、`mode=proxy_l3`、代理 401、`/metrics`、Prometheus targets/rules 与首次 16 项巡检结果）。
+2. 将 app 的 `orchestration.mode` 设为 `proxy`（当前 manifest 默认值即 `proxy`；容器部署下通过 `app_config.conf` / app 配置覆盖显式固定）。
+3. 重建 app：`docker compose ... up -d --force-recreate app`，等待 healthy。
+4. 验证：`9998/health/health` 200；`9998/api/v1/harness/runs/nope` 401（代理可达，非 503）；`9100/health/orchestration` 的 `mode=proxy`。
+5. 记录切换时间、操作人、验证输出；观察期从切换时刻起算。**已补留痕**：见 `l3-split-p7-observation-log.md` §1（含 `docker ps` 输出、4 个健康端点、`mode=proxy`、代理 401、`/metrics`、Prometheus targets/rules 与首次 16 项巡检结果）。
 
-回切：把 `mode` 改回 `l2` 并重建 L2；若容器整体异常，按 `port-switch-9998-9999-9100.md` 执行回滚 A 或 B。
+回切：把 `mode` 改回 `l2` 并重建 app；若容器整体异常，按 `port-switch-9998-9999-9100.md` 执行回滚 A 或 B。
 
 ## 4. 回切条件与阈值
 
 | # | 条件 | 阈值/判定 | 动作 |
 |---|---|---|---|
-| R1 | 容器健康 | 任一 L3 容器连续 2 次重启后仍非 healthy，或 10 分钟内无法 healthy | 立即回切 |
-| R2 | L2→L3 代理错误 | 5 分钟窗口内 5xx/503 比例 > 1% | 立即回切 |
+| R1 | 容器健康 | 任一 独立服务容器连续 2 次重启后仍非 healthy，或 10 分钟内无法 healthy | 立即回切 |
+| R2 | app→独立服务 代理错误 | 5 分钟窗口内 5xx/503 比例 > 1% | 立即回切 |
 | R3 | 代理延迟 | P95 延迟较切换前基线翻倍且持续 10 分钟 | 回切 |
 | R4 | 网关 5xx | 5 分钟窗口内 > 1% | 回切并排查上游/鉴权 |
 | R5 | 配额正确性 | 出现重复结算、`used` 多加、预占悬挂 | 立即回切，冻结相关租户写入 |
 | R6 | 内部鉴权 | 服务凭据 401 比例异常或轮换后未恢复 | 先修密钥；10 分钟未恢复则回切 |
 | R7 | 数据一致性 | `org:14` / `usr:4` 的 `used` 在演练或变更前后发生变化（非业务请求导致） | 立即停止变更并回切 |
 
-说明（2026-11-09 更新）：T7.4 已补齐，`9999`/`9100` 均有 `/metrics`，`l3_split_alerts` 覆盖 R1（容器/健康）、R2（代理 5xx）、R3（P95 翻倍）、R4（网关/编排 5xx）、R5（预占/结算失败）、R6（401 比例）；指标与规则清单见 `l3-split-p7-metrics.md` §3–§4。**R5 的重复结算/`used` 多加/预占悬挂与 R7 的数据一致性仍无法由 Prometheus 判定**，继续按每日人工 G1 抽查执行。Alertmanager 已接入且告警自动本地落盘（`l3-split-p7-metrics.md` §8–§9），但**短信/邮件等外部值班通知渠道仍待运维提供或书面接受**。
+说明（2026-11-09 更新，2026-11-10 规则组更名）：T7.4 已补齐，`9999`/`9100` 均有 `/metrics`，`agentpanel_alerts`（原 `agentpanel_alerts`）覆盖 R1（容器/健康）、R2（代理 5xx）、R3（P95 翻倍）、R4（网关/编排 5xx）、R5（预占/结算失败）、R6（401 比例）；指标与规则清单见 `l3-split-p7-metrics.md` §3–§4。**R5 的重复结算/`used` 多加/预占悬挂与 R7 的数据一致性仍无法由 Prometheus 判定**，继续按每日人工 G1 抽查执行。Alertmanager 已接入且告警自动本地落盘（`l3-split-p7-metrics.md` §8–§9），但**短信/邮件等外部值班通知渠道仍待运维提供或书面接受**。
 
-> R6 判读与低流量保护（2026-11-09 17:43 更新）：`L3InternalAuth401RateHigh` 带
+> R6 判读与低流量保护（2026-11-09 17:43 更新）：`InternalAuth401RateHigh` 带
 > `rollback="true"`，17:35 曾被巡检自身「编排直连可达」的**预期 401** 探测误触发
 > （证据见 `l3-split-p7-observation-log.md` §11.6）。17:43 已授权在规则上追加
 > 401 绝对速率门槛 `> 0.05/s`（≈5 分钟 15 次），低流量下不再误报，真实凭据故障仍触发
@@ -62,7 +62,7 @@
 
 | 角色 | 职责 |
 |---|---|
-| L3 拆分负责人 | 切流/回切决策；阈值解释；收口评审 |
+| 独立服务拆分负责人 | 切流/回切决策；阈值解释；收口评审 |
 | 值班运维 | 执行 compose 操作、健康巡检、保存原始输出 |
 | 数据/配额负责人 | G1 抽查、`used/held` 复核、异常预留清理 |
 
@@ -70,7 +70,7 @@
 
 ## 6. 观察期检查清单
 
-> 2026-11-09 起由 `deploy/l3/scripts/observe_check.py --append` 执行每日只读巡检（16 项，含容器/健康/mode/代理/配额/指标/Prometheus），结果逐日写入 `reports/ops/l3-split-p7-observation-log.md` §3。脚本**不代劳**每周 G1 抽查（会写计量数据），也不代替人工复核 §4 R1–R7。
+> 2026-11-09 起由 `deploy/gateway/scripts/observe_check.py --append` 执行每日只读巡检（16 项，含容器/健康/mode/代理/配额/指标/Prometheus），结果逐日写入 `reports/ops/l3-split-p7-observation-log.md` §3。脚本**不代劳**每周 G1 抽查（会写计量数据），也不代替人工复核 §4 R1–R7。
 
 - [ ] 每日：三容器 healthy、`/health*` 全 200、`9998/api/v1/harness/runs/nope` 401（脚本覆盖）
 - [ ] 每日：`org:14` / `usr:4` 的 `used` 与基线对比、`held` 无悬挂（脚本覆盖；`used` 变化记 WARN，需登记业务写入来源）

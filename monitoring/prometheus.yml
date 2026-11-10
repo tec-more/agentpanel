@@ -23,24 +23,24 @@ scrape_configs:
     static_configs:
       - targets: ['host.docker.internal:9998']
 
-  # T7.4：L3 物理拆分后的两个独立进程；端口由 deploy/l3 compose 映射到宿主回环。
-  - job_name: 'l3-gateway'
+  # T7.4：L3 物理拆分后的两个独立进程；端口由 deploy/gateway compose 映射到宿主回环。
+  - job_name: 'gateway'
     scrape_interval: 15s
     scrape_timeout: 10s
     metrics_path: '/metrics'
     static_configs:
       - targets: ['host.docker.internal:9999']
         labels:
-          service: l3-gateway
+          service: gateway
 
-  - job_name: 'l3-orchestration'
+  - job_name: 'orchestration'
     scrape_interval: 15s
     scrape_timeout: 10s
     metrics_path: '/metrics'
     static_configs:
       - targets: ['host.docker.internal:9100']
         labels:
-          service: l3-orchestration
+          service: orchestration
 
   - job_name: 'pushgateway'
     scrape_interval: 10s

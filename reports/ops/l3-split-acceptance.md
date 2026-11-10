@@ -1,19 +1,19 @@
-# P6 验收报告：L3 编排与网关物理拆分
+# P6 验收报告：编排与网关物理拆分
 
 - 日期：2026-11-09
 - 范围：`reports/specs/l3-service-split/tasks.md` T6.1–T6.8（容器形态）
 - 结论：T6.1–T6.7 硬项通过；G1 并发结果与单仓基线一致；测试数据已清理；遗留与已知限制见 §6。
-- 部署形态：L2 容器 + L3 网关容器 + L3 编排容器，宿主发布端口仅回环 `127.0.0.1`。
+- 部署形态：app 容器 + 网关容器 + 编排容器，宿主发布端口仅回环 `127.0.0.1`。
 
 ## 1. 验收环境
 
 | 项 | 值 |
 |---|---|
-| compose | `deploy/l3/docker-compose.yml`（`name: agentpanel-l3`） |
-| 容器 | `agentpanel-l3-l2-1`（`127.0.0.1:9998`）、`agentpanel-l3-l3-gateway-1`（`127.0.0.1:9999`）、`agentpanel-l3-l3-orchestration-1`（`127.0.0.1:9100`） |
-| 镜像 | `agentpanel-l2:local`、`agentpanel-l3-gateway:local`（243MB）、`agentpanel-l3-orchestration:local`（243MB） |
+| compose | `deploy/gateway/docker-compose.yml`（`name: agentpanel`） |
+| 容器 | `agentpanel-app`（`127.0.0.1:9998`）、`agentpanel-gateway`（`127.0.0.1:9999`）、`agentpanel-orchestration`（`127.0.0.1:9100`） |
+| 镜像 | `agentpanel-app:local`、`agentpanel-gateway:local`（243MB）、`agentpanel-orchestration:local`（243MB） |
 | 依赖 | PG `host.docker.internal:15432`、Redis 别名 `agentredis:6379`、Qdrant `host.docker.internal:6333` |
-| secrets | `db_password`、`redis_password`、`orchestration_service_secret`（`deploy/l3/secrets/`，不入库） |
+| secrets | `db_password`、`redis_password`、`orchestration_service_secret`（`deploy/gateway/secrets/`，不入库） |
 | 运行用户 | 三容器均 `uid=10001`（非 root） |
 
 ## 2. 基础健康（T6.1）
@@ -31,10 +31,10 @@ GET 127.0.0.1:9999/health/health -> 200
 {"status":"healthy","checks":{"database":{"status":"healthy"},"redis":{"status":"healthy","message":"Redis connection OK"}}}
 
 GET 127.0.0.1:9100/health/health -> 200
-{"status":"healthy","checks":{"database":{"status":"healthy"},"redis":{"status":"healthy"},"qdrant":{"status":"skipped","message":"Qdrant not used by l3-orchestration"}}}
+{"status":"healthy","checks":{"database":{"status":"healthy"},"redis":{"status":"healthy"},"qdrant":{"status":"skipped","message":"Qdrant not used by orchestration"}}}
 
 GET 127.0.0.1:9100/health/orchestration -> 200
-{"status":"healthy","mode":"proxy_l3","write_enabled":true,...}
+{"status":"healthy","mode":"proxy","write_enabled":true,...}
 ```
 
 说明：`9999/health/health` 是 P1 后新增实现（此前 Spec §8.1 第 3 条将其列为“实现项”），现已返回 DB/Redis 子项。
@@ -54,9 +54,9 @@ GET 127.0.0.1:9100/health/orchestration -> 200
 
 P6 当次以临时 Harness 客户端夹具实测：
 
-- L2→L3 代理读：L2 `/v1/harness/sessions/<no>` 返回编排数据，与直连 `9100` 同一响应体；停编排容器后 L2 返回 503（`orchestration_downstream_unavailable`），不回落本进程；恢复后重新 200。P7 演练后复核 `9998/api/v1/harness/runs/nope` 为编排侧 401（非 503），证明代理链路可达。
-- 租约→网关：L2 签发租约后 `POST 9999/chat/completions`；Redis 出现 `gw:lease:state:<lease_id>`（TTL≈8s）；吊销后键被写穿删除，原租约请求 401；匿名与 `dgw.gl_invalid.secret` 均 401；合法租约 + 非法 JSON 返回 400。
-- 预占/结算：经 L2 内部额度 API 实测（详见 §5）。
+- app→独立服务 代理读：app `/v1/harness/sessions/<no>` 返回编排数据，与直连 `9100` 同一响应体；停编排容器后 app 返回 503（`orchestration_downstream_unavailable`），不回落本进程；恢复后重新 200。P7 演练后复核 `9998/api/v1/harness/runs/nope` 为编排侧 401（非 503），证明代理链路可达。
+- 租约→网关：app 签发租约后 `POST 9999/chat/completions`；Redis 出现 `gw:lease:state:<lease_id>`（TTL≈8s）；吊销后键被写穿删除，原租约请求 401；匿名与 `dgw.gl_invalid.secret` 均 401；合法租约 + 非法 JSON 返回 400。
+- 预占/结算：经 app 内部额度 API 实测（详见 §5）。
 
 ## 5. 预占 / 结算 / 释放与 G1（T6.3、T6.4）
 
@@ -79,7 +79,7 @@ P6 当次以临时 Harness 客户端夹具实测：
 
 | 项 | 实测 |
 |---|---|
-| 非 root | `docker exec <c> id -u` → `10001`（L2/网关/编排一致） |
+| 非 root | `docker exec <c> id -u` → `10001`（app/网关/编排一致） |
 | 端口回环 | `docker port` → `127.0.0.1:9998/9999/9100`，无 `0.0.0.0` |
 | 镜像无配置/密钥 | `find / -maxdepth 4 \( -name config.conf -o -name '.env*' -o -name '*secret*' \)` 仅命中 `/sys/module/secretmem`（内核 sysfs 路径，非文件） |
 | 镜像层扫描 | `docker history --no-trunc | Select-String 'requirepass|SERVICE_SECRET|password'` 无匹配 |
@@ -89,7 +89,7 @@ P6 当次以临时 Harness 客户端夹具实测：
 T6.6（P6 当次注入，本轮 P7 未重复破坏性注入）：
 
 - Redis down：依赖 Redis 的租约缓存/预算路径降级，保持 fail-closed；不回落为“放行”。
-- L2 down：编排写接口 503；读路径与网关转发仍可用。
+- app down：编排写接口 503；读路径与网关转发仍可用。
 - 错误服务密钥：401。
 - `ORCH_WRITE_ENABLED=false`：写接口 409。
 
@@ -104,11 +104,11 @@ T6.7（重启语义）：
 1. **端口仅回环**：三容器发布端口均绑定 `127.0.0.1`（`9998/9999/9100`），不接受远程直连；远程客户端需本机代理/隧道，且当前无 TLS 终止。
 2. **`web_fetch`/`web_search` 可绕网关直连**：二者是 dsh 工具侧的直接出网通道，不经过共享上游客户端与网关白名单（`packages/common/upstream/egress.py:7-8` 明确说明）。`base/plugins/harness/services/egress_policy_service.py:42` 的 `tool_denylist` 只是策略快照，不是执行边界；Linux 实测联网容器访问 `https://example.com/` 返回 200（`deploy/harness-linux-verify/VERIFICATION.md` §3）。生产必须禁用这些工具或用容器/网络策略兜底。
 3. **DSH 原生审批无终端应答者**：SDK profile 未组合 answerer，`approval/asked` 与 `approval/decided` 成对产生但 `outcome=unavailable`，客户端收到 `session/request_permission` 0 次，工具报 `no approval channel is available`（`deploy/harness-linux-verify/VERIFICATION.md` §4）。当前依赖后端审批事件落库 + 超时拒绝的 fail-closed 路径，不宣称原生审批可下发。
-4. **监控/告警（原缺口已补齐，仍有边界）**：P6 当时 L3 两镜像无 `/metrics`、无告警规则；T7.4 已于 2026-11-09 补齐（两容器 `/metrics`、`l3_split_alerts` 10 条规则、Prometheus 端到端抓取通过）。同日 16:46 又接入 Alertmanager（`l3-split-p7-metrics.md` §8，6/6 判据通过，真实规则告警与探针均投递到 webhook receiver），17:18 起 webhook 已指向常驻本地落盘服务（`l3-split-p7-metrics.md` §9，8/8 判据通过），告警自动留痕；仍需人工的是 R5 重复结算/`used` 多加/预占悬挂与 R7 数据一致性抽查，以及**外部值班通知渠道待补齐或书面接受**。
-5. **灰度只能部署级二元切换**：`orchestration.mode` 仅支持 `l2|proxy_l3`，没有按比例/按租户切流实现；切流与回切都是整机切换（详见 `l3-split-p7-grayscale.md`）。
-6. **密钥脚本端口遗留（2026-11-09 16:44 已修复）**：`deploy/l3/scripts/prepare-secrets.ps1` 生成 `.env` 的 `GW_PUBLIC_BASE_URL` / `ORCH_PUBLIC_BASE_URL` 由 `19999/19100` 改为 `9999/9100`，与 `deploy/l3/docker-compose.yml` 头部约定及运行态 `.env` 一致；旧端口仅在注释中作为 `port-switch-9998-9999-9100.md` 回滚场景保留。PowerShell 静态解析 0 错误，重新生成 secrets 不再需要手改。
+4. **监控/告警（原缺口已补齐，仍有边界）**：P6 当时 独立服务 两镜像无 `/metrics`、无告警规则；T7.4 已于 2026-11-09 补齐（两容器 `/metrics`、`agentpanel_alerts` 10 条规则、Prometheus 端到端抓取通过）。同日 16:46 又接入 Alertmanager（`l3-split-p7-metrics.md` §8，6/6 判据通过，真实规则告警与探针均投递到 webhook receiver），17:18 起 webhook 已指向常驻本地落盘服务（`l3-split-p7-metrics.md` §9，8/8 判据通过），告警自动留痕；仍需人工的是 R5 重复结算/`used` 多加/预占悬挂与 R7 数据一致性抽查，以及**外部值班通知渠道待补齐或书面接受**。
+5. **灰度只能部署级二元切换**：`orchestration.mode` 仅支持 `l2|proxy`，没有按比例/按租户切流实现；切流与回切都是整机切换（详见 `l3-split-p7-grayscale.md`）。
+6. **密钥脚本端口遗留（2026-11-09 16:44 已修复）**：`deploy/gateway/scripts/prepare-secrets.ps1` 生成 `.env` 的 `GW_PUBLIC_BASE_URL` / `ORCH_PUBLIC_BASE_URL` 由 `19999/19100` 改为 `9999/9100`，与 `deploy/gateway/docker-compose.yml` 头部约定及运行态 `.env` 一致；旧端口仅在注释中作为 `port-switch-9998-9999-9100.md` 回滚场景保留。PowerShell 静态解析 0 错误，重新生成 secrets 不再需要手改。
 7. **本机演练的进程生命周期**：Trae 终端会话结束会回收 `Start-Process` 子进程；宿主进程回滚必须作为常驻后台任务运行（与 `port-switch-9998-9999-9100.md` §2.2 记录一致）。
 
 ## 9. 结论
 
-P6 硬项全部通过，容器形态可以接管 `9998/9999/9100`。T7.4 已补齐，但 T7.5（删除灰度开关与旧代码、更新架构图）需完成 14 天观察期后方可执行，在此之前不建议删除 L2 侧旧编排代码；回滚路径已由 P7 演练实测（见 `l3-split-p7-report.md`）。
+P6 硬项全部通过，容器形态可以接管 `9998/9999/9100`。T7.4 已补齐，但 T7.5（删除灰度开关与旧代码、更新架构图）需完成 14 天观察期后方可执行，在此之前不建议删除 app 侧旧编排代码；回滚路径已由 P7 演练实测（见 `l3-split-p7-report.md`）。

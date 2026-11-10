@@ -1,8 +1,8 @@
 """共享 Prometheus 指标与中间件。
 
-与 L2 历史 `base/common/prometheus.py` 行为一致，差异：
+与 app 历史 `base/common/prometheus.py` 行为一致，差异：
 - 不直接 import `base.common.setting`；
-- 通过 `configure_settings(provider)` 注入配置源（L2 shim 注入 settings）。
+- 通过 `configure_settings(provider)` 注入配置源（app shim 注入 settings）。
 """
 from prometheus_client import (
     Counter,

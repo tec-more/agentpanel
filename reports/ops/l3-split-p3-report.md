@@ -1,8 +1,8 @@
-# L3 网关拆分 P3 实施与切换报告（含回滚手册）
+# 网关拆分 P3 实施与切换报告（含回滚手册）
 
 > 生成时间：2026-11-08
 > 基线提交：`02bc87f`（分支 `release/0.0.1`，P3 代码在当前工作区，尚未提交）
-> 适用范围：本机 Windows 三进程（L2 9998 / 网关 9999 / 编排 9100），电源 `.venv` 解释器
+> 适用范围：本机 Windows 三进程（app 9998 / 网关 9999 / 编排 9100），电源 `.venv` 解释器
 > 密钥口径：DB / Redis 密码一律运行时从 `config.conf` 读取，本文不写明文
 
 ---
@@ -11,7 +11,7 @@
 
 | 项 | 结果 |
 |---|---|
-| L2 套餐解析（ORM）与网关套餐解析（只读 SQL）对拍 | **20/20 PASS**（P1–P14 全分支，字段级一致） |
+| app 套餐解析（ORM）与网关套餐解析（只读 SQL）对拍 | **20/20 PASS**（P1–P14 全分支，字段级一致） |
 | 网关数据面 V3–V11（假 provider，9990 宽松实例） | **66 通过 / 0 失败** |
 | 新旧网关 A/B（9990 新 vs 9996 旧实现，同一 fixture） | **17 通过 / 0 失败** |
 | 数据面变更 | 无新表、无新键；沿用 `gw:*`，无需迁移 |
@@ -105,8 +105,8 @@ do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -
 | S3 | 停 9990 宽松实例、停旧 9999 | 9990 free；旧 9999 已退出 |
 | S4 | 启新 9999（正式配置，仅注入 `GW_PORT=9999` + DB/Redis 环境变量） | `GET /health` 200 `{"status":"ok","deployment":"standalone","fail_closed":true}`；`GET /health/health` 200（database/redis healthy） |
 | S5 | 切换后校验（临时脚本，复用同一批 fixture） | **16 通过 / 0 失败**，明细见下表 |
-| S6 | 9998 / 9100 以 `.venv` 规范入口重启 | `9998/health/health`、`9100/health/health`、`9100/health/orchestration` 全 200；`mode=proxy_l3` |
-| S7 | L2 代理证明 | 经 L2 与直连 9100 的响应体逐字节一致（401 `无效的 Harness 客户端凭据`）；停 9100 时 L2 返回 **503** `orchestration_downstream_unavailable`，恢复后回到 401 |
+| S6 | 9998 / 9100 以 `.venv` 规范入口重启 | `9998/health/health`、`9100/health/health`、`9100/health/orchestration` 全 200；`mode=proxy` |
+| S7 | app 代理证明 | 经 app 与直连 9100 的响应体逐字节一致（401 `无效的 Harness 客户端凭据`）；停 9100 时 app 返回 **503** `orchestration_downstream_unavailable`，恢复后回到 401 |
 | S8 | 最终端口核对 | 9998 / 9999 / 9100 均 LISTEN 且父进程为 `.venv\Scripts\python.exe`；9990、9996 free |
 
 切换后校验明细（正式配置，目标 `127.0.0.1:9999`）：
@@ -181,7 +181,7 @@ Stop-ByPort 9999
 do { Start-Sleep -Milliseconds 500 } until (-not (Get-NetTCPConnection -State Listen -LocalPort 9999 -ErrorAction SilentlyContinue))
 
 # 2) 从基线提交取干净旧实现（worktree）
-$OLDTREE = Join-Path $env:TEMP 'l3-gateway-old-02bc87f'
+$OLDTREE = Join-Path $env:TEMP 'gateway-old-02bc87f'
 git -C $ROOT worktree add --detach $OLDTREE 02bc87f
 
 # 3) 注入 DB/Redis 环境变量（与 §3.1 的 Read-Ini 相同）
@@ -204,9 +204,9 @@ git -C $ROOT worktree prune
 
 ### 5.3 git revert 路径（P3 提交之后使用）
 
-P3 之后还有 P4（L2 残留边界删除）。回滚必须分**两步**，不能一次把 P3、P4 混在一起 revert：
+P3 之后还有 P4（app 残留边界删除）。回滚必须分**两步**，不能一次把 P3、P4 混在一起 revert：
 
-1. **先 revert P4**：撤销 P4 各组提交（哈希区间 `dd06288..HEAD`，git revert 会自动按时间倒序逐个应用）。此步完成后回到 P3 末态：新工程 `services/gateway` 与 `services/orchestration` 仍在，L2 网关兼容层恢复，三个服务可继续以 P3 方式运行。
+1. **先 revert P4**：撤销 P4 各组提交（哈希区间 `dd06288..HEAD`，git revert 会自动按时间倒序逐个应用）。此步完成后回到 P3 末态：新工程 `services/gateway` 与 `services/orchestration` 仍在，app 网关兼容层恢复，三个服务可继续以 P3 方式运行。
 2. **再 revert P3**：撤销 P3 的 4 个提交（区间 `02bc87f..dd06288`），回到 P3 前基线 `02bc87f`。
 
 ```powershell
@@ -221,14 +221,14 @@ git -C $ROOT diff --stat dd06288   # 预期：无输出（完全回到 P3 末态
 git -C $ROOT revert --no-commit 02bc87f..dd06288
 git -C $ROOT status --short        # 预期：仅 P3/P4 涉及文件被还原
 git -C $ROOT diff --stat 02bc87f   # 预期：无输出（完全回到 P3 前基线）
-git -C $ROOT commit -m "revert: 回滚 L3 网关拆分 P3/P4"
+git -C $ROOT commit -m "revert: 回滚 网关拆分 P3/P4"
 
 # 回到基线后 9999/9100 使用旧入口
 Stop-ByPort 9999
 Start-Process $VENV -ArgumentList '-m','base.common.gateway.server' -WorkingDirectory $ROOT -WindowStyle Hidden `
   -RedirectStandardOutput "$ROOT\logs\rollback-old.out.log" -RedirectStandardError "$ROOT\logs\rollback-old.err.log"
 Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDirectory $ROOT -WindowStyle Hidden `
-  -RedirectStandardOutput "$ROOT\logs\rollback-old-l3.out.log" -RedirectStandardError "$ROOT\logs\rollback-old-l3.err.log"
+  -RedirectStandardOutput "$ROOT\logs\rollback-old-orchestration.out.log" -RedirectStandardError "$ROOT\logs\rollback-old-orchestration.err.log"
 ```
 
 > 已实测：在临时 worktree 上按上述两步（先 `dd06288..HEAD`、再 `02bc87f..dd06288`）`revert --no-commit` 后，`git diff --stat 02bc87f` 为空，证明 P3+P4 可完整还原至基线。
@@ -278,8 +278,8 @@ Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDir
 
 | 编号 | 内容 | 验收 |
 |---|---|---|
-| T4.11 | 确认 L2 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 L2 shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界 | `rg "base.common.quota.services"` 仅剩 shim 自身 |
-| T4.12 | L2 `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2）；删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth` | 删除后 9998 启动 + 租约签发用例通过 |
+| T4.11 | 确认 app 无 `base.common.quota.services` 外部引用后，删除 `plan_service/quota_service/metrics` 的 app shim 与 `plan_resolver.py` 过渡注入；保留 `base.common.quota.services` 路径直到 P4 删除边界 | `rg "base.common.quota.services"` 仅剩 shim 自身 |
+| T4.12 | app `base/common/gateway/*` shim 随 embedded 挂载一并删除（P4 T4.2）；删除前确认 `gateway_lease_service` 只引用 `issuance_config` 与共享 `lease_auth` | 删除后 9998 启动 + 租约签发用例通过 |
 | P5 前置 | `services/gateway` 不得出现 `from base` / `import base`（含 `base.core.users`）；`gateway_dependency_modules()` 仅共享模型 | `rg "^(from\|import) base" services/gateway` 无匹配；容器镜像构建通过 |
 
 ### 7.2 双解析器漂移防护（强制要求）
@@ -288,7 +288,7 @@ Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDir
 
 | 侧 | 文件 | 类 |
 |---|---|---|
-| L2（ORM） | `base/common/quota/services/plan_resolver.py` | `L2PlanResolver` |
+| app（ORM） | `base/common/quota/services/plan_resolver.py` | `L2PlanResolver` |
 | 网关（只读 SQL） | `services/gateway/app/plan_resolver.py` | `SqlPlanResolver` |
 
 强制流程：
@@ -311,7 +311,7 @@ Start-Process $VENV -ArgumentList '-m','base.plugins.harness.server' -WorkingDir
 - 数据库：`p3v_` 前缀 fixture 全 0（`usage_record` / `harness_gateway_lease` / `harness_gateway_budget` / `harness_gateway_concurrency` / `harness_session` / `harness_run` / `llm_provider` / `llm_model` / `llm_api_key` / `harness_audit_event`）。
 - `quota_account`：校验脚本 `finally` 未覆盖到 fixture owner `usr/999001`，已手工删除（剩余 0）。
 - Redis：`gw:*p3v*`、`quota*:usr:999001:*` 全 0；仅剩历史 `gw:budget:lease:lse_p1verify_2026`（TTL≈8.5h，来自 P1 验证，本次不动，到期自清）。
-- 临时产物：`l3-gateway-old-p3` worktree 已移除；假 provider（18080）随脚本退出；临时校验脚本与 9996 日志已删除；`git worktree list` 仅主工作区。
+- 临时产物：`gateway-old-p3` worktree 已移除；假 provider（18080）随脚本退出；临时校验脚本与 9996 日志已删除；`git worktree list` 仅主工作区。
 - 最终进程：9998 / 9999 / 9100 同时可用，父进程均为 `.venv\Scripts\python.exe`；9990、9996 无监听。
 - 仓库状态：P3 代码仍在工作区未提交（`HEAD=02bc87f`），因此“即时回滚”走 §5.2 worktree 路径；P3 提交后改用 §5.3 `git revert`。
 - 执行备注：`Start-Process` 启动的服务会在命令会话结束时被回收，实际以常驻后台方式运行；另有两处校验断言关键字写窄（已修正后复跑通过），不涉及产品代码。

@@ -36,11 +36,11 @@
 ## 4. 启动与文档
 
 - 部署形态由 `harness.manifest.config.gateway.deployment` 决定，默认 `standalone`：
-  - L3 数据面独立进程：`python -m base.common.gateway.server`，监听 `127.0.0.1:9999`；
-  - L2 业务 API：`python run.py`，监听 `127.0.0.1:9998`，**不挂载** `/v1/gateway`。
+  - 独立服务 数据面独立进程：`python -m base.common.gateway.server`，监听 `127.0.0.1:9999`；
+  - app 业务 API：`python run.py`，监听 `127.0.0.1:9998`，**不挂载** `/v1/gateway`。
 - 数据面文档：`http://127.0.0.1:9999/docs`（OpenAPI：`/openapi.json`）。
 - 业务文档：`http://127.0.0.1:9998/docs`，**不包含**网关路径。
-- 退回方式：将 `gateway.deployment` 改为 `embedded` 并重启 L2，数据面回到
+- 退回方式：将 `gateway.deployment` 改为 `embedded` 并重启 app，数据面回到
   `http://127.0.0.1:9998/v1/gateway`（文档 `/v1/gateway/docs`），无需改代码。
 
 ## 5. 桌面端 dsh 调用约定
@@ -54,7 +54,7 @@
 - 客户端还应在启动时拉取 `GET /v1/harness/egress-policy/snapshot?client_version=<n>`
   （Harness 客户端凭据）以获取出网策略快照，并按快照 fail-closed。
 
-## 6. 出网策略来源（L2，非执行边界）
+## 6. 出网策略来源（app，非执行边界）
 
 - `GET /v1/harness/egress-policy/snapshot` 下发可版本化、可哈希校验的策略快照：
   工具禁用清单（`web_fetch` / `web_search` 等）、`allow_client_non_gateway`（默认 `false`）、

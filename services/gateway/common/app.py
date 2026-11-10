@@ -3,7 +3,7 @@
 - 不注册任何业务 API 的全局鉴权依赖；
 - 只暴露 /health 与 /chat/completions；
 - OpenAPI 单独分组（Gateway-数据面），与主文档 /docs 区分；
-- 同一工厂同时服务 standalone（L3 独立进程）与 embedded（挂载到业务 API）。
+- 同一工厂同时服务 standalone（独立进程）与 embedded（挂载到业务 API）。
 """
 from typing import Any, Optional
 

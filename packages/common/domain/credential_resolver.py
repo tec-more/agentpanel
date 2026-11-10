@@ -4,7 +4,7 @@
 - 默认不读取进程全局环境变量；仅入口显式 `configure(env_fallback=True)` 时才允许；
 - 缺失/不可用一律 fail-closed，错误消息固定且不含任何密钥；
 - 对外只提供 redacted() / fingerprint，明文 key 仅保留在内存对象中。
-- L2 与 L3 网关使用同一份实现；L2 由 manifest 注入配置，网关禁止 env fallback。
+- app 与 网关使用同一份实现；app 由 manifest 注入配置，网关禁止 env fallback。
 """
 import os
 from dataclasses import dataclass, field

@@ -26,7 +26,7 @@ from packages.common.domain.policy_rule_service import (
 
 PLUGIN_NAME = "harness"
 
-# 审批配置/通道由入口在启动时显式注入（C4）：L2 注入 manifest 读取器，L3 用同值默认。
+# 审批配置/通道由入口在启动时显式注入（C4）：app 注入 manifest 读取器，独立服务用同值默认。
 _approval_config_provider: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
 _approval_channel_provider: Optional[Callable[[], bool]] = None
 
@@ -52,7 +52,7 @@ SIGNAL_POLICY_CODES = (
 
 
 def approval_config() -> Dict[str, Any]:
-    """审批默认配置（L2 来自 manifest.config.approval；L3 为同值默认）。"""
+    """审批默认配置（app 来自 manifest.config.approval；独立服务为同值默认）。"""
     raw = _approval_config_provider() if _approval_config_provider else {}
     raw = raw or {}
     return {
@@ -69,8 +69,8 @@ def approval_config() -> Dict[str, Any]:
 def _approval_available() -> bool:
     """审批通道是否可用：默认后端侧挡（backend_api）视为可用。
 
-    若入口显式注入通道探测（L2 检查 approval 插件安装/启用状态），以注入结果为准；
-    未注入视为可用（L3 独立进程固定 backend_api 后端侧挡）。
+    若入口显式注入通道探测（app 检查 approval 插件安装/启用状态），以注入结果为准；
+    未注入视为可用（独立进程固定 backend_api 后端侧挡）。
     """
     cfg = approval_config()
     channel = (cfg.get("interception") or "backend_api").lower()

@@ -1,8 +1,8 @@
-"""L3 -> L2 客户端活跃时间上报（异步 best-effort）
+"""编排 -> app 客户端活跃时间上报（异步 best-effort）
 
-- L3 不写 `harness_client`，只调用 L2 内部接口；
-- 失败（未配置服务凭据/L2 不可达/超时）只记日志，不影响业务请求结果；
-- L2 内部接口用服务凭据认证，scope=clients:touch。
+- 编排不写 `harness_client`，只调用 app 内部接口；
+- 失败（未配置服务凭据/app 不可达/超时）只记日志，不影响业务请求结果；
+- app 内部接口用服务凭据认证，scope=clients:touch。
 """
 import hashlib
 import os
@@ -20,8 +20,8 @@ _WARNED_MISSING_SECRET = False
 
 def _service_credentials():
     cfg = orchestration_config()
-    service_id = str(cfg.get("l2_service_id") or "").strip()
-    secret_env = str(cfg.get("l2_service_secret_env") or "").strip()
+    service_id = str(cfg.get("app_service_id") or "").strip()
+    secret_env = str(cfg.get("app_service_secret_env") or "").strip()
     secret = os.getenv(secret_env, "").strip() if secret_env else ""
     return service_id, secret
 
@@ -30,12 +30,12 @@ async def touch_client_last_seen(client_id: str) -> None:
     global _WARNED_MISSING_SECRET
 
     cfg = orchestration_config()
-    base_url = str(cfg.get("l2_internal_base_url") or "").rstrip("/")
+    base_url = str(cfg.get("app_internal_base_url") or "").rstrip("/")
     service_id, secret = _service_credentials()
     if not base_url or not service_id or not secret:
         if not _WARNED_MISSING_SECRET:
             logger.warning(
-                "[orchestration] 未配置 L3->L2 服务凭据（l2_service_id / 环境变量），跳过 last_seen 上报"
+                "[orchestration] 未配置 app 服务凭据（app_service_id / 环境变量），跳过 last_seen 上报"
             )
             _WARNED_MISSING_SECRET = True
         return

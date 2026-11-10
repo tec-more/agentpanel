@@ -4,7 +4,7 @@ Harness 会话/运行生命周期服务
 - 会话由业务系统创建，run 创建时即完成「输入预估 + 最大输出预留」的配额预占；
 - hold_id 固定为 f"orch:{run_no}"，同一 run 多次步骤结算共享一个预占键；
 - 运行结束（成功/失败/取消/超时）都对剩余预占做释放，并写审计事件；
-- 额度执行统一走 quota_backend：L2 直调 QuotaService，L3 调 L2 内部额度 API；
+- 额度执行统一走 quota_backend：app 直调 QuotaService，独立服务调 app 内部额度 API；
 - 用量幂等键固定为 orch:{run_no}:{node}:{seq}（quota_reservation / usage_record 唯一约束）。
 """
 import re
@@ -66,7 +66,7 @@ def _now() -> datetime:
 async def _require_org_active(org_id: int) -> None:
     """组织维度配额：组织必须存在且未停用（P3 fail-closed）。
 
-    走只读 SQL 目录，不注册客户域 ORM 模型（L3 不能因 FK 拖入 Customer 模型）。
+    走只读 SQL 目录，不注册客户域 ORM 模型（独立服务不能因 FK 拖入 Customer 模型）。
     """
     from packages.common.domain.organization_directory import (
         organization_active,
@@ -414,7 +414,7 @@ class HarnessRunService:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={"code": 503, "msg": "额度服务不可用，本次运行未创建",
                             "data": {"error_code": "orchestration_dependency_unavailable",
-                                     "message": str(e), "downstream": "l2_quota"}},
+                                     "message": str(e), "downstream": "app_quota"}},
                 )
             except QuotaError as e:
                 raise HTTPException(
@@ -649,7 +649,7 @@ class HarnessRunService:
                 "member_id": (run.metrics or {}).get("quota_member_id"),
             })
 
-        # 结算/释放必须先确认成功，再推进 run 状态：L2 不可用一律 503 fail-closed，
+        # 结算/释放必须先确认成功，再推进 run 状态：app 不可用一律 503 fail-closed，
         # 重试由 orch: 幂等键保证不双计。
         try:
             if usage_items:
@@ -665,7 +665,7 @@ class HarnessRunService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": 503, "msg": "额度服务不可用，运行状态未推进",
                         "data": {"error_code": "orchestration_dependency_unavailable",
-                                 "message": str(e), "downstream": "l2_quota"}},
+                                 "message": str(e), "downstream": "app_quota"}},
             )
 
         run.status = final_status
@@ -705,7 +705,7 @@ class HarnessRunService:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={"code": 503, "error_code": "orchestration_dependency_unavailable",
-                            "message": str(e), "downstream": "l2_quota"},
+                            "message": str(e), "downstream": "app_quota"},
                 )
         run.status = "cancelled"
         run.error_code = "cancelled"

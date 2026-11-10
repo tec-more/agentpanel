@@ -13,14 +13,14 @@
 
 - [x] `ConfigError` 只列字段名、不含值
 - [x] `coerce()` 覆盖 str/int/float/bool/list/int_list/json，类型不符即失败
-- [x] L2 继续读 `config.conf`；L3 两入口只读环境变量
-- [x] L3 密钥支持 `<ENV>_FILE`
+- [x] app 继续读 `config.conf`；独立服务 两入口只读环境变量
+- [x] 独立服务 密钥支持 `<ENV>_FILE`
 - [x] 必填缺失/类型不符 → 启动即失败，退出码 2
-- [x] L2 专有字段（JWT 密钥等）不出现在 L3 契约
+- [x] app 专有字段（JWT 密钥等）不出现在 独立服务 契约
 
 ## manifest 三拆
 
-- [x] L2 `manifest.json` 含 `gateway_issuance`，不再含 `gateway` / `orchestration`
+- [x] app `manifest.json` 含 `gateway_issuance`，不再含 `gateway` / `orchestration`
 - [x] `services/gateway/manifest.json` 只含数据面配置
 - [x] `services/orchestration/manifest.json` 只含编排配置
 - [x] 网关/编排配置路径无 `plugin_manager` 引用
@@ -34,13 +34,13 @@
 
 ## 业务链路
 
-- [x] L2 → L3 代理读 200
-- [x] L2 → L3 代理写 200，且可读回
-- [x] L3 停机时 L2 代理返回 503（fail-closed）
+- [x] app → 独立服务 代理读 200
+- [x] app → 独立服务 代理写 200，且可读回
+- [x] 独立服务 停机时 app 代理返回 503（fail-closed）
 - [x] 网关租约校验：正确 200、错误 secret 401、非法 JSON 400、匿名 401
 - [x] 网关用量记账：`usage_record.idem_key` 前缀 `gw:`，`source=gateway`
-- [x] 编排预占/结算经 L2 内部额度 API，`quota_reservation.counter_mode=redis` 且已结算
-- [x] L3 内部接口拒绝匿名与用户 JWT（401）
+- [x] 编排预占/结算经 app 内部额度 API，`quota_reservation.counter_mode=redis` 且已结算
+- [x] 独立服务 内部接口拒绝匿名与用户 JWT（401）
 
 ## 交付物
 
@@ -51,7 +51,7 @@
 
 - [x] 三容器 healthy；`9998/health/health`、`9999/health` + `/health/health`、`9100/health/health` + `/health/orchestration` 全 200
 - [x] PG 只读（写探测被拒）、Redis 别名 `agentredis`、schema 正向通过、负向（`ORCH_SCHEMA_MIN_VERSION=2`）启动失败
-- [x] L2→L3 代理读、停编排 503、租约→网关、预占/结算链路
+- [x] app→独立服务 代理读、停编排 503、租约→网关、预占/结算链路
 - [x] G1-A/B/C 20 并发：单预留、单结算、单释放
 - [x] 非 root（uid=10001）、端口仅回环、镜像无配置/密钥、层扫描无明文
 - [x] 故障注入 fail-closed（P6 当次注入）
@@ -63,5 +63,5 @@
 - [x] T7.1 `reports/ops/l3-split-p7-runbook.md`
 - [x] T7.2 回滚演练 A（容器旧端口）与 B（宿主三进程）：均实测并恢复三容器 healthy
 - [x] T7.3 `reports/ops/l3-split-p7-grayscale.md`（保留期/阈值/责任人）
-- [x] T7.4 监控/告警指标：两容器 `/metrics` 200；5xx/401、预占与结算失败、租约缓存命中、DB/Redis 健康 Gauge 均已暴露；`monitoring/alert_rules.yml` 新增 10 条规则并加载；`promtool check rules/config` 通过；Prometheus 两个 L3 job 均 `up`（证据：`reports/ops/l3-split-p7-metrics.md` §6）
+- [x] T7.4 监控/告警指标：两容器 `/metrics` 200；5xx/401、预占与结算失败、租约缓存命中、DB/Redis 健康 Gauge 均已暴露；`monitoring/alert_rules.yml` 新增 10 条规则并加载；`promtool check rules/config` 通过；Prometheus 两个 独立服务 job 均 `up`（证据：`reports/ops/l3-split-p7-metrics.md` §6）
 - [ ] T7.5 收口：灰度开关与旧编排代码未删除，架构图未更新（**14 天观察期已于 2026-11-09 13:33 +0800 起算，最早 2026-11-23 收口**；每日巡检脚本与台账已建立，见 `reports/ops/l3-split-p7-observation-log.md`）

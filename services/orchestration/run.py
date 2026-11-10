@@ -1,4 +1,4 @@
-"""L3 编排独立服务启动器（本地开发用）。
+"""编排独立服务启动器（本地开发用）。
 
 用法（仓库根目录）：
     python services/orchestration/run.py

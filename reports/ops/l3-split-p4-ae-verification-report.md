@@ -3,7 +3,7 @@
 > 范围：A–E 组；cost 组（`c6e4239`）已有单独汇报，本报告不重复。
 > 复核基线：`release/0.0.1`，`HEAD=c6e4239`；复核时 9998 / 9999 / 9100 三服务均 healthy。
 > 证据快照（P4 开始前采集，仍保留在 `%TEMP%`）：
-> - `l2_openapi_before.json`：L2 358 paths / 450 ops
+> - `l2_openapi_before.json`：app 358 paths / 450 ops
 > - `l3_orch_openapi_before.json`：旧 9100 16 paths / 18 ops
 > - `plugin_order_before.txt`：`audit,customer,product,sales,crm,harness,llm,mail`
 
@@ -11,9 +11,9 @@
 
 | 组 | 结论 | 关键证据 | 缺口 / 口径偏差 |
 |---|---|---|---|
-| A | 新编排入口接管 9100，旧入口删除；路由 19/21，L2 代理可用 | 9100 与重跑 9101 预演 diff=0；旧快照→当前仅新增 3 条审批路由；9100 停/起时 L2 分别返回 503/401 | 原始切换没有保留带时间戳的日志；本报告重跑了 9101 预演，只能证明同代码下 9100/9101 路由等价 |
+| A | 新编排入口接管 9100，旧入口删除；路由 19/21，app 代理可用 | 9100 与重跑 9101 预演 diff=0；旧快照→当前仅新增 3 条审批路由；9100 停/起时 app 分别返回 503/401 | 原始切换没有保留带时间戳的日志；本报告重跑了 9101 预演，只能证明同代码下 9100/9101 路由等价 |
 | B | `base/common/gateway` 整目录已删除，`base/` 引用为 0 | `git grep`：33 行（`e87e6cf^`）→ 0（`HEAD`）；消费方 18 处改指 / 10 处新增共享 import | “28 处”无法复现，见 §2.3 |
-| C | `orchestration_runtime` 无代码引用；`proxy_l3` 保留 | `*.py` grep **0 命中**（`21387bd` 清理后）；17 处 `proxy_l3` 配置/写主判断全部保留 | 无（清理前曾剩 1 行 docstring，已单独清理） |
+| C | `orchestration_runtime` 无代码引用；`proxy` 保留 | `*.py` grep **0 命中**（`21387bd` 清理后）；17 处 `proxy` 配置/写主判断全部保留 | 无（清理前曾剩 1 行 docstring，已单独清理） |
 | D | 358 条路由 method+path 集合零变化；插件顺序一致 | 358/358 paths、450/450 ops，removed=0、added=0；插件 8 个顺序完全一致 | 无 |
 | E | 唯一 SQL 实现生效；黄金用例 20/20 | `plan_golden.py` 实测 20 通过 / 0 失败，EXIT=0；旧模块路径均不存在 | “20 处引用”无法复现；实际生产 import 7 处 / 6 文件，见 §5.2 |
 | 回滚 | 两步 revert 路径可用 | 在 HEAD=`c6e4239` 的临时 worktree 重跑：两步 EXIT=0，`git diff --stat` 均为 0 行 | 无 |
@@ -30,7 +30,7 @@
 D base/plugins/harness/server.py
 D base/plugins/harness/api/l3/__init__.py
 D base/plugins/harness/api/l3/business_router.py
-D base/plugins/harness/api/l3/write_router.py
+D base/plugins/harness/api/orchestration/write_router.py
 D base/plugins/harness/api/internal/__init__.py
 D base/plugins/harness/api/internal/router.py
 M base/__init__.py
@@ -45,7 +45,7 @@ M reports/ops/redis-enable-runbook.md
 1. 在 **9101** 启动 `services/orchestration/run.py`（同一份新代码，仅换端口），检查健康与 OpenAPI。
 2. 停止旧 9100 进程（`base/plugins/harness/server.py` 入口）。
 3. 在 **9100** 启动新入口 `services/orchestration/run.py`。
-4. 立即验证 9100 路由、L2→9100 代理行为。
+4. 立即验证 9100 路由、app→9100 代理行为。
 
 复核时重跑了第 1 步（9101 预演），输出：
 
@@ -71,16 +71,16 @@ REMOVED（无）
 
 即：只多出 3 条审批路由，其余 18 个操作原样保留；9100 与 9101 预演的 method+path 集合完全相同。
 
-### 1.4 旧入口删除后 L2 代理
+### 1.4 旧入口删除后 app 代理
 
-- 9100 停止期间，L2 代理返回 **503**：
+- 9100 停止期间，app 代理返回 **503**：
 
 ```
 STATUS=503
 {"code":503,"msg":"编排服务不可用（下游不可达或超时）","data":{"error_code":"orchestration_downstream_unavailable","downstream":"orchestration","upstream":"http://127.0.0.1:9100/v1/harness/runs/x","reason":"ConnectError: All connection attempts failed"},"status_code":503,"success":false}
 ```
 
-- 9100 恢复后，L2 代理返回 **401** 透传：
+- 9100 恢复后，app 代理返回 **401** 透传：
 
 ```
 STATUS=401
@@ -117,7 +117,7 @@ D base/common/gateway/server.py
 D base/common/gateway/service.py
 ```
 
-`base/common/gateway/config.py` 以 rename 方式迁到 `base/plugins/harness/services/gateway_config.py`（L2 唯一实现）。
+`base/common/gateway/config.py` 以 rename 方式迁到 `base/plugins/harness/services/gateway_config.py`（app 唯一实现）。
 
 ### 2.2 消费方改指清单（按提交 diff 统计）
 
@@ -147,7 +147,7 @@ D base/common/gateway/service.py
 
 ### 2.4 启动期显式注入点
 
-L2 导入期（`base/start.py` L18–L31）：
+app 导入期（`base/start.py` L18–L31）：
 
 ```python
 import base.common.cache
@@ -181,11 +181,11 @@ GW_INJECTED_KEYS=deployment,fail_closed,port,public_base_url
 GW_PORT=9999
 ```
 
-说明 `plan_service` 已绑定唯一 SQL 解析器，共享网关运行时也已拿到 L2 配置 provider。另有 L2 重启后 358 paths/450 ops 零变化（见 §4）。
+说明 `plan_service` 已绑定唯一 SQL 解析器，共享网关运行时也已拿到 app 配置 provider。另有 app 重启后 358 paths/450 ops 零变化（见 §4）。
 
 ---
 
-## 3. C 组：`orchestration_runtime` 删除与 `proxy_l3` 保留
+## 3. C 组：`orchestration_runtime` 删除与 `proxy` 保留
 
 ### 3.1 删除证据
 
@@ -200,15 +200,15 @@ GW_PORT=9999
 
 **口径说明**：`6a7aed8` 删除模块后，代码已无 import/调用；残留的 1 行 docstring 已由 `21387bd` 单独清理，现为字面清零。
 
-### 3.2 `proxy_l3` 保留现状
+### 3.2 `proxy` 保留现状
 
-按 T4.7 决策只删 `orchestration_runtime`，`proxy_l3` 未动。当前 17 处引用，关键项：
+按 T4.7 决策只删 `orchestration_runtime`，`proxy` 未动。当前 17 处引用，关键项：
 
-- `base/plugins/harness/services/orchestration_config.py`：默认 `mode=proxy_l3`，校验仅允许 `l2/proxy_l3`
-- `base/plugins/harness/services/orchestration_proxy.py`：仅 `proxy_l3` 启用代理/跳过 L2 本地鉴权
-- `base/plugins/harness/services/service_auth.py`：写主判断（`mode=proxy_l3` 才允许写）
-- `services/orchestration/app/config.py`、`app/auth.py`：独立编排进程固定 `proxy_l3` 写主
-- `base/plugins/harness/api/l2_internal/quota_router.py`：`primary` 判定
+- `base/plugins/harness/services/orchestration_config.py`：默认 `mode=proxy`，校验仅允许 `l2/proxy`
+- `base/plugins/harness/services/orchestration_proxy.py`：仅 `proxy` 启用代理/跳过 app 本地鉴权
+- `base/plugins/harness/services/service_auth.py`：写主判断（`mode=proxy` 才允许写）
+- `services/orchestration/app/config.py`、`app/auth.py`：独立编排进程固定 `proxy` 写主
+- `base/plugins/harness/api/app_internal/quota_router.py`：`primary` 判定
 
 ---
 
@@ -216,7 +216,7 @@ GW_PORT=9999
 
 ### 4.1 method+path 集合对比
 
-快照 vs 当前 L2 OpenAPI：
+快照 vs 当前 app OpenAPI：
 
 ```
 L2_PATHS_BEFORE=358 L2_PATHS_NOW=358
@@ -228,7 +228,7 @@ REMOVED=0 ADDED=0
 
 ### 4.2 插件加载顺序
 
-来源：L2 启动日志中的 `插件加载成功: <name>` 行，与 `plugin_order_before.txt` 对比。
+来源：app 启动日志中的 `插件加载成功: <name>` 行，与 `plugin_order_before.txt` 对比。
 
 ```
 PLUGIN_ORDER_BEFORE=$1audit,$1customer,$1product,$1sales,$1crm,$1harness,$1llm,$1mail
@@ -246,8 +246,8 @@ PLUGIN_ORDER_NOW=audit,customer,product,sales,crm,harness,llm,mail
 `42efb46` 相关变更：
 
 ```
-D base/common/quota/services/plan_resolver.py        (47 行，L2 ORM 版)
-D base/common/quota/services/plan_service.py         (11 行，L2 shim)
+D base/common/quota/services/plan_resolver.py        (47 行，app ORM 版)
+D base/common/quota/services/plan_service.py         (11 行，app shim)
 R services/gateway/app/plan_resolver.py -> packages/common/quota/services/plan_resolver.py
 R services/gateway/tests/plan_parity.py  -> services/gateway/tests/plan_golden.py
 ```

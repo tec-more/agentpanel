@@ -1,4 +1,4 @@
-"""L3 编排内部认证：只接受服务凭据，不接受用户 JWT / 网关租约 key / 匿名。
+"""编排内部认证：只接受服务凭据，不接受用户 JWT / 网关租约 key / 匿名。
 
 签名约定：
     secret_hash = SHA-256(明文密钥) 小写十六进制（库中只存该值）
@@ -257,8 +257,8 @@ def require_service_credential(*required_scopes: str):
 def ensure_write_enabled() -> None:
     """写接口总开关；P1.2 起的写路由统一依赖它。
 
-    第二道闸：只有 mode=proxy_l3 的进程才是写主。mode=l2 时 L3 进程必须拒绝写，
-    避免同一 run 被 L2/L3 两边同时推进。
+    第二道闸：只有 mode=proxy 的进程才是写主。mode=app 时独立编排进程必须拒绝写，
+    避免同一 run 被 app/独立服务两边同时推进。
     """
     if not write_enabled():
         raise ServiceAuthError(
@@ -266,9 +266,9 @@ def ensure_write_enabled() -> None:
             "编排服务写接口未启用（orchestration.write_enabled=false）",
             status_code=409,
         )
-    if orchestration_config().get("mode") != "proxy_l3":
+    if orchestration_config().get("mode") != "proxy":
         raise ServiceAuthError(
             ERROR_NOT_PRIMARY,
-            "编排服务不是当前写主（orchestration.mode != proxy_l3）",
+            "编排服务不是当前写主（orchestration.mode != proxy）",
             status_code=409,
         )

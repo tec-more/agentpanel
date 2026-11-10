@@ -1,4 +1,4 @@
-"""L3 网关数据面配置契约（仅 manifest 默认值 + `GW_*` 环境变量）。
+"""网关数据面配置契约（仅 manifest 默认值 + `GW_*` 环境变量）。
 
 与 `base/common/gateway/config.py` 的数据面部分逐项一致：
 - 默认值来自 `services/gateway/manifest.json` 的 `config.gateway`；
@@ -6,10 +6,10 @@
 - fail-closed 语义不变：`enabled` 时 `fail_closed` 必须为 true、`public_base_url`
   必须 http(s)、provider 白名单非空、TTL/重试/连接池配置合法。
 
-与 L2 的差异：
+与 app 的差异：
 - 不读 `plugin_manager`，也不读 `config.conf`；
 - 不含 `issuance_config()` / `runtime_config()` / `reconciliation_config()`
-  （这些只属于 L2 的租约签发与对账）。
+  （这些只属于 app 的租约签发与对账）。
 """
 from typing import Any, Dict, List
 
@@ -228,7 +228,7 @@ def _validate_fail_closed(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def validate_gateway_config() -> Dict[str, Any]:
-    """L3 网关启动校验：数据面配置 + 固定拒绝 env fallback/直连。"""
+    """网关启动校验：数据面配置 + 固定拒绝 env fallback/直连。"""
     cfg = gateway_config()
     if not cfg.get("enabled"):
         return cfg

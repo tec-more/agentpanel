@@ -16,7 +16,7 @@
 # 无收益；固定 digest 已消除“latest 漂移”，镜像内容可复现。
 #
 # 构建（仓库根目录）：
-#   docker build --provenance=false -f deploy/l3/Dockerfile.l2 -t agentpanel-l2:local .
+#   docker build --provenance=false -f deploy/gateway/Dockerfile.app -t agentpanel-app:local .
 # 可复现验收：--provenance=false 时连续两次构建 image ID 完全一致
 # （当前代码内容对应 sha256:b2a720aec44d59bf9b990ee6d0af25e53f90e92700257d10888411d0996c47e2）；
 # 默认开启 provenance attestation 会把构建时间戳写入外层 manifest list，导致该外层

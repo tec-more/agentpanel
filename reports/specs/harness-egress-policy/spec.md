@@ -1,7 +1,7 @@
-# L2 出网收敛：策略来源与客户端快照
+# app 出网收敛：策略来源与客户端快照
 
 > 状态：已实现（接口 + 审计 + 文档），验证见 §7。
-> 范围：L2 业务 API（9998）。**不改动** L3 数据面、网关白名单/出网校验语义、对账、额度、租约逻辑。
+> 范围：app 业务 API（9998）。**不改动** 独立服务 数据面、网关白名单/出网校验语义、对账、额度、租约逻辑。
 
 ## 1. 定位：策略来源，不是执行边界
 
@@ -21,7 +21,7 @@
 - `provider_domain_allowlist` **不在 `config.egress` 里重复配置**；
 - 快照中的白名单直接读取 `harness.manifest.config.gateway.provider_domain_allowlist`
   （代码经 `base.common.gateway.config.gateway_config()` / `upstream_allowlist()`），
-  与 L3 网关数据面校验共用同一份配置；
+  与 网关数据面校验共用同一份配置；
 - 网关侧 `assert_egress_allowed` / `egress_policy()` 未做任何修改，语义保持不变；
 - 快照 `source` 字段显式标注白名单来源，便于排查两处漂移（当前不存在第二处）。
 
@@ -107,7 +107,7 @@ manifest：`base/plugins/harness/manifest.json` → `config.egress`
 
 诚实边界：manifest 由拥有文件系统权限的运维修改，接口只能记录「系统 / manifest」。**具体是谁改的**需由配置管理、Git 提交记录或堡垒机审计追溯，本条已写入变更事件的 `note`。
 
-策略变更检测在进程内缓存最近已留痕哈希；重启后首次快照会与库中最新变更事件对比，若不一致则补记。manifest 变更需重启 L2 才生效（`plugin_manager` 按进程缓存 manifest）。
+策略变更检测在进程内缓存最近已留痕哈希；重启后首次快照会与库中最新变更事件对比，若不一致则补记。manifest 变更需重启 app 才生效（`plugin_manager` 按进程缓存 manifest）。
 
 ## 6. 客户端对接约定（需要 dsh 侧配合，不能假设已具备）
 
@@ -162,7 +162,7 @@ manifest：`base/plugins/harness/manifest.json` → `config.egress`
 
 ## 7. 验证记录（假数据，不调用真实 provider）
 
-验证方式：本地临时 Harness 客户端凭据 + 直连 L2（9998）真实接口，33 项检查全部通过，结束后删除测试客户端与本轮 9 条测试审计。
+验证方式：本地临时 Harness 客户端凭据 + 直连 app（9998）真实接口，33 项检查全部通过，结束后删除测试客户端与本轮 9 条测试审计。
 
 - 策略读取：`GET /v1/harness/egress-policy/snapshot?client_version=1` 返回 `compatible=true`、`policy_version=1`、
   `min_supported_version=1`、`allow_client_non_gateway=false`，工具清单含 `web_fetch`/`web_search`；

@@ -1,4 +1,4 @@
-"""L3 编排内部 API（仅服务凭据可访问，不对业务/前端暴露）。"""
+"""编排内部 API（仅服务凭据可访问，不对业务/前端暴露）。"""
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request

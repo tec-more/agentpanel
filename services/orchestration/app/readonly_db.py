@@ -1,4 +1,4 @@
-"""L3 编排只读数据库连接（环境变量配置）。
+"""编排只读数据库连接（环境变量配置）。
 
 - 连接级 `default_transaction_read_only=on`，任何写/DDL 都会被 PostgreSQL 拒绝；
 - 生产用最小权限账号（`DB_USER`），不再读取 `config.conf`；
@@ -130,12 +130,12 @@ class ReadonlyDatabase:
         }
 
     async def credential_table_ready(self) -> Dict[str, Any]:
-        """service_credential 表必须由 L2 启动流程创建；缺失时 fail-closed。"""
+        """service_credential 表必须由 app 启动流程创建；缺失时 fail-closed。"""
         try:
             await self.fetchrow("SELECT 1 AS ok FROM service_credential LIMIT 1")
             return {"status": "healthy", "message": "service_credential 可读"}
         except Exception as exc:
             return {
                 "status": "unhealthy",
-                "message": f"service_credential 不可读（请先启动 L2 完成建表）: {type(exc).__name__}: {exc}",
+                "message": f"service_credential 不可读（请先启动 app 完成建表）: {type(exc).__name__}: {exc}",
             }

@@ -1,8 +1,8 @@
-"""共享 Redis 缓存工具（L2 与 L3 网关共用同一实现）。
+"""共享 Redis 缓存工具（app 与 网关共用同一实现）。
 
-与 L2 历史 `base/common/cache.py` 行为一致，差异仅在配置来源：
+与 app 历史 `base/common/cache.py` 行为一致，差异仅在配置来源：
 - 不读取 `config.conf` / `settings`，由入口显式调用 `configure(...)`；
-- L2 的 `base/common/cache.py` 为 shim：导入时用 settings 调用本模块的 configure。
+- app 的 `base/common/cache.py` 为 shim：导入时用 settings 调用本模块的 configure。
 """
 from typing import Optional, Any, List
 import asyncio

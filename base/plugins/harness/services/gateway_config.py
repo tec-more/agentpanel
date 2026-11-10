@@ -1,11 +1,11 @@
 """
-网关配置（L2 唯一实现）：租约签发配置、L3 数据面配置读取、共享运行时注入。
+网关配置（app 唯一实现）：租约签发配置、数据面配置读取、共享运行时注入。
 
-- `issuance_config()`：L2 专用，读 `base/plugins/harness/manifest.json` 的
+- `issuance_config()`：app 专用，读 `base/plugins/harness/manifest.json` 的
   `config.gateway_issuance`（租约签发 / 出网策略 / 启停）。
 - `gateway_config()`：网关数据面配置，读 `services/gateway/manifest.json` 的
   `config.gateway`，并允许 `GW_*` 环境变量覆盖；**不经过 plugin_manager**。
-- `configure_shared_runtime()`：由 L2 启动期显式调用，把配置/上游/租约缓存 TTL
+- `configure_shared_runtime()`：由 app 启动期显式调用，把配置/上游/租约缓存 TTL
   provider 注入 `services.gateway.common.runtime`。
 
 fail-closed 语义保持不变：enabled 时 fail_closed 必须为 true、public_base_url 必须
@@ -27,7 +27,7 @@ from packages.common.upstream import UpstreamConfig
 PLUGIN_NAME = "harness"
 GATEWAY_MANIFEST = REPO_ROOT / "services" / "gateway" / "manifest.json"
 
-# 网关对账默认阈值（L2 执行对账）
+# 网关对账默认阈值（app 执行对账）
 RECONCILE_DEFAULTS: Dict[str, Any] = {
     "enabled": True,
     "interval_seconds": 600,
@@ -129,8 +129,8 @@ class GatewayConfigError(RuntimeError):
     """网关配置不满足 fail-closed 约束"""
 
 
-def _l2_harness_config() -> Dict[str, Any]:
-    """仅 L2 使用：读插件 manifest（延迟导入 plugin_manager，避免 L3 依赖）。"""
+def _app_harness_config() -> Dict[str, Any]:
+    """仅 app 使用：读插件 manifest（延迟导入 plugin_manager，独立服务不依赖）。"""
     from base.common.plugin_manager import get_plugin_manager
 
     manifest = get_plugin_manager().get_manifest(PLUGIN_NAME) or {}
@@ -138,20 +138,20 @@ def _l2_harness_config() -> Dict[str, Any]:
 
 
 def runtime_config() -> Dict[str, Any]:
-    """L2 运行时配置（仅 L2 校验使用）。"""
-    return _l2_harness_config().get("runtime") or {}
+    """app 运行时配置（仅 app 校验使用）。"""
+    return _app_harness_config().get("runtime") or {}
 
 
 def issuance_config() -> Dict[str, Any]:
-    """L2：租约签发 / 出网策略 / 启停 / 对账（来自 harness manifest）。"""
-    raw = _l2_harness_config().get("gateway_issuance") or {}
+    """app：租约签发 / 出网策略 / 启停 / 对账（来自 harness manifest）。"""
+    raw = _app_harness_config().get("gateway_issuance") or {}
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in raw.items() if v is not None})
     return cfg
 
 
 def gateway_config() -> Dict[str, Any]:
-    """L3 网关数据面：独立 manifest 默认值 + GW_* 环境变量覆盖。"""
+    """网关数据面：独立 manifest 默认值 + GW_* 环境变量覆盖。"""
     manifest = load_manifest(GATEWAY_MANIFEST)
     raw = manifest_section(manifest, "gateway")
     cfg = dict(DEFAULTS)
@@ -164,7 +164,7 @@ def gateway_config() -> Dict[str, Any]:
 
 
 def gateway_enabled() -> bool:
-    """L2 启停判断（租约签发/运行时启动）。"""
+    """app 启停判断（租约签发/运行时启动）。"""
     return bool(issuance_config().get("enabled"))
 
 
@@ -217,10 +217,10 @@ def gateway_upstream_config() -> UpstreamConfig:
 
 
 def configure_shared_runtime() -> None:
-    """把 L2 的网关配置注入共享网关模块（P4 B：启动期显式装配）。
+    """把 app 的网关配置注入共享网关模块（P4 B：启动期显式装配）。
 
     共享模块（router/service/budget/lease_auth）不 import `base.*`，
-    由 L2 启动期显式调用本函数一次。
+    由 app 启动期显式调用本函数一次。
     """
     from services.gateway.common import runtime as _runtime
 
@@ -232,7 +232,7 @@ def configure_shared_runtime() -> None:
 
 
 def reconciliation_config() -> Dict[str, Any]:
-    """合并对账默认配置并做轻量校验；非法项回退默认值（不阻断启动）。L2 使用。"""
+    """合并对账默认配置并做轻量校验；非法项回退默认值（不阻断启动）。app 使用。"""
     raw = issuance_config().get("reconciliation")
     cfg = dict(RECONCILE_DEFAULTS)
     if isinstance(raw, dict):
@@ -335,7 +335,7 @@ def _validate_fail_closed(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def validate_gateway_config() -> Dict[str, Any]:
-    """L3 网关启动校验：数据面配置 + 固定拒绝 env fallback/直连。"""
+    """网关启动校验：数据面配置 + 固定拒绝 env fallback/直连。"""
     cfg = gateway_config()
     if not cfg.get("enabled"):
         return cfg
@@ -354,7 +354,7 @@ def validate_gateway_config() -> Dict[str, Any]:
 
 
 def validate_issuance_config() -> Dict[str, Any]:
-    """L2 启动校验：租约签发/出网配置（来自 harness manifest）。"""
+    """app 启动校验：租约签发/出网配置（来自 harness manifest）。"""
     cfg = issuance_config()
     if not cfg.get("enabled"):
         return cfg

@@ -37,7 +37,7 @@ _rate_windows: Dict[str, Dict[str, float]] = {}
 def _inc_lease_cache(result: str) -> None:
     """T7.4 观测旁路：任何异常都不得影响租约鉴权链路。"""
     try:
-        from packages.common.l3_metrics import inc_lease_cache
+        from packages.common.service_metrics import inc_lease_cache
 
         inc_lease_cache(result)
     except Exception:

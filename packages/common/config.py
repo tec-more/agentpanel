@@ -1,8 +1,8 @@
 """共享配置契约与解析器。
 
 三个入口共用同一套解析/校验规则：
-- L2（`run.py`）：`load_l2_config(config.conf)`；
-- L3 网关/编排：`load_l3_common()`（环境变量 + `_FILE` 密钥）+ 各自 manifest 默认值
+- app（`run.py`）：`load_app_config(config.conf)`；
+- 网关/编排：`load_services_common()`（环境变量 + `_FILE` 密钥）+ 各自 manifest 默认值
   （`apply_env_overrides()`）。
 
 任何必填缺失或类型不符都会抛 `ConfigError`（消息只列出字段名，不含值），
@@ -193,11 +193,11 @@ def manifest_section(manifest: Mapping[str, Any], section: str) -> Dict[str, Any
 
 
 # --------------------------------------------------------------------------- #
-# L2：config.conf
+# app：config.conf
 # --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
-class L2Config:
+class AppConfig:
     db_host: str
     db_name: str
     db_user: str
@@ -219,12 +219,12 @@ class L2Config:
     debug: bool
 
 
-def load_l2_config(
+def load_app_config(
     path: str | Path = REPO_ROOT / "config.conf",
     *,
     environ: Mapping[str, str] = os.environ,
-) -> L2Config:
-    """L2 本地配置（config.conf）；保持原有 section/fallback，不新增必填。"""
+) -> AppConfig:
+    """app 本地配置（config.conf）；保持原有 section/fallback，不新增必填。"""
     parser = configparser.ConfigParser()
     parser.read(Path(path), encoding="utf-8")
 
@@ -242,7 +242,7 @@ def load_l2_config(
     strict_startup = environ.get(
         "STRICT_STARTUP", _get("deploy", "strict_startup", "true")
     ).lower() == "true"
-    return L2Config(
+    return AppConfig(
         db_host=_get("db", "db_host", "127.0.0.1"),
         db_name=_get("db", "db_name", "aipaneladmin"),
         db_user=_get("db", "db_user", "admin"),
@@ -266,7 +266,7 @@ def load_l2_config(
 
 
 # --------------------------------------------------------------------------- #
-# L3：环境变量（通用 DB / Redis / 日志）
+# 独立服务：环境变量（通用 DB / Redis / 日志）
 # --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
@@ -298,19 +298,19 @@ class LogConfig:
 
 
 @dataclass(frozen=True)
-class L3CommonConfig:
+class ServicesCommonConfig:
     db: DbConfig
     redis: RedisConfig
     log: LogConfig
     deploy_env: str
 
 
-def load_l3_common(
+def load_services_common(
     *,
     environ: Mapping[str, str] = os.environ,
-    source: str = "L3",
-) -> L3CommonConfig:
-    """L3 两个入口共用配置；密钥支持 `DB_PASSWORD_FILE` / `REDIS_PASSWORD_FILE`。"""
+    source: str = "services",
+) -> ServicesCommonConfig:
+    """两个入口共用配置；密钥支持 `DB_PASSWORD_FILE` / `REDIS_PASSWORD_FILE`。"""
     missing: List[str] = []
     invalid: List[str] = []
 
@@ -353,7 +353,7 @@ def load_l3_common(
     if invalid or missing:
         raise ConfigError(source, missing=missing, invalid=invalid)
 
-    return L3CommonConfig(
+    return ServicesCommonConfig(
         db=DbConfig(
             host=db_host,
             port=db_port,

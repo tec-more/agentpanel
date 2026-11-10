@@ -1,6 +1,6 @@
-"""服务凭据签名算法（L2 侧签发/验签与 L3 编排共用同一实现）。
+"""服务凭据签名算法（app 侧签发/验签与 编排共用同一实现）。
 
-约定（与 L2 `base/plugins/harness/services/service_auth.py` 完全一致）：
+约定（与 app `base/plugins/harness/services/service_auth.py` 完全一致）：
     secret_hash = SHA-256(明文密钥) 小写十六进制（库中只存该值）
     signature   = HMAC-SHA256(key=secret_hash,
                               msg=timestamp + "\\n" + METHOD + "\\n" + path + "\\n" + sha256(body))
@@ -15,7 +15,7 @@ SERVICE_SIGNATURE_HEADER = "x-service-signature"
 
 
 def hash_secret(secret: str) -> str:
-    """明文密钥 → 库中存储的 SHA-256 小写十六进制（与 L2 客户端凭据一致）。"""
+    """明文密钥 → 库中存储的 SHA-256 小写十六进制（与 app 客户端凭据一致）。"""
     return hashlib.sha256(str(secret).encode("utf-8")).hexdigest()
 
 

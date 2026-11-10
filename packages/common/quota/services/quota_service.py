@@ -1,6 +1,6 @@
 """配额计量核心服务（共享实现，P3 D-P3-2=B）。
 
-语义与 L2 历史实现一致；差异仅在 import 路径（共享 cache / 共享模型 / 共享配额域）。
+语义与 app 历史实现一致；差异仅在 import 路径（共享 cache / 共享模型 / 共享配额域）。
 """
 import asyncio
 import json

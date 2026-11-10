@@ -1,10 +1,10 @@
 """
-Harness 模型凭据解析服务（L2 兼容层）
+Harness 模型凭据解析服务（app 兼容层）
 
 解析逻辑已迁至共享 `packages.common.domain.credential_resolver`（P3 C1/T3.5）。
 本文件保留：
-- L2 管理端只读列表 `list_configured()`（CRUD/掩码读留在 L2）；
-- `configure_l2()`：从 harness manifest 惰性注入默认主体 / env fallback / 环境变量名。
+- app 管理端只读列表 `list_configured()`（CRUD/掩码读留在 app）；
+- `configure_app()`：从 harness manifest 惰性注入默认主体 / env fallback / 环境变量名。
 """
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +20,7 @@ from packages.common.domain.credential_resolver import (  # noqa: F401（对外�
 
 PLUGIN_NAME = "harness"
 
-_l2_configured = False
+_app_configured = False
 
 
 def _harness_config() -> Dict[str, Any]:
@@ -56,17 +56,17 @@ def _credential_defaults() -> Dict[str, Optional[str]]:
     }
 
 
-def configure_l2() -> None:
-    """从 L2 manifest 注入共享解析器配置（幂等，首次 resolve/list 前调用）。"""
-    global _l2_configured
-    if _l2_configured:
+def configure_app() -> None:
+    """从 app manifest 注入共享解析器配置（幂等，首次 resolve/list 前调用）。"""
+    global _app_configured
+    if _app_configured:
         return
     _shared.configure(
         defaults=_credential_defaults(),
         env_fallback=_env_fallback_allowed(),
         env_names=_env_names(),
     )
-    _l2_configured = True
+    _app_configured = True
 
 
 class HarnessModelCredentialService:
@@ -74,13 +74,13 @@ class HarnessModelCredentialService:
     async def resolve(
         cls, provider: Optional[str] = None, model: Optional[str] = None
     ) -> ModelCredential:
-        configure_l2()
+        configure_app()
         return await _shared.resolve(provider, model)
 
     @classmethod
     async def list_configured(cls) -> List[Dict[str, Any]]:
         """管理端只读列表：只返回遮蔽值，不含明文"""
-        configure_l2()
+        configure_app()
         keys = await LLMApiKey.filter(model_service_type=LLM_SERVICE_TYPE).prefetch_related(
             "provider", "model"
         ).order_by("id")

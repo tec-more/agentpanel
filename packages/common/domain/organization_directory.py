@@ -1,8 +1,8 @@
 """组织目录（只读 SQL）。
 
 组织级额度校验只需要判断「组织存在且未停用」「客户是组织活跃成员」。
-L3 编排不注册客户域 ORM 模型（`CustomerOrganization.owner_customer` 外键会把
-L2 的 `Customer` 模型拖进 L3 进程），因此统一走只读 SQL，不建模型、不写库。
+编排不注册客户域 ORM 模型（`CustomerOrganization.owner_customer` 外键会把
+app 的 `Customer` 模型拖进 独立进程），因此统一走只读 SQL，不建模型、不写库。
 Spec §4.2：`customer_organization` / `customer_organization_member` 只读。
 """
 from typing import Any

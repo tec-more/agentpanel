@@ -1,6 +1,6 @@
 # Redis 启用 Runbook（Windows PowerShell · 项目 `.venv` · 自建 `agentredis`）
 
-> 适用：`d:\programs\fastapi\agentpanel` 宿主机三进程（L2 9998 / 网关 9999 / 编排 9100）。
+> 适用：`d:\programs\fastapi\agentpanel` 宿主机三进程（app 9998 / 网关 9999 / 编排 9100）。
 > 本文给可直接复制执行的命令与说明。密码一律在运行时从 `config.conf` 读取，不写死、不回显明文。
 
 ---
@@ -261,17 +261,17 @@ foreach ($p in 9998,9999,9100) {
 ```
 
 ```powershell
-# 作用：确认 L3 需要的服务密钥可见（值不回显、不要重置）
+# 作用：确认 独立服务 需要的服务密钥可见（值不回显、不要重置）
 $env:ORCHESTRATION_SERVICE_SECRET = [Environment]::GetEnvironmentVariable('ORCHESTRATION_SERVICE_SECRET','User')
-if (-not $env:ORCHESTRATION_SERVICE_SECRET) { throw '缺少 ORCHESTRATION_SERVICE_SECRET，禁止启动 L3' }
+if (-not $env:ORCHESTRATION_SERVICE_SECRET) { throw '缺少 ORCHESTRATION_SERVICE_SECRET，禁止启动 独立服务' }
 ```
 
 ```powershell
-# 作用：用 .venv 依次启动 L2 → 网关 → 编排（每个等端口监听后再起下一个）
+# 作用：用 .venv 依次启动 app → 网关 → 编排（每个等端口监听后再起下一个）
 New-Item -ItemType Directory -Force -Path (Join-Path $ROOT 'logs') | Out-Null
 
 Start-Process $VENV -ArgumentList 'run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
-  -RedirectStandardOutput "$ROOT\logs\l2.out.log" -RedirectStandardError "$ROOT\logs\l2.err.log"
+  -RedirectStandardOutput "$ROOT\logs\app.out.log" -RedirectStandardError "$ROOT\logs\app.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9998 -ErrorAction SilentlyContinue)
 
 Start-Process $VENV -ArgumentList 'services\gateway\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
@@ -279,14 +279,14 @@ Start-Process $VENV -ArgumentList 'services\gateway\run.py' -WorkingDirectory $R
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9999 -ErrorAction SilentlyContinue)
 
 Start-Process $VENV -ArgumentList 'services\orchestration\run.py' -WorkingDirectory $ROOT -WindowStyle Hidden `
-  -RedirectStandardOutput "$ROOT\logs\l3.out.log" -RedirectStandardError "$ROOT\logs\l3.err.log"
+  -RedirectStandardOutput "$ROOT\logs\orchestration.out.log" -RedirectStandardError "$ROOT\logs\orchestration.err.log"
 do { Start-Sleep -Milliseconds 500 } until (Get-NetTCPConnection -State Listen -LocalPort 9100 -ErrorAction SilentlyContinue)
 ```
 
 ```powershell
 # 作用：确认端口监听与 Redis 连接日志
 Get-NetTCPConnection -State Listen -LocalPort 9998,9999,9100 | Select-Object LocalAddress,LocalPort,OwningProcess
-Select-String -Path "$ROOT\logs\l2.out.log" -Pattern 'Redis连接成功|Redis连接失败|Redis模块未安装'
+Select-String -Path "$ROOT\logs\app.out.log" -Pattern 'Redis连接成功|Redis连接失败|Redis模块未安装'
 # 预期：三个端口都有监听；日志出现 "Redis连接成功"
 ```
 
@@ -325,10 +325,10 @@ foreach ($port in 9998,9999,9100) {
 # 预期：.venv\Scripts\python.exe / .venv / .venv\Lib\site-packages\redis\__init__.py
 ```
 
-### 5.1 L2 / L3：`/health/health` 中 redis 不再是 skipped
+### 5.1 app / 独立服务：`/health/health` 中 redis 不再是 skipped
 
 ```powershell
-# 作用：L2 与 L3 的 Redis 探针
+# 作用：app 与 独立服务 的 Redis 探针
 (Invoke-RestMethod 'http://127.0.0.1:9998/health/health').checks.redis
 (Invoke-RestMethod 'http://127.0.0.1:9100/health/health').checks.redis
 # 预期：status=healthy, message='Redis connection OK'
@@ -361,7 +361,7 @@ docker exec agentredis redis-cli --no-auth-warning -a $REDIS_PASSWORD --scan --p
 
 ### 5.3 额度预占：`counter_mode = redis` 且 `quota_hold:*` 存在
 
-生产路径最可靠的做法是走 L2 内部额度 API（服务凭据 HMAC）。使用 §6 脚本即可同时完成该验证；
+生产路径最可靠的做法是走 app 内部额度 API（服务凭据 HMAC）。使用 §6 脚本即可同时完成该验证；
 若只想手动看最近记录：
 
 ```powershell
@@ -610,11 +610,11 @@ docker stop agentredis
 | `agentredis` 状态 | `Up`，`127.0.0.1:6379->6379/tcp`，`restart=unless-stopped` |
 | 容器内配置 | `appendonly=yes`、`maxmemory-policy=noeviction`、`PING=PONG` |
 | 项目探针 | `{'status': 'healthy', 'message': 'Redis connection OK'}` |
-| L2 `/health/health` | `redis: healthy` |
-| L3 `/health/health` | `redis: healthy` |
+| app `/health/health` | `redis: healthy` |
+| 独立服务 `/health/health` | `redis: healthy` |
 | 网关 `/health` | `{"status":"ok","deployment":"standalone","fail_closed":true}`（无 redis 子项） |
 | 网关租约缓存 | `gw:lease:state:gl_g1verify_*` 存在，TTL=8s |
-| 预占 | L2 内部 API 返回 200；`quota_reservation` 1 行 `counter_mode=redis`；`quota_hold:*` 存在 |
+| 预占 | app 内部 API 返回 200；`quota_reservation` 1 行 `counter_mode=redis`；`quota_hold:*` 存在 |
 | G1-A 预占 | 20 并发返回同一 hold；DB 1 行；`held=500`、`used=0` |
 | G1-B 结算 | 20 并发同一 idem_key；`usage_record=1`；`settled=1`；`used=200`、`held=300` |
 | G1-C 释放 | 10 并发只有 1 次 `true`；重复释放 `false`；状态 `released`；`held=0`、hold key 删除 |
@@ -626,5 +626,5 @@ docker stop agentredis
 - **DB 仍是权威账本**：`quota_reservation`（`hold_id` 唯一）与 `usage_record`（`idem_key` 唯一）始终先落库；Redis 只承担原子计数与缓存。
 - **Redis 模式的历史行不会“卡死”**：结算按行内 `counter_mode` 分支；`redis` 行在 Redis 关闭后仍可结算，Redis 计数更新失败只告警。
 - **可观测差异**：网关租约吊销最多延迟 `lease_cache_ttl_seconds=8s`；`authz`/`permissions` 缓存从 DB 直查切到 Redis。
-- **不要动的东西**：`ORCHESTRATION_SERVICE_SECRET`（改掉会让 L3→L2 内部额度调用 503 fail-closed）；`aipanel-redis`；`agentredis_data` 卷。
+- **不要动的东西**：`ORCHESTRATION_SERVICE_SECRET`（改掉会让 独立服务→app 内部额度调用 503 fail-closed）；`aipanel-redis`；`agentredis_data` 卷。
 - **密码**：只在 `config.conf` 本地保存（已解跟踪并 ignore）；文档与日志仅记录指纹/尾四位。

@@ -1,6 +1,6 @@
 # L3 网关服务镜像（services/gateway）
 # 构建（仓库根目录）：
-#   docker build -f services/gateway/Dockerfile -t agentpanel-l3-gateway:local .
+#   docker build -f services/gateway/Dockerfile -t agentpanel-gateway:local .
 # 说明：多阶段构建只安装 L3 数据面所需最小依赖；不在容器启动时执行任何迁移。
 
 ARG BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
@@ -8,8 +8,8 @@ FROM ${BASE_IMAGE} AS builder
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 WORKDIR /build
-COPY deploy/l3/requirements-l3.txt ./
-RUN pip install --no-cache-dir --prefix=/install -i ${PIP_INDEX_URL} -r requirements-l3.txt
+COPY deploy/gateway/requirements-services.txt ./
+RUN pip install --no-cache-dir --prefix=/install -i ${PIP_INDEX_URL} -r requirements-services.txt
 
 FROM ${BASE_IMAGE}
 

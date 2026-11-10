@@ -14,7 +14,7 @@
         │ 控制面 HTTPS/JSON（同步 CRUD） │ 数据面 HTTPS/SSE（流式）
         ▼                               ▼
 ┌──────────────────────────┐   ┌────────────────────────────────┐
-│ L2 FastAPI 业务层         │   │ L3 harness 数据层（独立服务）    │
+│ app FastAPI 业务层         │   │ 独立服务 harness 数据层（独立服务）    │
 │ 额度配置/权限/模型开关     │   │ 会话/运行编排、策略判定         │
 │ 审计、Agent 版本发布       │   │ 上下文与检索策略下发            │
 │ 知识库配置、用量报表       │   │ 额度预扣/结算、对账             │
@@ -25,8 +25,8 @@
 ```
 
 关键边界：
-- **模型调用唯一出口是 L3 网关**；L2 不代理、不转发、不参与任何 SSE 帧。
-- **执行发生在 L1**；L3 只编排、判定、发放租约、记账，不执行工具/命令/文件操作。
+- **模型调用唯一出口是 网关**；app 不代理、不转发、不参与任何 SSE 帧。
+- **执行发生在 L1**；独立服务 只编排、判定、发放租约、记账，不执行工具/命令/文件操作。
 - **不宣称沙箱隔离**：客户端以当前 Windows 用户权限运行，服务端无法阻止本机越权、外泄或篡改。
 
 ## 2. 三层职责边界
@@ -36,12 +36,12 @@
 - 不持有：真实 provider key、其他用户的凭据、服务端数据库写权限。
 - 能力边界：可读取用户有权访问的本机文件；可发起任意本机进程；其行为只能被“检测+审计”，不能被服务端强制阻止。
 
-### L2 FastAPI 业务层
+### app FastAPI 业务层
 - 职责：组织/用户/角色/权限、额度套餐与配置、模型开关、审计查询、Agent 版本发布与灰度、知识库配置、用量报表与对账展示。
 - 形态：低并发 CRUD/配置/报表；读多写少；可水平扩展。
 - 禁止：出现在模型流式链路上；持有租约预扣的实时状态；执行 agent 工具或工作流。
 
-### L3 harness 数据层（独立服务，非单进程）
+### 独立服务 harness 数据层（独立服务，非单进程）
 - 职责：任务/会话/运行编排、上下文与检索策略下发、策略判定、额度预扣与结算、网关流式转发、记账与对账、客户端在线状态与租约。
 - 形态：独立部署；至少拆为 API 进程、网关进程、后台 worker；共享 Redis（预占/在线状态/限流）与 DB（账本/会话/事件），进程间不共享内存。
 - 强一致点：预扣用 Redis 原子操作；结算落 DB 账本；网关记账为模型 token 的权威来源。
@@ -50,19 +50,19 @@
 
 | 调用方 | 被调方 | 接口/协议 | 同步/异步 | 鉴权 | 幂等 |
 |---|---|---|---|---|---|
-| L1 | L2 | `/v2/config/bundles/{version}`、报表查询、版本检查 | 同步 HTTPS/JSON | 客户端凭据 + 用户会话 | GET 幂等；带 `config_version` |
-| L1 | L3 | 创建会话、领取运行、start/heartbeat/steps/events/complete/cancel | 同步 HTTPS/JSON；事件上传可异步重试 | 客户端凭据（client_id+secret，可选 mTLS） | 事件 `idem_key=hx:{run_no}:{seq}`；领取用 claim_token |
-| L1 | L3 | `POST /gateway/lease` 领取短期虚拟 key | 同步 | 客户端凭据 + 运行上下文 | 同 run 重复领取返回同一有效租约 |
-| L1 | L3 | `POST /gateway/chat/completions`（SSE） | 流式 | `dgw.<lease_id>.<secret>` | 请求体 `stream_options.include_usage` |
-| L1 | L3 | `POST /policy/evaluate`、`GET /retrieval/context` | 同步 | 客户端凭据 + run_no | 幂等读，结果按策略版本缓存 |
-| L2 | 共享存储 | 发布配置快照（DB/Redis） | 异步 | 服务内部 | 版本号单调；快照不可变 |
-| L3 | L2 | 上报聚合报表/对账结果（读 DB 或事件） | 异步批处理 | 服务内部 | 按批次幂等 |
-| L3 内部 | Redis/DB | 预占、结算、在线状态、账本 | 异步/事务 | 服务内部 | `idem_key` 去重 |
+| L1 | app | `/v2/config/bundles/{version}`、报表查询、版本检查 | 同步 HTTPS/JSON | 客户端凭据 + 用户会话 | GET 幂等；带 `config_version` |
+| L1 | 独立服务 | 创建会话、领取运行、start/heartbeat/steps/events/complete/cancel | 同步 HTTPS/JSON；事件上传可异步重试 | 客户端凭据（client_id+secret，可选 mTLS） | 事件 `idem_key=hx:{run_no}:{seq}`；领取用 claim_token |
+| L1 | 独立服务 | `POST /gateway/lease` 领取短期虚拟 key | 同步 | 客户端凭据 + 运行上下文 | 同 run 重复领取返回同一有效租约 |
+| L1 | 独立服务 | `POST /gateway/chat/completions`（SSE） | 流式 | `dgw.<lease_id>.<secret>` | 请求体 `stream_options.include_usage` |
+| L1 | 独立服务 | `POST /policy/evaluate`、`GET /retrieval/context` | 同步 | 客户端凭据 + run_no | 幂等读，结果按策略版本缓存 |
+| app | 共享存储 | 发布配置快照（DB/Redis） | 异步 | 服务内部 | 版本号单调；快照不可变 |
+| 独立服务 | app | 上报聚合报表/对账结果（读 DB 或事件） | 异步批处理 | 服务内部 | 按批次幂等 |
+| 独立服务 内部 | Redis/DB | 预占、结算、在线状态、账本 | 异步/事务 | 服务内部 | `idem_key` 去重 |
 
 补充约定：
 - 控制面（配置、报表、版本）与数据面（会话、租约、模型流）域名/端口分离；客户端配置中两者的 base_url 不可互相替代。
 - 所有请求带 `X-Config-Version`、`X-Client-Version`、`X-Format-Version`；服务端未知或低于最低支持版本时 fail-closed。
-- SSE 只在 L1↔L3 之间传输；L2 不设任何流式转发路由。
+- SSE 只在 L1↔独立服务 之间传输；app 不设任何流式转发路由。
 - 长任务下发可用可选 WebSocket 推送“有新 run 可领取/配置失效/强制升级”；REST 长轮询是兜底，二者语义等价。
 
 ## 4. 信任模型
@@ -70,13 +70,13 @@
 ### 4.1 客户端不可信
 - 客户端凭据与设备绑定：`client_id` 唯一对应一台设备；注册时登记设备指纹哈希、可选 mTLS 证书、IP 白名单、有效期、scopes；secret 只存哈希，支持轮换与吊销。
 - 客户端上报的一切（工具调用、命令、文件改动、步骤状态、客户端侧 usage）默认视为**证据**，不是事实。
-- 服务端策略判定（allow/deny/ask）由 L3 下发；审批只在服务端完成，**不假设客户端存在可用审批通道**。
+- 服务端策略判定（allow/deny/ask）由 独立服务 下发；审批只在服务端完成，**不假设客户端存在可用审批通道**。
 
 ### 4.2 模型调用：网关记账为权威
-- 模型请求必须经 L3 网关，租约绑定 run/session/owner；网关从上游响应解析 usage 并落账。
+- 模型请求必须经 网关，租约绑定 run/session/owner；网关从上游响应解析 usage 并落账。
 - 客户端上报的 token/费用标记 `source=client`，只用于对账与异常提示；**结算与报表以网关记账为准**（`source=gateway`）。
 - 失败、超时、截断也记账（`gateway_error` / `partial`），不允许“失败不记账”。
-- 网关与客户端上报差异由 L3 对账任务标记，不直接改账。
+- 网关与客户端上报差异由 独立服务 对账任务标记，不直接改账。
 
 ### 4.3 工具/命令/文件改动：证据链，只发现不阻止
 事件信封建议字段：
@@ -110,14 +110,14 @@
 
 可选收敛与其局限：
 - 系统代理/主机防火墙仅放行网关域名（可加知识库/制品域名），减少误连与意外外泄。
-- 局限：本机管理员可改防火墙/代理；程序可用原始套接字、IPv6、QUIC、DNS 隧道绕过；无法约束用户手动复制数据。**它只是风险收敛，不是安全边界，也不能替代 L3 网关的强校验。**
+- 局限：本机管理员可改防火墙/代理；程序可用原始套接字、IPv6、QUIC、DNS 隧道绕过；无法约束用户手动复制数据。**它只是风险收敛，不是安全边界，也不能替代 网关的强校验。**
 - 结论：服务端能强制的是“模型流量必须过网关”；不能强制的是“客户端完全不外联”。后者只能靠终端管控、网络策略与审计发现。
 
 ## 6. 配置与版本同步
 
 配置包（不可变快照）：
 - `config_version`（单调递增 + 内容哈希）、`ruleset_version`、模型开关与可用模型清单、额度快照、检索策略、工具策略、Agent 最低版本、网关 base_url、功能开关。
-- L2 负责编辑与发布；发布即写入共享存储（DB 快照表 + Redis 当前版本指针）；L1/L3 只读。
+- app 负责编辑与发布；发布即写入共享存储（DB 快照表 + Redis 当前版本指针）；L1/独立服务 只读。
 
 同步规则：
 - 客户端本地缓存最近一次有效快照；启动、领取 run、收到配置失效通知时拉取。
@@ -126,13 +126,13 @@
   - 未知/高于客户端支持 → **fail-closed**，拒绝执行并提示升级；
   - 低于最低支持版本 → 拒绝并下发强制升级指令。
 - 降级策略：仅在灰度窗口内允许旧版本继续使用受限功能集，超出窗口即阻断。
-- **L2 不得出现在流式链路上**：配置拉取是独立短请求；模型 SSE 不经过 L2，也不因 L2 故障中断（网关只依赖 L3 自身与共享存储）。
+- **app 不得出现在流式链路上**：配置拉取是独立短请求；模型 SSE 不经过 app，也不因 app 故障中断（网关只依赖 独立服务 自身与共享存储）。
 
 ## 7. 额度与账务
 
 职责切分：
-- L2：套餐/额度项/组织成员/模型开关配置；报表与对账展示；不参与预扣、不写实时余额。
-- L3：入口预检 → 估算 → Redis 原子预占 → 流式转发 → 结算/部分结算/释放；失败释放；越界截断记 `partial`；自动停用/吊销租约。
+- app：套餐/额度项/组织成员/模型开关配置；报表与对账展示；不参与预扣、不写实时余额。
+- 独立服务：入口预检 → 估算 → Redis 原子预占 → 流式转发 → 结算/部分结算/释放；失败释放；越界截断记 `partial`；自动停用/吊销租约。
 - 单一真相：**DB 账本为持久真相，Redis 预占为瞬时状态**；Redis 丢失可由 DB 账本与对账任务恢复；两者不允许各自维护一套“余额”。
 
 三套账统一口径：
@@ -152,12 +152,12 @@
 - 支持轮换/吊销；泄露即吊销并联动租约失效；客户端不得复用他人 client_id（现有 `client_id 与凭据不一致` 校验保留）。
 
 ### 8.2 心跳与在线状态
-- 客户端级心跳（如 30s）上报版本、能力、当前 run、负载；L3 在 Redis 维护在线状态与 `last_seen`。
+- 客户端级心跳（如 30s）上报版本、能力、当前 run、负载；独立服务 在 Redis 维护在线状态与 `last_seen`。
 - 运行级心跳（如 10s）保留；超时未心跳的 run 由 worker 判定失联并取消/结算，释放预占。
 - 管理台展示在线/离线/版本落后/不健康状态。
 
 ### 8.3 版本强制与降级
-- L2 维护 Agent 版本发布：channel、版本号、制品哈希/签名、最低支持版本、灰度圈层。
+- app 维护 Agent 版本发布：channel、版本号、制品哈希/签名、最低支持版本、灰度圈层。
 - 会话创建与 run 领取时校验 `runtime_version`、`format_version`：
   - 低于最低支持 → 拒绝并返回升级指令；
   - 未知 format → fail-closed；
@@ -176,7 +176,7 @@
 
 ## 9. 与现状的差距清单
 
-### 保留（可直接演进为 L3 基础）
+### 保留（可直接演进为 独立服务 基础）
 - `base/common/gateway/*`：租约、预检/预占、流式透传、记账、`dsh_session_log` 剥离、出网白名单、共享上游客户端与 fail-closed 校验。
 - `base/common/quota/*`：套餐、预占、`UsageRecord` 账本与对账。
 - `base/plugins/harness/services/{run_service,event_service,policy_service,policy_rule_service,gateway_lease_service,model_credential_service,reconcile_service,pricing_service}.py`：会话/运行/事件/策略/租约/对账能力。
@@ -185,13 +185,13 @@
 ### 需迁移
 | 现状 | 目标 |
 |---|---|
-| 网关以 embedded 模式挂在 `base/start.py` 的主 FastAPI 进程 | 独立 L3 网关进程；`gateway.deployment=standalone`，不再随业务进程启动 |
-| `base/plugins/harness` 路由与业务 API 同进程 | harness API/worker 独立服务；L2 仅保留配置/报表 |
+| 网关以 embedded 模式挂在 `base/start.py` 的主 FastAPI 进程 | 独立 网关进程；`gateway.deployment=standalone`，不再随业务进程启动 |
+| `base/plugins/harness` 路由与业务 API 同进程 | harness API/worker 独立服务；app 仅保留配置/报表 |
 | 客户端调用 `POST /sessions/{session_no}/runs` 自建 run（`run_router.py`） | 服务端编排器创建 run，客户端 `claim` |
 | `base/plugins/agent/services/execution_service.py`、`langgraph_executor.py` 服务端执行 | 迁移到本机 dsh 执行；服务端只保留 agent/skill/tool 定义与策略 |
-| `RAGKnowledgeBase` 与 `rag_service.py` 服务端检索 | L2 保留知识库配置；检索/上下文策略由 L3 下发或 L3 检索服务返回 |
+| `RAGKnowledgeBase` 与 `rag_service.py` 服务端检索 | app 保留知识库配置；检索/上下文策略由 独立服务 下发或 独立服务 检索服务返回 |
 | `LLMUsageRecord` 在 llm 侧写入 | 停止 chat 写入，统一到 `UsageRecord`；历史归档 |
-| `ExecutionService` 内调用策略服务 | 策略判定改为 L3 API，客户端在工具执行前调用并遵守 |
+| `ExecutionService` 内调用策略服务 | 策略判定改为 独立服务 API，客户端在工具执行前调用并遵守 |
 
 ### 废弃
 - embedded 网关部署形态与“业务进程内跑数据面”。
@@ -207,7 +207,7 @@
 |---|---|---|---|
 | P0 | 账本/配置版本/事件链字段与开关；报表双读不改写 | 无新消费者，回退代码即回滚 | 旧路径行为不变 |
 | P1 | 网关独立进程上线，客户端 base_url 指向独立网关 | 配置切回 embedded（保留旧入口） | 流式透传/记账/额度中断复验通过 |
-| P2 | harness API/worker 从业务进程拆出，L2 路由反向代理过渡 | 代理切回插件路由 | 会话/运行/事件/账本一致 |
+| P2 | harness API/worker 从业务进程拆出，app 路由反向代理过渡 | 代理切回插件路由 | 会话/运行/事件/账本一致 |
 | P3 | 设备绑定、客户端心跳、事件哈希链与完整性标记 | 新校验改为 `integrity=legacy` 兼容 | 断链/缺号能告警，不影响旧客户端 |
 | P4 | 配置包版本化与 Agent 版本门禁、灰度与强制升级 | 回退到上一配置版本/最低版本 | 未知版本 fail-closed 生效 |
 | P5 | 服务端创建 run + 客户端 claim；保留客户端自建开关 | 关闭 claim 流程，恢复旧路径 | 任务领取/超时/取消闭环 |
@@ -217,7 +217,7 @@
 迁移门禁：
 - P1/P2 前后各跑一次额度中断、流式字节一致、`dsh_session_log` 剥离、白名单/403、失败记账。
 - P6 必须以“网关账本 vs 客户端证据 vs 历史 `LLMUsageRecord`”三方对账通过为上线条件。
-- 任何阶段不得让 L2 进入流式链路。
+- 任何阶段不得让 app 进入流式链路。
 
 ## 11. 非目标与残余风险
 

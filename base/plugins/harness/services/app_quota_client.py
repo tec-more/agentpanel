@@ -1,4 +1,4 @@
-"""L3 编排 → L2 内部额度 API 客户端。
+"""编排 → app 内部额度 API 客户端。
 
 契约（与 spec §16.3 一致）：
 - reserve/settle/release 走服务凭据（scope=quota:operate）；
@@ -23,19 +23,19 @@ SCOPE = "quota:operate"
 
 
 class QuotaUnavailable(RuntimeError):
-    """L2 额度服务不可用（超时/连接失败/5xx）；上层必须 fail-closed。"""
+    """app 额度服务不可用（超时/连接失败/5xx）；上层必须 fail-closed。"""
 
 
 def _credentials() -> tuple:
     cfg = orchestration_config()
-    service_id = str(cfg.get("l2_service_id") or "").strip()
-    secret_env = str(cfg.get("l2_service_secret_env") or "").strip()
+    service_id = str(cfg.get("app_service_id") or "").strip()
+    secret_env = str(cfg.get("app_service_secret_env") or "").strip()
     secret = os.getenv(secret_env, "").strip() if secret_env else ""
     return service_id, secret
 
 
 def _base_url() -> str:
-    return str(orchestration_config().get("l2_internal_base_url") or "").rstrip("/")
+    return str(orchestration_config().get("app_internal_base_url") or "").rstrip("/")
 
 
 def _timeout() -> float:
@@ -49,7 +49,7 @@ async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     base_url = _base_url()
     service_id, secret = _credentials()
     if not base_url or not service_id or not secret:
-        raise QuotaUnavailable("L2 额度 API 服务凭据未配置（l2_service_id/环境变量）")
+        raise QuotaUnavailable("app 额度 API 服务凭据未配置（app_service_id/环境变量）")
 
     path = f"/internal/v1/harness/quota/{action}"
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -66,7 +66,7 @@ async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=_timeout()) as client:
             response = await client.post(base_url + path, headers=headers, content=body)
     except Exception as exc:
-        raise QuotaUnavailable(f"L2 额度 {action} 调用失败: {type(exc).__name__}: {exc}") from exc
+        raise QuotaUnavailable(f"app 额度 {action} 调用失败: {type(exc).__name__}: {exc}") from exc
 
     try:
         raw = response.json()
@@ -87,14 +87,14 @@ async def _post(action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         )
     if response.status_code == 409:
         if str(data.get("error_code") or "") == "orchestration_not_primary":
-            # 单写者闸：L2 不是额度主写者时，L3 一律 fail-closed，不伪装成预占冲突
-            raise QuotaUnavailable("L2 额度主写者未启用（orchestration_not_primary）")
+            # 单写者闸：app 不是额度主写者时，独立进程一律 fail-closed，不伪装成预占冲突
+            raise QuotaUnavailable("app 额度主写者未启用（orchestration_not_primary）")
         raise QuotaReservationConflict(
             str(data.get("hold_id") or payload.get("hold_id") or ""),
             str(data.get("status") or "unknown"),
         )
     raise QuotaUnavailable(
-        f"L2 额度 {action} 返回 {response.status_code}: {str(raw.get('msg') or raw)[:160]}"
+        f"app 额度 {action} 返回 {response.status_code}: {str(raw.get('msg') or raw)[:160]}"
     )
 
 

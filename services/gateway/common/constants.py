@@ -1,6 +1,6 @@
 """兼容层：网关边界常量唯一来源已下沉到共享基础包。
 
-历史上本模块位于 L2 的 ``base/common/gateway/constants.py``，P1 迁入共享包、
+历史上本模块位于 app 的 ``base/common/gateway/constants.py``，P1 迁入共享包、
 P7 目录整理又随网关领域包迁入服务目录（先 ``services/gateway/gateway/``，
 同日改名为 ``services/gateway/common/``），导致 ``packages.common.log``
 反向依赖 ``services.*``、编排镜像必须复制整个网关包。现已把定义下沉到

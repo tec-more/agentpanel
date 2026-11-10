@@ -16,8 +16,15 @@ $vcvars = Join-Path $visualStudio 'VC/Auxiliary/Build/vcvars32.bat'
 $compileScript = Join-Path $output 'compile-frame.cmd'
 $compileLines = @('@echo off', ('call "{0}" >nul' -f $vcvars), 'if errorlevel 1 exit /b %errorlevel%', ('cl /nologo /LD /MT /O1 /W4 /WX /EHsc "{0}" /Fo"{1}" /link /OUT:"{2}" /IMPLIB:"{3}" user32.lib gdi32.lib comctl32.lib dwmapi.lib gdiplus.lib ole32.lib shell32.lib uuid.lib advapi32.lib' -f $source, (Join-Path $output 'window-frame.obj'), $library, (Join-Path $output 'window-frame.lib')))
 [IO.File]::WriteAllLines($compileScript, $compileLines, [Text.Encoding]::Default)
-& $env:ComSpec /d /c $compileScript
-if ($LASTEXITCODE -ne 0) { throw 'Native installer helper compilation failed.' }
+# Reuse the compiled helper when it is newer than the source; full rebuilds stay
+# available by deleting window-frame.dll or running -CompileProgressOnly.
+$frameUpToDate = (Test-Path -LiteralPath $library) -and ((Get-Item -LiteralPath $source).LastWriteTime -le (Get-Item -LiteralPath $library).LastWriteTime)
+if (-not $frameUpToDate) {
+    & $env:ComSpec /d /c $compileScript
+    if ($LASTEXITCODE -ne 0) { throw 'Native installer helper compilation failed.' }
+} else {
+    Write-Output "window-frame.dll is up to date; skipping native compilation: $library"
+}
 if ($TestProgress -or $CompileProgressOnly) {
     $cleanupSource = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../tests/windows-uninstall-data.cpp'))
     # UAC installer detection demands elevation from unmanifested executables named after installation.
@@ -67,20 +74,29 @@ if ($TestProgress -or $CompileProgressOnly) {
         if ($LASTEXITCODE -ne 0) { throw 'Extraction report regression failed.' }
     }
 }
-Add-Type -AssemblyName System.Drawing
-foreach ($asset in @('brand', 'brand-2x', 'brand-dark', 'brand-dark-2x', 'uninstaller-sidebar')) {
-    $image = [Drawing.Image]::FromFile((Join-Path $installerRoot "assets/$asset.png"))
-    try {
-        $bitmap = [Drawing.Bitmap]::new($image.Width, $image.Height, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
+$assets = @('brand', 'brand-2x', 'brand-dark', 'brand-dark-2x', 'uninstaller-sidebar')
+# Raster assets are derived from the PNG sources; regenerate only when stale.
+$staleAssets = @($assets | Where-Object {
+    $png = Join-Path $installerRoot "assets/$_.png"
+    $bmp = Join-Path $output "$_.bmp"
+    (-not (Test-Path -LiteralPath $bmp)) -or (Test-Path -LiteralPath $png) -and ((Get-Item -LiteralPath $png).LastWriteTime -gt (Get-Item -LiteralPath $bmp).LastWriteTime)
+})
+if ($staleAssets.Count -gt 0) {
+    Add-Type -AssemblyName System.Drawing
+    foreach ($asset in $staleAssets) {
+        $image = [Drawing.Image]::FromFile((Join-Path $installerRoot "assets/$asset.png"))
         try {
-            $graphics = [Drawing.Graphics]::FromImage($bitmap)
+            $bitmap = [Drawing.Bitmap]::new($image.Width, $image.Height, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
             try {
-                $background = if ($asset -like '*dark*') { [Drawing.Color]::FromArgb(21, 21, 23) } else { [Drawing.Color]::White }
-                $graphics.Clear($background)
-                $graphics.DrawImage($image, 0, 0, $image.Width, $image.Height)
-            } finally { $graphics.Dispose() }
-            $bitmap.Save((Join-Path $output "$asset.bmp"), [Drawing.Imaging.ImageFormat]::Bmp)
-        } finally { $bitmap.Dispose() }
-    } finally { $image.Dispose() }
+                $graphics = [Drawing.Graphics]::FromImage($bitmap)
+                try {
+                    $background = if ($asset -like '*dark*') { [Drawing.Color]::FromArgb(21, 21, 23) } else { [Drawing.Color]::White }
+                    $graphics.Clear($background)
+                    $graphics.DrawImage($image, 0, 0, $image.Width, $image.Height)
+                } finally { $graphics.Dispose() }
+                $bitmap.Save((Join-Path $output "$asset.bmp"), [Drawing.Imaging.ImageFormat]::Bmp)
+            } finally { $bitmap.Dispose() }
+        } finally { $image.Dispose() }
+    }
 }
 Write-Output "Prepared native installer resources: $output"

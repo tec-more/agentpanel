@@ -84,11 +84,13 @@ export const VIEWER_ENDPOINT_CLASSES = {
   // the core share roles grant.
   'account/ackBonusNotified': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/cancelSignIn': 'owner-only', // owner account and sign-in; the served page never reads it
+  'account/clearSession': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/getBalance': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/getProfile': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/getState': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/getUnnotifiedBonuses': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/hasRunningAccountTasks': 'owner-only', // owner account and sign-in; the served page never reads it
+  'account/importSession': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/signOut': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/startSignIn': 'owner-only', // owner account and sign-in; the served page never reads it
   'account/watch': 'owner-only', // owner account and sign-in; the served page never reads it

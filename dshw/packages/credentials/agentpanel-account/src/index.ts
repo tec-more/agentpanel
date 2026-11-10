@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import { platform, release } from 'node:os'
 import { Context, Service } from '@deepseek-ai/cordis'
+import type { ImportedLeaseSession } from './types.ts'
 import type {
   AccountBonusBatch,
   AccountBonusOrderId,
@@ -21,6 +22,8 @@ import type {
   SignInAttemptId,
   SignInAttemptView,
 } from '@deepseek-ai/dsh-deepseek-account/types'
+
+export type { ImportedLeaseSession } from './types.ts'
 
 /** Deployment options for the agentpanel account backend. */
 export interface Config {
@@ -86,25 +89,6 @@ export class AgentPanelAuthError extends Error {
     this.name = 'AgentPanelAuthError'
     this.code = code
   }
-}
-
-/**
- * Lease snapshot adopted from the desktop customer sign-in flow.
- *
- * The desktop main process authenticates the customer (email/password or email
- * code), exchanges the customer JWT for a `cus`-bound gateway lease, and keeps
- * renewing it. The Host process only needs the key so `resolveToken` can inject
- * it into gateway requests; renewal and revocation stay with the desktop.
- */
-export interface ImportedLeaseSession {
-  /** Control-plane lease id. */
-  leaseId: string
-  /** Gateway virtual key (`dgw.<lease_id>.<secret>`). */
-  virtualKey: string
-  /** Lease expiry in epoch milliseconds. */
-  expiresAtMs: number
-  /** Seconds before expiry the desktop renews (informational). */
-  renewAfterSeconds?: number
 }
 
 /** Account backend that authenticates dshw against the agentpanel gateway lease. */

@@ -4,8 +4,8 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { isRunningAccountTask } from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
-import type { AgentPanelAccount, ImportedLeaseSession } from '@deepseek-ai/dsh-agentpanel-account'
-import type { AccountView, SignInAttemptId } from './types.ts'
+import type { AgentPanelAccount } from '@deepseek-ai/dsh-agentpanel-account'
+import type { AccountView, ImportedLeaseSession, SignInAttemptId } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

@@ -67,6 +67,7 @@ export async function openWelcomeWindow(locale: DesktopLocale, operations: Welco
     for (const channel of [
       WELCOME_IPC.analyticsEnabled, WELCOME_IPC.analytics, WELCOME_IPC.takeNotice, WELCOME_IPC.saveApiKey,
       WELCOME_IPC.skip, WELCOME_IPC.start, WELCOME_IPC.cancel, WELCOME_IPC.copyLink,
+      WELCOME_IPC.sendCode, WELCOME_IPC.login, WELCOME_IPC.register, WELCOME_IPC.loginCode,
     ]) {
       ipcMain.removeHandler(channel)
     }
@@ -112,6 +113,31 @@ export async function openWelcomeWindow(locale: DesktopLocale, operations: Welco
     assertSender(event)
     if (typeof id !== 'string') throw new Error('desktop welcome: invalid attempt')
     return operations.copySignInLink(id as SignInAttemptId)
+  })
+  const text = (value: unknown, max: number): string => {
+    if (typeof value !== 'string' || value.length === 0 || value.length > max) {
+      throw new Error('desktop welcome: invalid account field')
+    }
+    return value
+  }
+  ipcMain.handle(WELCOME_IPC.sendCode, async (event, email: unknown, purpose: unknown) => {
+    assertSender(event)
+    if (purpose !== 'register' && purpose !== 'login' && purpose !== 'reset_password') {
+      throw new Error('desktop welcome: invalid code purpose')
+    }
+    return operations.sendCode(text(email, 254), purpose)
+  })
+  ipcMain.handle(WELCOME_IPC.login, async (event, email: unknown, password: unknown) => {
+    assertSender(event)
+    return operations.login(text(email, 254), text(password, 128))
+  })
+  ipcMain.handle(WELCOME_IPC.register, async (event, email: unknown, code: unknown, password: unknown) => {
+    assertSender(event)
+    return operations.register(text(email, 254), text(code, 16), text(password, 128))
+  })
+  ipcMain.handle(WELCOME_IPC.loginCode, async (event, email: unknown, code: unknown) => {
+    assertSender(event)
+    return operations.loginCode(text(email, 254), text(code, 16))
   })
   window.once('closed', disposeHandlers)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

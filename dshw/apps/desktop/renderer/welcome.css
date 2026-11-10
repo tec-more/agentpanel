@@ -341,3 +341,86 @@ body {
 .actions .welcome-loading { color: inherit; }
 
 .auth-waiting .copy-link:disabled { cursor: default; }
+
+/* Customer account forms: password login and email-code registration. */
+.welcome > .account-form {
+  gap: 20px;
+  width: 400px;
+}
+
+.account-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.account-fields > .key-field {
+  width: 100%;
+}
+
+.account-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.account-code-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.account-code-row button {
+  flex: none;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-code-row button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.account-error {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: center;
+}
+
+.entry-hint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  text-align: center;
+}
+
+/* Inline text action inside the account form (avoids two absolutely-positioned .back buttons). */
+.account-inline-link {
+  align-self: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.account-inline-link:disabled {
+  opacity: .5;
+  cursor: default;
+}

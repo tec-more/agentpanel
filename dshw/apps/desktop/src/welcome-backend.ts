@@ -2,7 +2,7 @@ import type { ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/typ
 /** Native welcome operations using the shared Web authentication and RPC APIs. */
 
 import { randomUUID } from 'node:crypto'
-import { agentpanelAccountBackend, type DesktopAccountBackend } from './agentpanel-account-backend.ts'
+import { agentpanelAccountBackend, type CustomerAccountBackend } from './agentpanel-account-backend.ts'
 
 /** Metadata needed before the native entry or workspace becomes visible. */
 export interface WelcomeState {
@@ -16,7 +16,7 @@ export interface WelcomeState {
 export interface DesktopWelcomeBackend {
   /** @returns the current Host policy; every read observes live configuration. */
   analyticsEnabled(): Promise<boolean>
-  readonly account: DesktopAccountBackend
+  readonly account: CustomerAccountBackend
   /** @param event - desktop-owned fields. @returns after local Host intake. */
   report(event: ProductEvent): Promise<void>
   /** @returns Configured-key presence and the shared language preference, without credential values. */
@@ -66,14 +66,11 @@ export function connectDesktopWelcome(
     }
     return envelope.result.value
   }
-  // 登录账号认证已与 agentpanel 打通：用 Harness 客户端凭据向网关申请可续期租约虚拟 key（续约key），
-  // 并以该 key 作为会话凭证。凭据/网关地址通过环境变量注入（见 .env.windows.example）。
+  // 登录主体是 agentpanel 客户账号（cus）：注册走邮箱验证码，登录后用 JWT 换取
+  // 绑定 cus 主体的网关租约虚拟 key。控制面地址通过环境变量注入（见 .env.windows.example）。
   const account = agentpanelAccountBackend({
     gatewayUrl: process.env.AGENTPANEL_GATEWAY_URL ?? 'http://127.0.0.1:9999',
-    controlPlaneUrl: process.env.AGENTPANEL_CONTROL_PLANE_URL ?? 'http://127.0.0.1:9998/v1/harness',
-    clientToken: process.env.AGENTPANEL_HARNESS_TOKEN,
-    clientId: process.env.AGENTPANEL_HARNESS_CLIENT_ID,
-    clientSecret: process.env.AGENTPANEL_HARNESS_CLIENT_SECRET,
+    customerUrl: process.env.AGENTPANEL_CUSTOMER_URL ?? 'http://127.0.0.1:9998/v1/customer',
     storageDir: process.env.AGENTPANEL_ACCOUNT_STORE_DIR,
     usageUrl: process.env.AGENTPANEL_USAGE_URL,
     topUpUrl: process.env.AGENTPANEL_TOPUP_URL,

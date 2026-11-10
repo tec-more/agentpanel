@@ -25,6 +25,16 @@ function mount(language = 'zh-CN', takeNotice = vi.fn<() => Promise<WelcomeNotic
     ...resolveDesktopLocale(language),
     saveApiKey: vi.fn<(value: string) => Promise<WelcomeSaveResult>>().mockResolvedValue({ ok: true }),
     skip: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    sendCode: vi.fn(async (_email: string, _purpose: string) => ({ ok: true as const })),
+    login: vi.fn(async (_email: string, _password: string) => ({
+      ok: false as const, message: 'not configured',
+    })),
+    register: vi.fn(async (_email: string, _code: string, _password: string) => ({
+      ok: false as const, message: 'not configured',
+    })),
+    loginCode: vi.fn(async (_email: string, _code: string) => ({
+      ok: false as const, message: 'not configured',
+    })),
   }
   const mounted = render(<Welcome api={api} />)
   const input = document.querySelector('input')!
@@ -39,6 +49,11 @@ function mount(language = 'zh-CN', takeNotice = vi.fn<() => Promise<WelcomeNotic
       document.title, document.querySelector('img')!.alt, document.getElementById(heading)!.textContent,
       ...heading === 'welcome-heading' ? [document.querySelector('#welcome-description')!.textContent] : [],
       ...heading === 'key-title' ? [document.querySelector('#key-description')!.textContent, `${input.placeholder} [password]`] : [],
+      ...heading === 'login-title' || heading === 'register-title'
+        ? [...document.querySelectorAll<HTMLInputElement>('.account-fields input')]
+          .filter(item => item.closest('form')?.hidden === false)
+          .map(item => `${item.placeholder} [${item.type}]`)
+        : [],
       ...[...document.querySelectorAll('button')].filter(item => item.closest('[hidden]') === null)
         .map(item => `${item.textContent || item.getAttribute('aria-label')}${item.disabled ? ' [disabled]' : ''}`),
       '',
@@ -161,7 +176,7 @@ it.each(['zh-CN', 'en'])('renders %s timeout with manual retry and API-key alter
   const receive = (state: AccountView) => { act(() => { view.api.onAccountState.mock.calls[0]![0](state) }) }
   receive({ status: 'signed-out', links: { usageUrl: '', topUpUrl: '' }, attempt: { id: 'expired' as NonNullable<AccountView['attempt']>['id'], phase: 'expired' } })
   expect(view.button('#auth-retry').hidden).toBe(false)
-  expect(view.button('#auth-api-key').hidden).toBe(false)
+  expect(view.button('#auth-api-key').hidden).toBe(true)
   expect(view.api.startSignIn).not.toHaveBeenCalled()
   await expect(view.copy() + view.document.querySelector('#auth-description')!.textContent + '\n').toMatchFileSnapshot(`./expected/welcome/${language}-timeout.expected.txt`)
   fireEvent.click(view.button('#auth-api-key'))
@@ -196,7 +211,8 @@ it('keeps a newer account notification when the start response arrives late', as
   const view = mount()
   const started = Promise.withResolvers<AccountView>()
   view.api.startSignIn.mockReturnValueOnce(started.promise)
-  fireEvent.click(view.button('#sign-in'))
+  // The entry sign-in button now opens the customer login form; retry still drives the attempt flow.
+  fireEvent.click(view.button('#auth-retry'))
   expect(view.button('#auth-cancel').disabled).toBe(true)
   const state: AccountView = { status: 'signed-out', links: { usageUrl: '', topUpUrl: '' },
     attempt: { id: 'attempt' as NonNullable<AccountView['attempt']>['id'], phase: 'expired' } }
@@ -329,6 +345,45 @@ it.each(['zh-CN', 'en'])('returns from completed sign-in to the initial page aft
   await expect(view.copy()).toMatchFileSnapshot(`./expected/welcome/${language}.expected.txt`)
 })
 
+it('opens the customer login form and submits email and password', async () => {
+  const view = mount('en')
+  fireEvent.click(view.button('#sign-in'))
+  expect(view.document.querySelector<HTMLElement>('#login-form')!.hidden).toBe(false)
+  expect(view.document.querySelector<HTMLElement>('#entry-actions')!.hidden).toBe(true)
+  fireEvent.change(view.document.querySelector('#login-email')!, { target: { value: 'customer@example.test' } })
+  fireEvent.change(view.document.querySelector('#login-password')!, { target: { value: 'secret123' } })
+  fireEvent.submit(view.document.querySelector('#login-form')!)
+  await vi.waitFor(() => { expect(view.api.login).toHaveBeenCalledWith('customer@example.test', 'secret123') })
+  await vi.waitFor(() => { expect(view.document.querySelector('#login-error')!.textContent).toBe('not configured') })
+  await expect(view.copy()).toMatchFileSnapshot('./expected/welcome/en-login.expected.txt')
+})
+
+it('connects a new account with an email verification code', async () => {
+  const view = mount('zh-CN')
+  fireEvent.click(view.button('#goto-register'))
+  expect(view.document.querySelector<HTMLElement>('#register-form')!.hidden).toBe(false)
+  fireEvent.change(view.document.querySelector('#register-email')!, { target: { value: 'new@example.test' } })
+  fireEvent.click(view.button('#send-code'))
+  await vi.waitFor(() => { expect(view.api.sendCode).toHaveBeenCalledWith('new@example.test', 'register') })
+  await vi.waitFor(() => { expect(view.button('#send-code').textContent).toBe(view.api.messages.welcomeRegisterResend) })
+  fireEvent.change(view.document.querySelector('#register-code')!, { target: { value: '123456' } })
+  fireEvent.change(view.document.querySelector('#register-password')!, { target: { value: 'secret123' } })
+  fireEvent.submit(view.document.querySelector('#register-form')!)
+  await vi.waitFor(() => { expect(view.api.register).toHaveBeenCalledWith('new@example.test', '123456', 'secret123') })
+  await vi.waitFor(() => { expect(view.button('#register-submit').disabled).toBe(false) })
+  await expect(view.copy()).toMatchFileSnapshot('./expected/welcome/zh-CN-register.expected.txt')
+})
+
+it('rejects an invalid email before calling any account operation', () => {
+  const view = mount('en')
+  fireEvent.click(view.button('#sign-in'))
+  fireEvent.change(view.document.querySelector('#login-email')!, { target: { value: 'not-an-email' } })
+  fireEvent.change(view.document.querySelector('#login-password')!, { target: { value: 'secret123' } })
+  fireEvent.submit(view.document.querySelector('#login-form')!)
+  expect(view.api.login).not.toHaveBeenCalled()
+  expect(view.document.querySelector('#login-error')!.textContent).toBe(view.api.messages.welcomeAccountEmailInvalid)
+})
+
 it('reports each return to the welcome entry once, including account cancellation', async () => {
   const view = mount()
   expect(view.api.analytics).not.toHaveBeenCalled()
@@ -337,7 +392,7 @@ it('reports each return to the welcome entry once, including account cancellatio
   expect(view.api.analytics.mock.calls.map(([action]) => action)).toEqual(['auth_page_click', 'auth_page_view'])
   const pending = Promise.withResolvers<AccountView>()
   view.api.startSignIn.mockReturnValueOnce(pending.promise)
-  fireEvent.click(view.button('#sign-in'))
+  fireEvent.click(view.button('#auth-retry'))
   await act(async () => { pending.resolve({ links: { usageUrl: 'http://localhost/usage', topUpUrl: 'http://localhost/top_up' }, status: 'signed-out', attempt: null }) })
   expect(view.api.analytics.mock.calls.map(([action]) => action)).toEqual(['auth_page_click', 'auth_page_view', 'auth_page_click', 'auth_page_view'])
 })

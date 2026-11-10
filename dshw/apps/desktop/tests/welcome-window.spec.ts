@@ -47,6 +47,10 @@ const operations = {
   copySignInLink: async () => undefined,
   saveApiKey: () => Promise.resolve({ ok: true as const }),
   skip: () => Promise.resolve(),
+  sendCode: async (_email: string, _purpose: string) => ({ ok: true as const }),
+  login: async (_email: string, _password: string) => ({ ok: false as const, message: 'not configured' }),
+  register: async (_email: string, _code: string, _password: string) => ({ ok: false as const, message: 'not configured' }),
+  loginCode: async (_email: string, _code: string) => ({ ok: false as const, message: 'not configured' }),
 }
 
 describe('desktop welcome window', () => {

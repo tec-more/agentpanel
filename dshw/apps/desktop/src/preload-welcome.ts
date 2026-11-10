@@ -3,7 +3,7 @@ import type { AccountView, SignInAttemptId } from '@deepseek-ai/dsh-deepseek-acc
 
 import { contextBridge, ipcRenderer } from 'electron'
 import { resolveDesktopLocale } from './locale.ts'
-import { WELCOME_IPC, type WelcomeApi, type WelcomeNotice, type WelcomeSaveResult } from './welcome-api.ts'
+import { WELCOME_IPC, type CustomerAuthOutcome, type CustomerCodeOutcome, type WelcomeApi, type WelcomeNotice, type WelcomeSaveResult } from './welcome-api.ts'
 
 const prefix = '--dsh-welcome-locale='
 const locale = process.argv.find(argument => argument.startsWith(prefix))?.slice(prefix.length)
@@ -18,6 +18,10 @@ const api: WelcomeApi = {
   startSignIn: () => ipcRenderer.invoke(WELCOME_IPC.start) as Promise<AccountView>,
   cancelSignIn: (id: SignInAttemptId) => ipcRenderer.invoke(WELCOME_IPC.cancel, id) as Promise<AccountView>,
   copySignInLink: (id: SignInAttemptId) => ipcRenderer.invoke(WELCOME_IPC.copyLink, id) as Promise<void>,
+  sendCode: (email, purpose) => ipcRenderer.invoke(WELCOME_IPC.sendCode, email, purpose) as Promise<CustomerCodeOutcome>,
+  login: (email, password) => ipcRenderer.invoke(WELCOME_IPC.login, email, password) as Promise<CustomerAuthOutcome>,
+  register: (email, code, password) => ipcRenderer.invoke(WELCOME_IPC.register, email, code, password) as Promise<CustomerAuthOutcome>,
+  loginCode: (email, code) => ipcRenderer.invoke(WELCOME_IPC.loginCode, email, code) as Promise<CustomerAuthOutcome>,
   onAccountState: (listener) => {
     const receive = (_event: Electron.IpcRendererEvent, state: AccountView): void =>{  listener(state) }
     ipcRenderer.on(WELCOME_IPC.state, receive)

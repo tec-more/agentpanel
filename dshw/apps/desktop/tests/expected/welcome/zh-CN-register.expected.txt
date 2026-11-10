@@ -1,0 +1,10 @@
+DeepSeek Harness
+DeepSeek Harness
+连接账号
+邮箱 [email]
+邮箱验证码 [text]
+设置密码（至少 6 位） [password]
+重新发送
+注册并登录
+返回登录
+返回

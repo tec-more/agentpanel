@@ -3,4 +3,4 @@ DeepSeek Harness
 Welcome to DeepSeek Harness
 Build potential. Explore intelligence.
 Sign in
-Add API Key
+Create an account

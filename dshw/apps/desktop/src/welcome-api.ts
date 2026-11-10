@@ -4,6 +4,12 @@ import type { AccountView, SignInAttemptId } from '@deepseek-ai/dsh-deepseek-acc
 import type { ProductEventMap } from '@deepseek-ai/dsh-client-product-analytics/types'
 import type { DesktopLocale } from './locale.ts'
 
+/** Customer account action results; shared by the renderer contract and the native backend. */
+export type CustomerCodeOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string }
+export type CustomerAuthOutcome =
+  | { readonly ok: true; readonly state: AccountView }
+  | { readonly ok: false; readonly message: string }
+
 /** Private native welcome channels, installed only while its window exists. */
 export const WELCOME_IPC = {
   saveApiKey: 'dsh-welcome:save-api-key',
@@ -15,6 +21,10 @@ export const WELCOME_IPC = {
   copyLink: 'dsh-welcome:copy-link',
   state: 'dsh-welcome:state',
   takeNotice: 'dsh-welcome:take-notice',
+  sendCode: 'dsh-welcome:send-code',
+  login: 'dsh-welcome:login',
+  register: 'dsh-welcome:register',
+  loginCode: 'dsh-welcome:login-code',
 } as const
 
 /** Credential writes return a safe outcome without exposing Host diagnostics. */
@@ -39,6 +49,12 @@ export interface WelcomeOperations {
   cancelSignIn(id: SignInAttemptId): Promise<AccountView>
   /** @param id - current waiting attempt whose authorization URL is copied to the system clipboard. */
   copySignInLink(id: SignInAttemptId): Promise<void>
+
+  /** Customer account (cus) flows: email verification code, password login and registration. */
+  sendCode(email: string, purpose: 'register' | 'login' | 'reset_password'): Promise<CustomerCodeOutcome>
+  login(email: string, password: string): Promise<CustomerAuthOutcome>
+  register(email: string, code: string, password: string): Promise<CustomerAuthOutcome>
+  loginCode(email: string, code: string): Promise<CustomerAuthOutcome>
 
   /**
    * Store the official provider's key before entering the workspace.

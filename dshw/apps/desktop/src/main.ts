@@ -1402,6 +1402,22 @@ async function main(): Promise<void> {
           await enterWorkspace()
           return { ok: true }
         },
+        sendCode: async (email, purpose) => {
+          if (welcomeBackend === undefined) return { ok: false, message: 'desktop welcome: backend unavailable' }
+          return welcomeBackend.account.sendCode(email, purpose)
+        },
+        login: async (email, password) => {
+          if (welcomeBackend === undefined) return { ok: false, message: 'desktop welcome: backend unavailable' }
+          return welcomeBackend.account.login(email, password)
+        },
+        register: async (email, code, password) => {
+          if (welcomeBackend === undefined) return { ok: false, message: 'desktop welcome: backend unavailable' }
+          return welcomeBackend.account.register(email, code, password)
+        },
+        loginCode: async (email, code) => {
+          if (welcomeBackend === undefined) return { ok: false, message: 'desktop welcome: backend unavailable' }
+          return welcomeBackend.account.loginCode(email, code)
+        },
         skip: enterWorkspace,
       })
       const window = welcomeWindow

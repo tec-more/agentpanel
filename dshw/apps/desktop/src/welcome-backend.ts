@@ -70,6 +70,7 @@ export function connectDesktopWelcome(
   // 并以该 key 作为会话凭证。凭据/网关地址通过环境变量注入（见 .env.windows.example）。
   const account = agentpanelAccountBackend({
     gatewayUrl: process.env.AGENTPANEL_GATEWAY_URL ?? 'http://127.0.0.1:9999',
+    controlPlaneUrl: process.env.AGENTPANEL_CONTROL_PLANE_URL ?? 'http://127.0.0.1:9998/v1/harness',
     clientToken: process.env.AGENTPANEL_HARNESS_TOKEN,
     clientId: process.env.AGENTPANEL_HARNESS_CLIENT_ID,
     clientSecret: process.env.AGENTPANEL_HARNESS_CLIENT_SECRET,

@@ -24,8 +24,10 @@ import type {
 
 /** Deployment options for the agentpanel account backend. */
 export interface Config {
-  /** agentpanel gateway base URL (default http://127.0.0.1:9999). */
+  /** agentpanel gateway 【data-plane】 base URL (default http://127.0.0.1:9999). Used by `resolveToken` so the lease key is only sent to the gateway origin. */
   gatewayUrl?: string
+  /** agentpanel gateway 【control-plane】 base URL for lease issue/renew/revoke (default http://127.0.0.1:9998/v1/harness). */
+  controlPlaneUrl?: string
   /** Harness client id used as `Bearer <clientId>.<clientSecret>`. */
   clientId?: string
   /** Harness client secret. */
@@ -47,6 +49,7 @@ export interface Config {
 /** Resolved configuration with defaults applied. */
 interface ResolvedConfig {
   gatewayUrl: string
+  controlPlaneUrl: string
   clientId: string
   clientSecret: string
   leaseTtlSeconds: number
@@ -100,6 +103,7 @@ export class AgentPanelAccount extends Service {
     super(ctx, 'agentpanelAccount')
     this.config = {
       gatewayUrl: config.gatewayUrl || 'http://127.0.0.1:9999',
+      controlPlaneUrl: config.controlPlaneUrl || 'http://127.0.0.1:9998/v1/harness',
       clientId: config.clientId || '',
       clientSecret: config.clientSecret || '',
       leaseTtlSeconds: config.leaseTtlSeconds ?? 900,
@@ -176,11 +180,11 @@ export class AgentPanelAccount extends Service {
 
   async signOut(_client: AccountClientMetadata): Promise<AccountView> {
     if (this.lease !== undefined) {
-      const { clientId, clientSecret, gatewayUrl, gatewayApiKey } = this.config
+      const { clientId, clientSecret, controlPlaneUrl, gatewayApiKey } = this.config
       const headers: Record<string, string> = { authorization: `Bearer ${clientId}.${clientSecret}` }
       if (gatewayApiKey) headers['x-api-key'] = gatewayApiKey
       try {
-        await fetch(`${gatewayUrl}/gateway/leases/${encodeURIComponent(this.lease.leaseId)}`, { method: 'DELETE', headers })
+        await fetch(`${controlPlaneUrl}/gateway/leases/${encodeURIComponent(this.lease.leaseId)}`, { method: 'DELETE', headers })
       } catch (error) {
         console.error('[agentpanel-account] revoke failed', error instanceof Error ? error.message : error)
       }
@@ -231,7 +235,7 @@ export class AgentPanelAccount extends Service {
   }
 
   private async issueLease(attempt: Attempt): Promise<void> {
-    const { clientId, clientSecret, gatewayUrl, leaseTtlSeconds, leaseRpmLimit, gatewayApiKey } = this.config
+    const { clientId, clientSecret, controlPlaneUrl, leaseTtlSeconds, leaseRpmLimit, gatewayApiKey } = this.config
     if (!clientId || !clientSecret) {
       this.update(attempt, { phase: 'failed', errorCode: 'protocol' })
       return
@@ -243,7 +247,7 @@ export class AgentPanelAccount extends Service {
     if (gatewayApiKey) headers['x-api-key'] = gatewayApiKey
     let res: Response
     try {
-      res = await fetch(`${gatewayUrl}/gateway/leases`, {
+      res = await fetch(`${controlPlaneUrl}/gateway/leases`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ ttl_seconds: leaseTtlSeconds, rpm_limit: leaseRpmLimit }),
@@ -288,14 +292,14 @@ export class AgentPanelAccount extends Service {
 
   private async renewLease(): Promise<void> {
     if (this.lease === undefined || this.closed) return
-    const { clientId, clientSecret, gatewayUrl, leaseTtlSeconds, gatewayApiKey } = this.config
+    const { clientId, clientSecret, controlPlaneUrl, leaseTtlSeconds, gatewayApiKey } = this.config
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       authorization: `Bearer ${clientId}.${clientSecret}`,
     }
     if (gatewayApiKey) headers['x-api-key'] = gatewayApiKey
     try {
-      const res = await fetch(`${gatewayUrl}/gateway/leases/${encodeURIComponent(this.lease.leaseId)}/renew`, {
+      const res = await fetch(`${controlPlaneUrl}/gateway/leases/${encodeURIComponent(this.lease.leaseId)}/renew`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ ttl_seconds: leaseTtlSeconds }),

@@ -38,12 +38,13 @@ afterEach(() => {
 
 const config = (): Record<string, unknown> => ({
   gatewayUrl: 'http://gw.test',
+  controlPlaneUrl: 'http://cp.test/v1/harness',
   clientToken: 'cid.csec',
   storageDir: dir,
   renewCheckMs: 10,
 })
 
-it('start issues a lease, reports credential-stored, and persists it', async () => {
+it('start issues a lease on the control plane, reports credential-stored, and persists it', async () => {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => leaseResponse() } as Response)
   vi.stubGlobal('fetch', fetchMock)
   const backend = agentpanelAccountBackend(config())
@@ -54,8 +55,7 @@ it('start issues a lease, reports credential-stored, and persists it', async () 
 
   expect(fetchMock).toHaveBeenCalledTimes(1)
   const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit]
-  expect(String(url)).toContain('/gateway/leases')
-  expect(String(url).endsWith('/gateway/leases')).toBe(true)
+  expect(String(url)).toBe('http://cp.test/v1/harness/gateway/leases')
   expect((opts.headers as Record<string, string>).Authorization).toBe('Bearer cid.csec')
 
   const file = path.join(dir, 'account.json')
@@ -77,5 +77,5 @@ it('signOut revokes the lease and clears the persisted credential', async () => 
   const revoke = fetchMock.mock.calls
     .find((call) => String(call[0]).includes('/gateway/leases/') && (call[1] as RequestInit).method === 'DELETE')
   expect(revoke).toBeTruthy()
-  expect(String(revoke![0])).toContain('/gateway/leases/L1')
+  expect(String(revoke![0])).toBe('http://cp.test/v1/harness/gateway/leases/L1')
 })

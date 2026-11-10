@@ -3,6 +3,10 @@
  * contract. `fetch` is mocked so no live gateway is required; this validates the
  * real service logic (issue / parse / resolveToken / renew scheduling / revoke),
  * not just the controller delegation.
+ *
+ * Topology: lease issue/renew/revoke go to the 【control-plane】 (`controlPlaneUrl`,
+ * e.g. http://127.0.0.1:9998/v1/harness); `resolveToken` only returns the lease
+ * key for the 【data-plane】 gateway origin (`gatewayUrl`, e.g. http://127.0.0.1:9999).
  */
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -47,12 +51,19 @@ function started(url: string, opts: RequestInit): [string, RequestInit] {
   return [url, opts]
 }
 
-it('issues a renewable lease and reports credential-stored state', async () => {
+const CONFIG = {
+  gatewayUrl: 'http://gw.test',
+  controlPlaneUrl: 'http://cp.test/v1/harness',
+  clientId: 'cid',
+  clientSecret: 'csec',
+}
+
+it('issues a renewable lease on the control plane and resolves the key for the data plane', async () => {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => leaseResponse() } as Response)
   vi.stubGlobal('fetch', fetchMock)
   const ctx = new Context()
   roots.push(ctx)
-  const svc = new AgentPanelAccount(ctx, { gatewayUrl: 'http://gw.test', clientId: 'cid', clientSecret: 'csec' })
+  const svc = new AgentPanelAccount(ctx, CONFIG)
 
   expect((await svc.getState()).status).toBe('signed-out')
   await svc.startSignIn(client, 'http://127.0.0.1:8080', 'web')
@@ -62,11 +73,13 @@ it('issues a renewable lease and reports credential-stored state', async () => {
 
   expect(fetchMock).toHaveBeenCalledTimes(1)
   const [url, opts] = started(...(fetchMock.mock.calls[0] as [string, RequestInit]))
-  expect(String(url)).toContain('/gateway/leases')
+  expect(String(url)).toBe('http://cp.test/v1/harness/gateway/leases')
   expect((opts.headers as Record<string, string>).authorization).toBe('Bearer cid.csec')
   expect(opts.method).toBe('POST')
 
+  // 续约 key 仅对数据面网关（gatewayUrl）生效，不对控制面（controlPlaneUrl）。
   expect(await svc.resolveToken('http://gw.test/x')).toBe('dgw.lease-1.secret')
+  expect(await svc.resolveToken('http://cp.test/x')).toBeUndefined()
   expect(await svc.resolveToken('http://other.test/x')).toBeUndefined()
 })
 
@@ -75,20 +88,21 @@ it('stays signed-out when the gateway rejects the lease', async () => {
   vi.stubGlobal('fetch', fetchMock)
   const ctx = new Context()
   roots.push(ctx)
-  const svc = new AgentPanelAccount(ctx, { gatewayUrl: 'http://gw.test', clientId: 'cid', clientSecret: 'csec' })
+  const svc = new AgentPanelAccount(ctx, CONFIG)
 
   await svc.startSignIn(client, 'http://127.0.0.1:8080', 'web')
   await new Promise((resolve) => setTimeout(resolve, 60))
   expect((await svc.getState()).status).toBe('signed-out')
   expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(String(fetchMock.mock.calls[0]![0])).toBe('http://cp.test/v1/harness/gateway/leases')
 })
 
-it('revokes the lease on signOut', async () => {
+it('revokes the lease on signOut via the control plane', async () => {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => leaseResponse() } as Response)
   vi.stubGlobal('fetch', fetchMock)
   const ctx = new Context()
   roots.push(ctx)
-  const svc = new AgentPanelAccount(ctx, { gatewayUrl: 'http://gw.test', clientId: 'cid', clientSecret: 'csec' })
+  const svc = new AgentPanelAccount(ctx, CONFIG)
 
   await svc.startSignIn(client, 'http://127.0.0.1:8080', 'web')
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -101,5 +115,5 @@ it('revokes the lease on signOut', async () => {
     .map((c) => started(...(c as [string, RequestInit])))
     .find(([u, o]) => String(u).includes('/gateway/leases/') && o.method === 'DELETE')
   expect(deleteCall).toBeTruthy()
-  expect(String(deleteCall![0])).toContain('/gateway/leases/lease-1')
+  expect(String(deleteCall![0])).toBe('http://cp.test/v1/harness/gateway/leases/lease-1')
 })

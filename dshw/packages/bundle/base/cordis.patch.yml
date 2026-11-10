@@ -126,6 +126,7 @@
       name: '@deepseek-ai/dsh-agentpanel-account'
       config:
         gatewayUrl: !!js process.env.DSH_AGENTPANEL_GATEWAY_URL || 'http://127.0.0.1:9999'
+        controlPlaneUrl: !!js process.env.DSH_AGENTPANEL_CONTROL_PLANE_URL || 'http://127.0.0.1:9998/v1/harness'
         clientId: !!js process.env.DSH_AGENTPANEL_CLIENT_ID || ''
         clientSecret: !!js process.env.DSH_AGENTPANEL_CLIENT_SECRET || ''
 

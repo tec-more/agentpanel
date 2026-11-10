@@ -10,8 +10,9 @@
  * - 后台按 TTL 比例自动续期（renew），过期/续期失败则通知会话失效。
  *
  * 配置（环境变量，由桌面启动进程注入）：
- * - AGENTPANEL_GATEWAY_URL        网关基址，默认 http://127.0.0.1:9999
- * - AGENTPANEL_HARNESS_TOKEN     完整 Bearer 凭证 `<client_id>.<secret>`
+ * - AGENTPANEL_GATEWAY_URL         网关【数据面】基址（chat 调用），默认 http://127.0.0.1:9999
+ * - AGENTPANEL_CONTROL_PLANE_URL  网关【控制面】基址（租约签发/续期/吊销），默认 http://127.0.0.1:9998/v1/harness
+ * - AGENTPANEL_HARNESS_TOKEN      完整 Bearer 凭证 `<client_id>.<secret>`
  * - AGENTPANEL_HARNESS_CLIENT_ID / AGENTPANEL_HARNESS_CLIENT_SECRET  二选一拆分形式
  * - AGENTPANEL_ACCOUNT_STORE_DIR  租约持久化目录（默认 %APPDATA%/dsh-agentpanel 或 ~/.config/dsh-agentpanel）
  * - AGENTPANEL_USAGE_URL / AGENTPANEL_TOPUP_URL  账号中心/充值页（仅展示）
@@ -57,7 +58,10 @@ export interface DesktopAccountBackend {
 }
 
 export interface AgentpanelAccountConfig {
+  /** 网关【数据面】基址（chat 调用；仅此 origin 会被注入租约 key）。默认 http://127.0.0.1:9999 */
   gatewayUrl: string
+  /** 网关【控制面】基址（租约签发/续期/吊销）。默认 http://127.0.0.1:9998/v1/harness */
+  controlPlaneUrl?: string
   clientToken?: string
   clientId?: string
   clientSecret?: string
@@ -77,8 +81,8 @@ interface StoredLease {
 
 const LEASES = '/gateway/leases'
 
-function base(gatewayUrl: string): string {
-  return gatewayUrl.replace(/\/+$/, '')
+function base(url: string): string {
+  return url.replace(/\/+$/, '')
 }
 
 function authHeader(config: AgentpanelAccountConfig): Record<string, string> {
@@ -91,8 +95,12 @@ function authHeader(config: AgentpanelAccountConfig): Record<string, string> {
   return { Authorization: `Bearer ${token}` }
 }
 
+function controlBase(config: AgentpanelAccountConfig): string {
+  return base(config.controlPlaneUrl ?? 'http://127.0.0.1:9998/v1/harness')
+}
+
 function linksOf(config: AgentpanelAccountConfig): { usageUrl: string; topUpUrl: string } {
-  const b = base(config.gatewayUrl)
+  const b = controlBase(config)
   return {
     usageUrl: config.usageUrl ?? `${b}/account/usage`,
     topUpUrl: config.topUpUrl ?? `${b}/account/top-up`,
@@ -177,7 +185,7 @@ export function agentpanelAccountBackend(config: AgentpanelAccountConfig): Deskt
   }
 
   async function issue(): Promise<StoredLease> {
-    const res = await fetch(`${base(config.gatewayUrl)}${LEASES}`, {
+    const res = await fetch(`${controlBase(config)}${LEASES}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeader(config) },
       body: JSON.stringify({}),
@@ -194,7 +202,7 @@ export function agentpanelAccountBackend(config: AgentpanelAccountConfig): Deskt
   }
 
   async function renew(lease: StoredLease): Promise<StoredLease> {
-    const res = await fetch(`${base(config.gatewayUrl)}${LEASES}/${encodeURIComponent(lease.leaseId)}/renew`, {
+    const res = await fetch(`${controlBase(config)}${LEASES}/${encodeURIComponent(lease.leaseId)}/renew`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeader(config) },
       body: JSON.stringify({}),
@@ -208,7 +216,7 @@ export function agentpanelAccountBackend(config: AgentpanelAccountConfig): Deskt
   }
 
   async function revoke(lease: StoredLease): Promise<void> {
-    await fetch(`${base(config.gatewayUrl)}${LEASES}/${encodeURIComponent(lease.leaseId)}`, {
+    await fetch(`${controlBase(config)}${LEASES}/${encodeURIComponent(lease.leaseId)}`, {
       method: 'DELETE',
       headers: authHeader(config),
     }).catch(() => {})

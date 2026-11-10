@@ -282,7 +282,7 @@ class IdentityService:
         ok = False
         if verify_via == "email_code":
             from base.core.users.services.email_service import EmailService
-            ok = EmailService.verify_code(peer.email, credential, CODE_TYPE_IDENTITY)
+            ok = await EmailService.verify_code(peer.email, credential, CODE_TYPE_IDENTITY)
         elif verify_via == "password":
             peer_password = getattr(peer, "password", None)
             if not peer_password:

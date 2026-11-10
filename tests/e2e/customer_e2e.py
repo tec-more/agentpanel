@@ -65,6 +65,25 @@ def unwrap(resp) -> dict:
     return data.get("data", data) if isinstance(data, dict) else {}
 
 
+def _redis_cli_get(key: str) -> str | None:
+    """从 agentredis 读取验证码（验证 Redis 存储后端），失败返回 None。"""
+    pw_file = ROOT / "deploy/gateway/secrets/redis_password"
+    pw = pw_file.read_text(encoding="utf-8").strip() if pw_file.exists() else ""
+    cmd = ["docker", "exec", "agentredis", "redis-cli"]
+    if pw:
+        cmd += ["-a", pw]
+    cmd += ["GET", key]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=20)
+    except Exception:
+        return None
+    out = (res.stdout or "").strip()
+    if not out or out.upper() == "NIL" or out.startswith("("):
+        return None
+    return out
+
+
 # ---------------------------------------------------------------- 0. 基线
 def baseline():
     r = SESSION.get("http://127.0.0.1:9998/openapi.json", timeout=10,
@@ -107,11 +126,14 @@ def register_flow() -> str:
             m = re.search(r"Code:\s*(\d{6})", line)
             if m:
                 break
-    code = m.group(1) if m else None
-    CONTEXT["code_from_log"] = code
-    record("E02", "验证码可从运行实例获取", code is not None,
+    code_from_log = m.group(1) if m else None
+
+    # 优先从 Redis 读取（新存储后端，多 worker 共享）：直接验证修复是否生效
+    code = _redis_cli_get(f"vc:register:{email}") or code_from_log
+    CONTEXT["code_from_redis"] = _redis_cli_get(f"vc:register:{email}")
+    record("E02", "验证码可从运行实例获取（Redis 存储）", code is not None,
            f"email={email}, code={'<6位>' if code else 'NOT_FOUND'}; "
-           "验证码存进程内字典（单 worker），日志仅用于本地验收")
+           "验证码存储于 Redis（多 worker 共享），E02 直接从 Redis 读取验证")
 
     if not code:
         return ""
@@ -297,6 +319,28 @@ def smtp_auth_check():
                status="BLOCKED")
 
 
+# ---------------------------------------------------------------- 6. 频率限制
+def rate_limit_check():
+    """同一邮箱连续发送验证码应被限流（防刷）。
+
+    用 reset_password 类型（不做存在性校验，直达限流逻辑）对同一个
+    刚生成的邮箱连续请求 4 次：前 3 次应通过限流，第 4 次被拦截。
+    """
+    email = f"rate.e2e.{datetime.now():%Y%m%d%H%M%S}@example.com"
+    limited = []
+    details = []
+    for i in range(4):
+        r = SESSION.post(CP + "/auth/send-code",
+                         json={"email": email, "type": "reset_password"},
+                         timeout=60, proxies={"http": None, "https": None})
+        b = body(r)
+        is_limited = "频繁" in str(b.get("msg", ""))
+        limited.append(is_limited)
+        details.append(f"#{i + 1}: HTTP={r.status_code} msg={b.get('msg')}")
+    ok = (sum(limited[:3]) == 0) and limited[3]
+    record("E15", "send-code 频率限制生效（防刷）", ok, "; ".join(details))
+
+
 # ---------------------------------------------------------------- 报告
 def ui_section() -> list[str]:
     """把独立 UI 脚本的结果并入同一份报告（不重跑测试即可重生成）。"""
@@ -423,8 +467,10 @@ def write_report():
         f"- send-code 响应：{CONTEXT.get('send_detail', 'n/a')}",
         "- E09 用无效 model 名仅对比鉴权层状态码（不产生真实调用）；E13 用 `deepseek-chat`",
         "  + `max_tokens=1` 做一次真实调用，用于区分「鉴权通过」与「上游可用」",
-        "- 既有遗留：`EmailService` 验证码为进程内字典（多 worker 会丢码）、send-code 无限频；",
-        "  硬编码 `SECRET_KEY` 未外置；新客户若无 active `QuotaPlan(cus/both)` 可能被网关 0 额度拦截",
+        "- 本轮已修复（2026-11-10）：`EmailService` 验证码改 Redis 优先 + 进程内降级存储，",
+        "  解决多 worker（默认 2 worker）下验证码落内存导致注册偶发失败；`send-code` 增加",
+        "  邮箱/IP 维度频率限制（E15 已验证）；`SECRET_KEY` 改为环境变量 / config.conf `[auth]` 优先，",
+        "  默认值仅在缺失时兜底并告警。新客户若无 active `QuotaPlan(cus/both)` 仍可能被网关 0 额度拦截",
         "",
         "## 复跑",
         "",
@@ -462,6 +508,7 @@ def main():
     auth_guards()
     lease_flow(token)
     smtp_auth_check()
+    rate_limit_check()
     write_report()
 
 

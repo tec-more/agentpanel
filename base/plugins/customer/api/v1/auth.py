@@ -5,7 +5,7 @@
 注意：客户管理功能（CRUD、列表等）已迁移到 customer.py
 """
 from datetime import timedelta
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, Query, Depends, Request
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional
 
@@ -79,7 +79,7 @@ async def customer_register(register_data: CustomerRegisterSchema):
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
     # 验证验证码
-    is_valid = EmailService.verify_code(register_data.email, register_data.code, "register")
+    is_valid = await EmailService.verify_code(register_data.email, register_data.code, "register")
 
     if not is_valid:
         return fail_response(msg="验证码错误或已过期")
@@ -199,7 +199,7 @@ async def customer_login_with_password(login_data: CustomerPasswordLoginSchema):
 
 
 @auth_router.post("/send-code", summary="发送客户验证码")
-async def send_customer_code(code_data: SendCodeSchema):
+async def send_customer_code(code_data: SendCodeSchema, request: Request):
     """
     发送验证码到客户邮箱
 
@@ -216,6 +216,12 @@ async def send_customer_code(code_data: SendCodeSchema):
         return fail_response(
             msg=f"无效的验证码类型，必须是: {', '.join(valid_types)}"
         )
+
+    # 频率限制（防刷）：同一邮箱 / 同一 IP 在窗口内限次
+    client_ip = (request.client.host if request.client else None) or ""
+    rate_msg = await EmailService.check_rate_limit(code_data.email, client_ip or None)
+    if rate_msg:
+        return fail_response(msg=rate_msg)
 
     # 如果是注册类型，检查邮箱是否已被注册
     if code_data.type == "register":
@@ -250,7 +256,7 @@ async def customer_login_with_code(login_data: VerifyCodeSchema):
     from base.plugins.customer.models.customer import Customer
 
     # 验证验证码
-    is_valid = EmailService.verify_code(login_data.email, login_data.code, "login")
+    is_valid = await EmailService.verify_code(login_data.email, login_data.code, "login")
 
     if not is_valid:
         return fail_response(msg="验证码错误或已过期")
@@ -302,7 +308,7 @@ async def verify_customer_code(verify_data: VerifyCodeSchema):
     Returns:
         验证结果
     """
-    is_valid = EmailService.verify_code(verify_data.email, verify_data.code, "login")
+    is_valid = await EmailService.verify_code(verify_data.email, verify_data.code, "login")
 
     if is_valid:
         return success_response(msg="验证码正确")
@@ -434,7 +440,7 @@ async def reset_customer_password(reset_data: ResetPasswordSchema):
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
     # 验证验证码
-    is_valid = EmailService.verify_code(reset_data.email, reset_data.code, "reset_password")
+    is_valid = await EmailService.verify_code(reset_data.email, reset_data.code, "reset_password")
 
     if not is_valid:
         return fail_response(msg="验证码错误或已过期")

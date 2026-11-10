@@ -1,6 +1,8 @@
 """
 安全相关工具函数
 """
+import os
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from passlib.context import CryptContext
@@ -9,14 +11,38 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from packages.common.gateway_constants import is_gateway_virtual_key
+from base.common.config import config
 
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT配置
-SECRET_KEY = "your-secret-key-change-in-production-09876543210987654321"  # 生产环境需要改成环境变量
+# SECRET_KEY 解析顺序：环境变量 SECRET_KEY → config.conf [auth] secret_key → 硬编码默认值（不安全，仅兜底）
+_DEFAULT_SECRET_KEY = "your-secret-key-change-in-production-09876543210987654321"
+
+
+def _resolve_secret_key() -> str:
+    env_val = os.environ.get("SECRET_KEY")
+    if env_val:
+        return env_val
+    try:
+        val = config.get("auth", "secret_key")
+        if val:
+            return val
+    except Exception:
+        pass
+    return _DEFAULT_SECRET_KEY
+
+
+SECRET_KEY = _resolve_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24小时
+
+if SECRET_KEY == _DEFAULT_SECRET_KEY:
+    logging.getLogger(__name__).warning(
+        "SECRET_KEY 仍使用硬编码默认值（安全风险）。请设置环境变量 SECRET_KEY "
+        "或 config.conf [auth] secret_key 为强随机值（建议 32+ 字节十六进制）。"
+    )
 
 # HTTP Bearer Token
 security = HTTPBearer()

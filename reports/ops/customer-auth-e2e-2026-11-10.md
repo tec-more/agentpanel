@@ -1,6 +1,6 @@
-# customer 账号 → 网关租约 端到端验收（2026-11-10 16:10）
+# customer 账号 → 网关租约 端到端验收（2026-11-10 16:37）
 
-**结论：14/14 PASS，0 FAIL，0 环境阻断 ✅**
+**结论：15/15 PASS，0 FAIL，0 环境阻断 ✅**
 
 技术链路（注册 → 登录 → 租约 → 网关鉴权 → 续期/吊销）已全部打通。
 SMTP 发信通道已实测可用（AUTH OK + 自投递无拒收），真实用户可收到验证码。
@@ -26,19 +26,20 @@ SMTP 发信通道已实测可用（AUTH OK + 自投递无拒收），真实用�
 | 用例 | 项目 | 结果 | 详情 |
 |---|---|---|---|
 | E00 | 控制面新路由已加载 | PASS | openapi=200, 总路径=361, leases 路径=['/v1/customer/leases', '/v1/customer/leases/{lease_id}', '/v1/customer/leases/{lease_id}/renew'] |
-| E01 | 注册验证码端点已受理（验证码生成） | PASS | HTTP=200, body={"code": 0, "msg": "验证码已发送到 dsh.e2e.20261110161016@example.com，5分钟内有效", "data": null, "status_code": 200, "success": true} |
-| E02 | 验证码可从运行实例获取 | PASS | email=dsh.e2e.20261110161016@example.com, code=<6位>; 验证码存进程内字典（单 worker），日志仅用于本地验收 |
-| E03 | 邮箱验证码注册返回 cus JWT | PASS | HTTP=200, msg=注册成功, customer_id=55, token=yes |
+| E01 | 注册验证码端点已受理（验证码生成） | PASS | HTTP=200, body={"code": 0, "msg": "验证码已发送到 dsh.e2e.20261110163656@example.com，5分钟内有效", "data": null, "status_code": 200, "success": true} |
+| E02 | 验证码可从运行实例获取（Redis 存储） | PASS | email=dsh.e2e.20261110163656@example.com, code=<6位>; 验证码存储于 Redis（多 worker 共享），E02 直接从 Redis 读取验证 |
+| E03 | 邮箱验证码注册返回 cus JWT | PASS | HTTP=200, msg=注册成功, customer_id=56, token=yes |
 | E04 | 密码登录返回 cus JWT | PASS | HTTP=200, msg=登录成功, token=yes |
 | E05 | 未登录签发租约被拒 | PASS | HTTP=401, detail=Not authenticated |
 | E06 | 非 cus 主体签发租约被拒 | PASS | HTTP=403, detail=仅客户账号可签发账号租约 |
-| E07 | 客户 JWT 签发租约 | PASS | HTTP=200, msg=租约已签发（虚拟 key 仅此一次返回）, lease_id=gl_318742de02481364782aa9e4, virtual_key=dgw.* |
-| E08 | 租约主体绑定 cus / customer.id | PASS | 签发响应 owner_type=cus, owner_id=55, customer_id=55; GET /leases HTTP=200, 租约在账号列表可见=True, 条数=1 |
+| E07 | 客户 JWT 签发租约 | PASS | HTTP=200, msg=租约已签发（虚拟 key 仅此一次返回）, lease_id=gl_16343ca77e0a354e50432b88, virtual_key=dgw.* |
+| E08 | 租约主体绑定 cus / customer.id | PASS | 签发响应 owner_type=cus, owner_id=56, customer_id=56; GET /leases HTTP=200, 租约在账号列表可见=True, 条数=1 |
 | E09 | 网关接受 dgw 虚拟 key（且拒绝无 key） | PASS | 无key=401, dgw=502, dgw_body={"error":{"message":"网关未配置可用 provider 凭据: 模型凭据未指定","type":"gateway_upstream_error"}} |
 | E10 | 续期客户租约 | PASS | HTTP=200, msg=租约已续期 |
 | E13 | 网关真实模型调用可用（deepseek-chat） | PASS | HTTP=200, model=deepseek-flash, usage=6, finish=length |
 | E11 | 吊销后虚拟 key 失效 | PASS | revoke=200, 吊销后网关=401, body={"error":{"message":"网关租约已吊销","type":"gateway_auth_error"}} |
 | E12 | SMTP 认证与投递可用 | PASS | smtp.126.com:465 / fengyan1209@126.com AUTH OK, 自投递 refused={} |
+| E15 | send-code 频率限制生效（防刷） | PASS | #1: HTTP=200 msg=验证码已发送到 rate.e2e.20261110163700@example.com，5分钟内有效; #2: HTTP=200 msg=验证码已发送到 rate.e2e.20261110163700@example.com，5分钟内有效; #3: HTTP=200 msg=验证码已发送到 rate.e2e.20261110163700@example.com，5分钟内有效; #4: HTTP=400 msg=该邮箱发送过于频繁，请 59 秒后重试 |
 
 ## 桌面端 UI 实测登录
 
@@ -71,7 +72,7 @@ SMTP 发信通道已实测可用（AUTH OK + 自投递无拒收），真实用�
 
 ## 测试账号与清理
 
-- 本轮新建：`dsh.e2e.20261110161016@example.com`（customer_id=55），保留在库中以便复验
+- 本轮新建：`dsh.e2e.20261110163656@example.com`（customer_id=56），保留在库中以便复验
 - 历次验收账号可用以下 SQL 精确清理（仅限 `dsh.e2e.*@example.com` 测试数据）：
   `DELETE FROM customer WHERE email LIKE 'dsh.e2e.%@example.com';`
 - 租约已在 E11 吊销；虚拟 key 已失效
@@ -81,11 +82,13 @@ SMTP 发信通道已实测可用（AUTH OK + 自投递无拒收），真实用�
 - 验证码从容器日志读取（单 worker 内存储于进程字典）；SMTP 已配置 `smtp.126.com:465`
   且可达。测试邮箱使用 IANA 保留域名 `example.com`（无真实收件人）；
   `.test`/`.invalid` 会被 `EmailStr` 拒绝，故未使用
-- send-code 响应：HTTP=200, body={"code": 0, "msg": "验证码已发送到 dsh.e2e.20261110161016@example.com，5分钟内有效", "data": null, "status_code": 200, "success": true}
+- send-code 响应：HTTP=200, body={"code": 0, "msg": "验证码已发送到 dsh.e2e.20261110163656@example.com，5分钟内有效", "data": null, "status_code": 200, "success": true}
 - E09 用无效 model 名仅对比鉴权层状态码（不产生真实调用）；E13 用 `deepseek-chat`
   + `max_tokens=1` 做一次真实调用，用于区分「鉴权通过」与「上游可用」
-- 既有遗留：`EmailService` 验证码为进程内字典（多 worker 会丢码）、send-code 无限频；
-  硬编码 `SECRET_KEY` 未外置；新客户若无 active `QuotaPlan(cus/both)` 可能被网关 0 额度拦截
+- 本轮已修复（2026-11-10）：`EmailService` 验证码改 Redis 优先 + 进程内降级存储，
+  解决多 worker（默认 2 worker）下验证码落内存导致注册偶发失败；`send-code` 增加
+  邮箱/IP 维度频率限制（E15 已验证）；`SECRET_KEY` 改为环境变量 / config.conf `[auth]` 优先，
+  默认值仅在缺失时兜底并告警。新客户若无 active `QuotaPlan(cus/both)` 仍可能被网关 0 额度拦截
 
 ## 复跑
 

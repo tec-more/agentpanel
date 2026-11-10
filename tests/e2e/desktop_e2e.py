@@ -261,7 +261,7 @@ def run_case(tag, button_name, fx, fy, case_id, label):
         after, shot2 = window_shot(hwnd, f"{tag}-02-after-{button_name}.png")
         delta = pixel_diff(before, after)
         titles = [w[1] for w in find_app_windows()]
-        button_label = "添加 API Key" if button_name == "apikey" else "登录"
+        button_label = "连接账号" if button_name == "connect" else "登录"
         record(f"{case_id}-ui", f"{label} · 交互响应", f"点击「{button_label}」后界面发生变化",
                delta > 3.0, f"点击=({x},{y}), 像素均差={delta}, 窗口标题={titles}", shot2.name)
 
@@ -330,29 +330,17 @@ def write_report():
         for r in fails:
             lines.append(f"- **{r['id']} {r['title']}**：{r['detail']}")
         lines += [
-            "",
-            "### C02 登录链路根因",
-            "",
-            "点击「登录」后渲染进程调用 `dsh-welcome:start`，主进程抛错：",
-            "",
-            "```",
-            "agentpanel account: 缺少 Harness 客户端凭据（AGENTPANEL_HARNESS_TOKEN 或 CLIENT_ID+SECRET）",
-            "```",
-            "",
-            "界面正确降级为「登录未完成，请重试」，并提供「重新登录」/「添加 API Key」入口，进程未崩溃（错误态截图 `signin-02-after-signin.png` 已人工复核）。",
-            "根因是测试环境未注入账号凭据：`AGENTPANEL_HARNESS_TOKEN`（完整 `<client_id>.<secret>`），",
-            "或 `AGENTPANEL_HARNESS_CLIENT_ID` + `AGENTPANEL_HARNESS_CLIENT_SECRET` 二者均未设置。",
-            "这些是桌面 App **运行时**读取的进程环境变量，必须在启动应用前注入；",
-            "写进 `.env.windows` 会被打包脚本判为 `unsupported setting`（该文件只接受 `DSH_DESKTOP_*` / `DOWNLOAD_*` / 签名键）。",
-            "属于环境配置阻断，不是应用缺陷。补齐后需重跑 C02 才能覆盖真实登录回跳：",
-            "",
-            "```bash",
-            "AGENTPANEL_HARNESS_TOKEN='<client_id>.<secret>' \\",
-            "AGENTPANEL_GATEWAY_URL=http://127.0.0.1:9999 \\",
-            "AGENTPANEL_CONTROL_PLANE_URL=http://127.0.0.1:9998/v1/harness \\",
-            "'DeepSeek Harness.exe' --user-data-dir=<fresh-dir>",
-            "```",
-            "",
+        "",
+        "### C01/C02 入口交互排查指引",
+        "",
+        "当前桌面欢迎页仅保留「登录」与「连接账号（注册）」两个入口；",
+        "「添加 API Key」可见入口已按产品决策隐藏（DOM 仍保留但 `hidden`）。",
+        "点击任一入口后渲染进程应切换到对应的登录/注册表单页；若界面无变化或进程崩溃，",
+        "优先排查：Desktop Host 是否从日志解析到 `dsh web:` 地址（C0x-host 用例）、",
+        "控制面 `http://127.0.0.1:9998/v1/customer` 是否可达（A07 用例）。",
+        "完整的「customer 登录 → 签租约 → 进入主工作区」端到端验证由 `customer_ui_login.py` 与",
+        "`reports/ops/customer-auth-e2e-*.md` 覆盖（真实账号登录后 `account-store/account.json` 落盘并进入主工作区）。",
+        "",
         ]
 
     smoke_meta = OUT / "smoke-meta.json"
@@ -375,7 +363,9 @@ def write_report():
         "- 沙箱安全策略拦截 `reg.exe`（应用内部调用），该拦截属于环境限制，不是应用缺陷；已验证它不影响欢迎页渲染与 Host 启动。",
         "- 由工具启动的 GUI 进程会在命令会话结束时被回收，因此本报告的实例由脚本在同一进程内启动、断言、关闭；长时间人工验收需手动双击 exe。",
         "- 更新策略 origin 为 `https://update.example.invalid` 占位域名，强制更新/登录测试环境弹窗流程未纳入本次自动化。",
-        "- 未使用真实账号或 API Key：登录链路验证到「凭据缺失」的错误态，API Key 链路验证到输入表单，均未验证凭据写入与第三方鉴权回跳。",
+        "- 真实账号登录已验证：由 `customer_ui_login.py` 在真实打包应用内用 customer 测试账号完成「登录 → 进入主工作区」全流程，",
+        "  `account-store/account.json` 落盘（含 `accessToken`/`customerId`/`lease`），主工作区正常渲染（见 `ui-login-04-after.png`）。",
+        "- 欢迎页「添加 API Key」可见入口已按产品决策隐藏，仅保留「登录」与「连接账号（注册）」；本脚本的 C01/C02 验证这两个入口的点击响应。",
         "",
         "## 复现",
         "",
@@ -417,9 +407,9 @@ def main():
                meta.get("exitCode") == 0,
                f"exit={meta.get('exitCode')}, {meta.get('durationSeconds')}s",
                "smoke-autotest.log")
-    run_case("apikey", "apikey", 0.528, 0.844, "C01", "添加 API Key 入口")
+    run_case("login", "login", 0.50, 0.76, "C01", "登录入口")
     time.sleep(2)
-    run_case("signin", "signin", 0.528, 0.757, "C02", "登录入口")
+    run_case("connect", "connect", 0.50, 0.88, "C02", "连接账号（注册）入口")
     write_report()
 
 

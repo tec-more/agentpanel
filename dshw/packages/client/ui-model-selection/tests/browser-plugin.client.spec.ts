@@ -321,6 +321,19 @@ describe('ui-model-selection dual entry', () => {
     }
   })
 
+  it('shows a deployment-configured account provider name verbatim in popup options', async () => {
+    const b = await bench('zh')
+    try {
+      b.setGroups([{ ...GROUPS[0]!, id: 'deepseek-account', name: 'AgentPanel' }])
+      b.remote.emit('llm/adapters-updated', [])
+      b.mint('s1')
+      const options = await b.popup().options(projection('s1'), new AbortController().signal)
+      expect(options[0]?.group?.label).toBe('AgentPanel')
+    } finally {
+      await b.ctx.fiber.dispose()
+    }
+  })
+
   it('removes account models from the picker after sign-out', async () => {
     const b = await bench('en')
     try {

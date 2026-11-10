@@ -89,6 +89,12 @@ export interface AccountSectionInjected {
 /** Composed account section props. */
 export type AccountSectionProps =
   PropsRuntime<'settings.section'> & PropsLocale<'settings.account'> & InjectFace<AccountSectionInjected>
+/** Resolves the usage page's site root for the account card; deployments without an absolute usage URL hide the link. */
+const usageHomeOf = (usageUrl: string | undefined): string | undefined => {
+  if (usageUrl === undefined) return undefined
+  try { return new URL('/', usageUrl).href } catch { return undefined }
+}
+
 /** @param props - localized actions, account subscription, and the shared Platform page channel. @returns account settings UI. */
 export function AccountSection({ t, useAccount, useTheme, start, cancel, openPlatformPage, avatarFailed }: AccountSectionProps) {
   const { view: state, details, avatar, failed: streamFailed } = useAccount(value => value)
@@ -107,6 +113,10 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
   const active = attempt !== null && attempt !== undefined
     && ['initializing', 'waiting-browser', 'exchanging', 'committing'].includes(attempt.phase)
   const signedIn = state?.status === 'credential-stored'
+  // Deployments without a Platform (agentpanel) publish empty link strings; empty hrefs must not crash URL construction.
+  const usageUrl = state?.links.usageUrl || undefined
+  const topUpUrl = state?.links.topUpUrl || undefined
+  const usageHomeUrl = usageHomeOf(usageUrl)
   useEffect(() => () => { releasePage.current?.(); releasePage.current = undefined }, [])
   useEffect(() => {
     if (signedIn) return
@@ -139,7 +149,7 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
    * @returns the Platform anchor.
    */
   const platformLink = (label: string, className: string | undefined) => (
-    <a className={className} href={state?.links.usageUrl} aria-disabled={state === undefined}
+    <a className={className} href={usageUrl} aria-disabled={usageUrl === undefined}
       target="_blank" rel="noreferrer" onClick={openUsage}>{label}</a>
   )
   const status = failed || streamFailed || attempt?.phase === 'failed' ? t('failed')
@@ -172,7 +182,7 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
             <span className={css.status} role="status">{status}</span>
           </div>
         </div>
-        {signedIn && <a className={css.accountInfo} href={new URL('/', state.links.usageUrl).href} target="_blank" rel="noopener noreferrer">
+        {signedIn && usageHomeUrl !== undefined && <a className={css.accountInfo} href={usageHomeUrl} target="_blank" rel="noopener noreferrer">
           {t('accountInfo')}<IconRightUpOutlineRegular size={12} />
         </a>}
       </div>
@@ -215,7 +225,7 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
           <span className={css.secondary}>{t('more')}</span>
           <div className={css.links}>
             {platformLink(t('usage'), css.linkButton)}
-            <a className={`${css.linkButton} ${css.primary}`} href={state?.links.topUpUrl} aria-disabled={state === undefined}
+            <a className={`${css.linkButton} ${css.primary}`} href={topUpUrl} aria-disabled={topUpUrl === undefined}
               target="_blank" rel="noreferrer"
               onClick={(event) => { if (openPlatformPage !== undefined && signedIn) { event.preventDefault(); showPage(openPlatformPage, 'top-up') } }}>{t('topUp')}</a>
           </div>

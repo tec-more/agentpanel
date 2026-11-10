@@ -65,6 +65,7 @@ import { readDesktopSettings } from './settings.ts'
 import { readDesktopLocaleCache, writeDesktopLocaleCache } from './locale-cache.ts'
 import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
+import { resolveAgentPanelProjectName } from './agentpanel-branding.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
 import { installDesktopShortcuts } from './keyboard.ts'
 import { DesktopUpdateOverlays } from './update-overlay.ts'
@@ -393,7 +394,13 @@ async function main(): Promise<void> {
     return result.environment
   })
   let hostEnvironment: NodeJS.ProcessEnv = process.env
-  const prepareHostEnvironment = async (): Promise<void> => { hostEnvironment = await loginShell }
+  const prepareHostEnvironment = async (): Promise<void> => {
+    hostEnvironment = await loginShell
+    // 项目名（config.conf [app] name）用于 Host 侧账号提供方的显示名；读取失败时
+    // 不注入，Host 维持内置 "DeepSeek Account"，界面照旧显示本地化标签。
+    const projectName = await resolveAgentPanelProjectName()
+    if (projectName !== undefined) hostEnvironment = { ...hostEnvironment, DSH_AGENTPANEL_PROJECT_NAME: projectName }
+  }
   let quitting = false
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined

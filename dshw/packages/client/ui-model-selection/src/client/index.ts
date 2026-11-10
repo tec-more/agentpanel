@@ -48,11 +48,20 @@ function rowId(providerId: string, modelId: string): string {
   return `${providerId}/${modelId}`
 }
 
+/**
+ * Label one provider group. The account provider keeps its built-in English name
+ * only so it can be localized; a deployment-configured name (for example the
+ * agentpanel project name) is shown verbatim instead of the localized label.
+ */
+function providerGroupLabel(id: string, name: string, t: TranslateNS<'model'>): string {
+  return id === 'deepseek-account' && name === 'DeepSeek Account' ? t('provider.account') : name
+}
+
 /** Flatten the directory into popup rows; failure rows are listed for visibility but never selectable. */
 function optionsOf(directory: ModelDirectoryState, t: TranslateNS<'model'>): SelectOption[] {
   const rows: SelectOption[] = []
   for (const group of orderModelProviders(directory.groups)) {
-    const name = group.id === 'deepseek-account' ? t('provider.account') : group.name
+    const name = providerGroupLabel(group.id, group.name, t)
     for (const model of group.models) {
       rows.push({
         id: rowId(group.id, model.id),
@@ -68,7 +77,7 @@ function optionsOf(directory: ModelDirectoryState, t: TranslateNS<'model'>): Sel
   for (const failure of directory.failures) {
     rows.push({
       id: `failure/${failure.id}`,
-      label: failure.id === 'deepseek-account' ? t('provider.account') : failure.name,
+      label: providerGroupLabel(failure.id, failure.name, t),
       detail: t('option.loadError', { message: failure.message }),
     })
   }

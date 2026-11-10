@@ -1103,6 +1103,18 @@ it.each([en, zh])('localizes the account group while preserving external names',
   expect(screen.getByRole('group', { name: 'My Gateway' })).toBeTruthy()
 })
 
+it('shows a deployment-configured account provider name verbatim', () => {
+  const groups = [{ id: 'deepseek-account', name: 'AgentPanel', models: [
+    { id: 'deepseek-flash', name: 'DeepSeek Flash' },
+  ] }]
+  render(<ModelSelect renderSlot={renderLabel} locked={false} available
+    directory={createSnapshotStore(state({ current: null, groups }))}
+    load={vi.fn()} resolveText={resolveText} select={vi.fn()} t={t} />)
+  fireEvent.click(screen.getByRole('button', { name: '请选择模型' }))
+  expect(screen.getByRole('group', { name: 'AgentPanel' })).toBeTruthy()
+  expect(screen.queryByRole('group', { name: 'DeepSeek 账号' })).toBeNull()
+})
+
 it('restores the account model name after login without changing the saved route', () => {
   const groups = [{ id: 'deepseek-account', name: 'DeepSeek Account', models: [
     { id: 'deepseek-flash', name: 'DeepSeek Flash', reasoning },

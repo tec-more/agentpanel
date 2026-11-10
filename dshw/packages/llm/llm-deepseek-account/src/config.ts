@@ -15,6 +15,12 @@ import type {
 export interface Config extends Omit<ProtocolConfig, 'models'>, ModelListingConfig {
   /** Field overrides by model id, layered over the account listing and the built-in catalog. */
   modelOverrides: Volatile<Record<string, ModelOverride>>
+  /**
+   * Deployment-facing provider display name (for example the agentpanel project
+   * name). Empty or missing keeps the built-in "DeepSeek Account", which the Web
+   * client localizes to "DeepSeek 账号"; any other value is shown verbatim.
+   */
+  providerName?: string | undefined
 }
 
 const { models: _protocolCatalog, ...protocolFields } = deepSeekConfigFields
@@ -29,11 +35,13 @@ export const Config = z.object({
   ...protocolFields,
   ...modelListingConfigFields,
   modelOverrides: z.dict(modelOverride).default({}).volatile(),
+  providerName: z.string(),
 })
 
 /** Plain account options accepted by {@link resolveAccountOptions}. */
 export type AccountOptions = Omit<ProtocolOptions, 'models'> & ModelListingOptions & {
   modelOverrides?: Record<string, ModelOverride>
+  providerName?: string
 }
 
 /** One validated configuration generation of the account route. */
@@ -86,7 +94,10 @@ export function resolveAccountOptions(options: AccountOptions, environment?: Lau
     throw new Error('llm-deepseek-account: models is no longer configurable; the account /models listing supplies the catalog. '
       + 'Remove models from this entry and adjust single models with modelOverrides.<model id>')
   }
-  const { modelsTimeoutMs: _timeout, modelsMaxAgeMs: _maxAge, modelOverrides = {}, ...protocolOptions } = options
+  const {
+    modelsTimeoutMs: _timeout, modelsMaxAgeMs: _maxAge, modelOverrides = {}, providerName: _providerName,
+    ...protocolOptions
+  } = options
   const timing = resolveListingTiming(options, 'llm-deepseek-account')
   const protocol = resolveAdapterOptions(protocolOptions, environment)
   return {

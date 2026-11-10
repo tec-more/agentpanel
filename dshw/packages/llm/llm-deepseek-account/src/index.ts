@@ -16,6 +16,8 @@ export const name = 'llm-deepseek-account'
 export const inject = ['llm']
 
 const PROVIDER = 'deepseek-account'
+/** Built-in provider display name; a configured `providerName` (for example the agentpanel project name) replaces it. */
+const DEFAULT_PROVIDER_NAME = 'DeepSeek Account'
 /** Header carrying the account token on Messages, Files, and model-listing requests. */
 const TOKEN_HEADER = 'x-dsh-auth-token'
 /** Console tag of listing diagnostics; product profiles mount no console exporter for `ctx.logger`. */
@@ -70,7 +72,8 @@ export function apply(ctx: Context, config: Config): void {
     }
     return { ...resolved.protocol, models: result.resolution, catalog: result }
   }
-  const entry = { provider: PROVIDER, displayName: 'DeepSeek Account', settingsNs: ctx.fiber.entry?.options.id ?? name, settingsPath: [] }
+  const providerName = config.providerName?.trim() || DEFAULT_PROVIDER_NAME
+  const entry = { provider: PROVIDER, displayName: providerName, settingsNs: ctx.fiber.entry?.options.id ?? name, settingsPath: [] }
   const directory = ctx.llm.registerConfigurableProviders([entry])
   let reportedError: string | undefined
   /** Publish override diagnostics on the provider directory. */
@@ -84,7 +87,7 @@ export function apply(ctx: Context, config: Config): void {
     return connection
   }
   registerDeepSeekProvider<AccountConnection>(ctx, PROVIDER, {
-    providerName: 'DeepSeek Account',
+    providerName,
     options: () => connectionOf(catalog.current()),
     connect: async signal => connectionOf(await catalog.view(settings().catalog, signal)),
     resolveAuth,

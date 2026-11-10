@@ -554,3 +554,10 @@
 
     - id: llm-deepseek-account
       name: '@deepseek-ai/dsh-llm-deepseek-account'
+      # Deployment branding: the agentpanel desktop exports the backend project
+      # name (config.conf [app] name, served at /v1/common/system-config) as
+      # DSH_AGENTPANEL_PROJECT_NAME before starting this Host; the Web client
+      # shows it verbatim for the account provider row and selector group.
+      # Empty keeps the built-in "DeepSeek Account" and its localized labels.
+      config:
+        providerName: !!js process.env.DSH_AGENTPANEL_PROJECT_NAME || ''

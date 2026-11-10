@@ -25,12 +25,12 @@ const themeOf = (colorScheme: 'light' | 'dark'): ThemeSnapshot => ({
 })
 
 function operationsOf(state: Omit<AccountView, 'links'>, details?: Partial<AccountDetails>, pages?: PlatformPages,
-  avatar?: AccountAvatarSnapshot): AccountSectionInjected {
+  avatar?: AccountAvatarSnapshot, links: AccountView['links'] = { usageUrl: 'http://localhost:8081/usage', topUpUrl: 'http://localhost:8081/top_up' }): AccountSectionInjected {
   return {
     ...pages === undefined ? {} : { openPlatformPage: pages.open },
     hooks: {
       account: {
-        getSnapshot: () => ({ view: { ...state, links: { usageUrl: 'http://localhost:8081/usage', topUpUrl: 'http://localhost:8081/top_up' } }, details, avatar, failed: false }),
+        getSnapshot: () => ({ view: { ...state, links }, details, avatar, failed: false }),
         subscribe: () => () => {},
       },
       theme: { getSnapshot: () => themeOf('light'), subscribe: () => () => {} },
@@ -45,9 +45,9 @@ function operationsOf(state: Omit<AccountView, 'links'>, details?: Partial<Accou
 }
 
 function mount(state: Omit<AccountView, 'links'>, copy: typeof en | typeof zh = en, details?: Partial<AccountDetails>,
-  platform?: PlatformBridge, avatar?: AccountAvatarSnapshot) {
+  platform?: PlatformBridge, avatar?: AccountAvatarSnapshot, links?: AccountView['links']) {
   const pages = platform === undefined ? undefined : createPlatformPages()
-  const operations = operationsOf(state, details, pages, avatar)
+  const operations = operationsOf(state, details, pages, avatar, links)
   // AccountSection consumes no global hooks; the slot supplies them in the application.
   const globals = {} as GlobalStandardProps
   render(<>
@@ -110,6 +110,16 @@ it.each([en, zh])('renders account cards without inventing profile or balance da
   expect(screen.queryByRole('button', { name: copy.signOut })).toBeNull()
   expect(document.body.textContent).not.toContain('209.00')
   await expect(`${screen.getByRole('region').textContent}\n`).toMatchFileSnapshot(`./expected/account-${copy === en ? 'en' : 'zh'}.txt`)
+})
+
+it('hides the account card link and stays rendered when the deployment publishes no Platform links', () => {
+  // agentpanel deployments leave usageUrl/topUpUrl empty; an empty base URL must not crash the section.
+  mount({ status: 'credential-stored', attempt: null }, en, undefined, undefined, undefined,
+    { usageUrl: '', topUpUrl: '' })
+  expect(screen.getByText(en.signedIn)).toBeTruthy()
+  expect(screen.queryByRole('link', { name: en.accountInfo })).toBeNull()
+  expect(screen.queryByRole('link', { name: en.usage })).toBeNull()
+  expect(screen.queryByRole('link', { name: en.topUp })).toBeNull()
 })
 
 it('starts sign-in and disables cancellation during persistence', async () => {

@@ -92,12 +92,14 @@ export function ModelSelect(
     '--dsh-model-anchor': `--dsh-model-${id.replaceAll(':', '')}`,
   }
 
+  // A deployment-configured account provider name (for example the agentpanel
+  // project name) is shown verbatim; only the built-in name gets localized.
   const accountProviderName = t('provider.account')
   const groups = useMemo(() => orderModelProviders(state.groups).map(group => ({
     ...group,
     provider: {
       id: group.id,
-      name: group.id === 'deepseek-account' ? accountProviderName : group.name,
+      name: group.id === 'deepseek-account' && group.name === 'DeepSeek Account' ? accountProviderName : group.name,
     },
   })), [state.groups, accountProviderName])
   const choices = useMemo(() => groups.flatMap(group =>
@@ -555,7 +557,7 @@ export function ModelSelect(
               )}
               {state.failures.map(failure => (
                 <div className={css.warning} key={failure.id}>
-                  <span>{t('warning.groupLoad', { name: failure.id === 'deepseek-account' ? t('provider.account') : failure.name, message: failure.message })}</span>
+                  <span>{t('warning.groupLoad', { name: failure.id === 'deepseek-account' && failure.name === 'DeepSeek Account' ? t('provider.account') : failure.name, message: failure.message })}</span>
                   <button type="button" className={css.retry} onClick={reload}>{t('retry')}</button>
                 </div>
               ))}

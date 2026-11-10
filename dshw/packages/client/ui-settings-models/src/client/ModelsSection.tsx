@@ -247,7 +247,10 @@ export function ModelsSection(props: ModelsSectionProps): ReactNode {
 function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderSlot: ModelsRenderSlot }): ReactNode {
   const { controller, operations, schema, t } = injected
   const snapshot = injected.useSnapshot(value => value)
-  const state = { ...snapshot, rows: snapshot.rows.map(row => row.entry.provider === 'deepseek-account'
+  // The account row keeps its built-in English name only so this page can localize
+  // it; a deployment-configured name (for example the agentpanel project name) is
+  // shown verbatim instead of the localized "DeepSeek Account" label.
+  const state = { ...snapshot, rows: snapshot.rows.map(row => row.entry.provider === 'deepseek-account' && row.entry.displayName === 'DeepSeek Account'
     ? { ...row, entry: { ...row.entry, displayName: t('deepSeekAccount') } } : row) }
   /** A new or failed surface waits for a current snapshot; background refreshes preserve its drafts. */
   const [hasReadySnapshot, setHasReadySnapshot] = useState(state.status === 'ready')

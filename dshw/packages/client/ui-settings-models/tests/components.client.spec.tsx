@@ -2418,11 +2418,23 @@ it('renders the localized account row as signed in without an edit action', asyn
   const { controller } = await mountFace(scripted)
   const row = controller.store.getSnapshot().rows[0]!
   await act(async () => { controller.store.update((state) => {
-    state.rows = [{ ...row, accountAvailable: true, entry: { ...row.entry, provider: 'deepseek-account' } }]
+    state.rows = [{ ...row, accountAvailable: true, entry: { ...row.entry, provider: 'deepseek-account', displayName: 'DeepSeek Account' } }]
   }) })
   const item = screen.getByText(en.deepSeekAccount).closest('li')!
   expect(within(item).getByText(en.accountSignedIn)).toBeTruthy()
   expect(within(item).queryByText(en.edit)).toBeNull()
+})
+
+it('shows a deployment-configured account provider name verbatim', async () => {
+  const scripted = scriptedFace({})
+  const { controller } = await mountFace(scripted)
+  const row = controller.store.getSnapshot().rows[0]!
+  await act(async () => { controller.store.update((state) => {
+    state.rows = [{ ...row, accountAvailable: true, entry: { ...row.entry, provider: 'deepseek-account', displayName: 'AgentPanel' } }]
+  }) })
+  const item = screen.getByText('AgentPanel').closest('li')!
+  expect(within(item).getByText(en.accountSignedIn)).toBeTruthy()
+  expect(screen.queryByText(en.deepSeekAccount)).toBeNull()
 })
 
 it.each([es, fr, de, ru, pt])('keeps capacity examples in translated validation messages parseable', (dictionary) => {

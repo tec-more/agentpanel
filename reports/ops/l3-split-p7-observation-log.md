@@ -761,3 +761,37 @@ Prometheus targets `gateway`/`orchestration` up、规则组 `agentpanel_alerts` 
 预期余波），10:17 自愈。告警名变更使 Alertmanager 通知与 alert-sink 记录自 10:20 起使用新名（历史 jsonl 保留旧名）。
 mode 值变更影响 `/health/orchestration` 输出与配置校验报错文案，无持久化影响。**不重置计时**：
 起算 2026-11-09 13:33:40 +0800，最早收口 2026-11-23 13:33 +0800。本批变更**尚未提交**。
+
+### 11.16 11:14–11:21 改名后回归补测：编排写主业务链路（用户「补一次第一项」）
+
+**缺口来源**：改名后的验证集中在「容器能起、巡检 16 项、签名 e2e、promtool」四类，覆盖的是启动期
+import、配置读取与监控契约；`orchestration/app/api/{approval,business,write}.py` 三个路由只被
+「代理 401」间接证明可达，**语义正确性未验**。本轮补测这一项。
+
+**载体**：新增 `services/orchestration/tests/verify_write_path.py`。设计两条硬约束：
+① 全程 0 token（`estimated_input_tokens=0` / `max_output_tokens=0`），`create_run` 的
+`reserved_tokens > 0` 分支不进入 → 不产生任何配额预占/结算，`used`/`held` 计量键零触碰；
+② fixture 用 `e2ewrite_<hex>` 前缀自建 harness client，`finally` 按子表→父表清理并断言 0 残留。
+运行方式：`docker exec -i agentpanel-orchestration python - < services/orchestration/tests/verify_write_path.py`
+（容器 rootfs read-only，`docker cp` 会被拒，只能走 stdin）。
+
+**结果：39/39 PASS，4.5s**（11:17）：
+- 鉴权负向 3 项：无凭据 / 缺 secret / secret 错误 → 均 401；
+- 写主直连（9100）：建会话 → 建运行（`reserved=0`、`hold_id=NULL`）→ start(running) → 步骤 → 事件（坏行
+  `invalid_lines=1`/`truncated_lines=1` 被容忍）→ 心跳 → complete(succeeded) → 查询一致 → 运行列表 1 条 → close(closed)；
+- 审批：运行中申请 → `decision=ask`、pending 1 条；**终态后再次申请 → 409「运行已结束」**（状态机护栏生效）；
+- 代理链路（`app:9998` → 编排写主）：全链路同上，证明 `ORCH_APP_BASE_URL` 与 proxy 转发在改名后仍生效；
+- 取消路径：同会话新建运行 → start → cancel(cancelled)；
+- DB 对齐：2 会话（均 closed）/ 3 运行（2 succeeded + 1 cancelled）/ 2 步骤 / 18 审计 / 1 审批单；
+  清理后 `harness_client|session|run|audit_event|approval_request` 全 0 残留。
+
+**首轮 4 FAIL 全是脚本用例顺序问题，非产品缺陷**：把「申请审批」「取消运行」放在 `complete` 之后，
+终态返回 409 / 原状态（这正是状态机应有的行为）。调整顺序后清零；并把「终态审批 409」正式列为断言。
+
+**计量中立复核**：跑后 11:19 巡检 **16/16 PASS**，`used 基线对比` 仍为「3 个键与起算基线一致」、
+`held 全 0`、`quota_holds_index 空`。观察期口径不变（起算 2026-11-09 13:33:40 +0800）。
+
+**同批收尾**：修 3 处 `l2/proxy`、`l2 | proxy` 文档残留（替换脚本漏掉带分隔符的枚举写法，
+`l3-split-t75-closeout-plan.md` §2.1 两处、`l3-split-p4-ae-verification-report.md` 一处）；
+本批改动已提交：`74e5103`（改名主体 124 文件）、`86d26e6`（dshw 类型收敛）、`a2083f8`（文档残留）、
+另一仓库 aipaneladmin `48247eb1`（nginx upstream 容器名）。

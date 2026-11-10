@@ -30,12 +30,12 @@
 
 ### 2.1 灰度开关 `orchestration.mode`
 
-当前 `mode` 取值仍为 `l2 | proxy`，运行态固定 `proxy`。收口即删除 `l2` 分支与开关本身，
+当前 `mode` 取值仍为 `app | proxy`，运行态固定 `proxy`。收口即删除 `app` 分支与开关本身，
 让 app 只做代理/控制面、编排只做写主，不再有整机二元切换。已知读取点（**到期重新 grep 确认**）：
 
 | 文件 | 位置 / 内容 |
 |---|---|
-| `base/plugins/harness/services/orchestration_config.py` | `DEFAULTS["mode"]`、`validate_orchestration_config()` 的 `l2/proxy` 枚举校验 |
+| `base/plugins/harness/services/orchestration_config.py` | `DEFAULTS["mode"]`、`validate_orchestration_config()` 的 `app/proxy` 枚举校验 |
 | `services/orchestration/app/config.py` | 同上（编排侧独立配置副本） |
 | `services/orchestration/manifest.json` | `config.orchestration` 段的 mode 项 |
 | `base/plugins/harness/services/orchestration_proxy.py` | `proxy_mode_enabled()`、`require_client_or_proxy()` 的 `l2` 回落分支 |

@@ -204,7 +204,7 @@ GW_PORT=9999
 
 按 T4.7 决策只删 `orchestration_runtime`，`proxy` 未动。当前 17 处引用，关键项：
 
-- `base/plugins/harness/services/orchestration_config.py`：默认 `mode=proxy`，校验仅允许 `l2/proxy`
+- `base/plugins/harness/services/orchestration_config.py`：默认 `mode=proxy`，校验仅允许 `app/proxy`
 - `base/plugins/harness/services/orchestration_proxy.py`：仅 `proxy` 启用代理/跳过 app 本地鉴权
 - `base/plugins/harness/services/service_auth.py`：写主判断（`mode=proxy` 才允许写）
 - `services/orchestration/app/config.py`、`app/auth.py`：独立编排进程固定 `proxy` 写主

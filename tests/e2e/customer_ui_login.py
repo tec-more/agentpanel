@@ -21,6 +21,18 @@ import win32clipboard  # noqa: E402
 import win32con  # noqa: E402
 import win32gui  # noqa: E402
 from PIL import ImageGrab  # noqa: E402
+import argparse  # noqa: E402
+
+# --keep-open：测试结束后保留应用窗口，便于人工观察
+# --slow：放慢每一步节奏，便于跟随流程
+_args = argparse.ArgumentParser()
+_args.add_argument("--keep-open", action="store_true",
+                   help="测试结束后不关闭应用，便于人工观察界面")
+_args.add_argument("--slow", action="store_true",
+                   help="放慢每一步节奏，便于跟随流程")
+_ARGS, _ = _args.parse_known_args()
+KEEP_OPEN = _ARGS.keep_open
+SLOW = _ARGS.slow
 
 BUILD = Path(r"D:\programs\fastapi\agentpanel\dshw\apps\desktop\.desktop-build")
 UNPACKED = BUILD / "targets/win-x64/unsigned-artifacts/win-unpacked"
@@ -49,6 +61,11 @@ env["ELECTRON_ENABLE_LOGGING"] = "1"
 env["AGENTPANEL_CUSTOMER_URL"] = "http://127.0.0.1:9998/v1/customer"
 env["AGENTPANEL_GATEWAY_URL"] = "http://127.0.0.1:9999"
 env["AGENTPANEL_ACCOUNT_STORE_DIR"] = str(STORE)
+# 关键：Electron 主进程的全局 fetch 走 Chromium 网络栈，会读系统代理；
+# 沙箱给系统设了 127.0.0.1 代理，可能把 localhost Host 连接重置（ECONNRESET）。
+# 显式让本次会话直连，并把回环地址加入 NO_PROXY 兜底。
+env["NO_PROXY"] = "127.0.0.1,localhost,::1"
+env["no_proxy"] = "127.0.0.1,localhost,::1"
 
 log_path = BUILD / "customer-ui-login.log"
 log = open(log_path, "w", encoding="utf-8", errors="replace")
@@ -97,7 +114,7 @@ def click(hwnd, fx, fy):
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
     print(f"CLICK ratio=({fx},{fy}) -> ({x},{y})", flush=True)
-    time.sleep(1.0)
+    time.sleep(3.0 if SLOW else 1.0)
 
 
 def set_clipboard(text):
@@ -166,7 +183,7 @@ shot("ui-login-03-filled.png", hwnd)
 
 click(hwnd, 0.50, 0.762)        # 「登录」提交
 print("SUBMITTED, waiting for workspace...", flush=True)
-time.sleep(10)
+time.sleep(20 if SLOW else 10)
 
 after = app_windows()
 print("WINDOWS_AFTER", [(t, r) for _, t, r in after], flush=True)
@@ -199,9 +216,18 @@ print("LOG_TAIL", text[-600:].replace("\n", " | "), flush=True)
     "fatal_log_lines": len(fatal),
 }, ensure_ascii=False, indent=2), encoding="utf-8")
 
-try:
-    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                   capture_output=True, timeout=15)
-    print("STOPPED", flush=True)
-except Exception as e:
-    print("STOP_WARN", e, flush=True)
+if KEEP_OPEN:
+    print("KEEP_OPEN: 应用保持打开。你可自由观察登录后的主工作区；"
+          "关闭窗口后脚本自动结束。", flush=True)
+    try:
+        proc.wait()
+    except Exception:
+        pass
+    print("APP_CLOSED_BY_USER", flush=True)
+else:
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, timeout=15)
+        print("STOPPED", flush=True)
+    except Exception as e:
+        print("STOP_WARN", e, flush=True)

@@ -26,6 +26,18 @@ import win32api
 import win32con
 import win32gui
 from PIL import ImageGrab
+import argparse
+
+# --keep-open：每个用例跑完不关闭应用，便于人工观察
+# --slow：放慢点击/渲染节奏
+_ax = argparse.ArgumentParser()
+_ax.add_argument("--keep-open", action="store_true",
+                 help="用例结束后保留应用窗口，便于人工观察")
+_ax.add_argument("--slow", action="store_true",
+                 help="放慢每一步节奏，便于跟随流程")
+_AX, _ = _ax.parse_known_args()
+KEEP_OPEN = _AX.keep_open
+SLOW = _AX.slow
 
 DESKTOP = Path(r"D:\programs\fastapi\agentpanel\dshw\apps\desktop")
 BUILD = DESKTOP / ".desktop-build"
@@ -167,6 +179,9 @@ def read_log(log_path, wait_for_host=True):
 
 
 def stop_app(proc):
+    if KEEP_OPEN:
+        print("KEEP_OPEN: 保留应用窗口以便观察（用例结束未关闭）", flush=True)
+        return
     if proc.poll() is not None:
         return
     try:
@@ -239,7 +254,7 @@ def run_case(tag, button_name, fx, fy, case_id, label):
                f"pid={proc.pid}, 窗口={wins[0][1]}, rect={wins[0][2]}")
 
         focus(hwnd)
-        time.sleep(1.2)
+        time.sleep(3.0 if SLOW else 1.2)
         before, shot = window_shot(hwnd, f"{tag}-01-welcome.png")
         ok = before.width > 400 and before.height > 400
         record(f"{case_id}-render", f"{label} · 欢迎页渲染", "窗口截图尺寸合理且非空白", ok,
@@ -257,7 +272,7 @@ def run_case(tag, button_name, fx, fy, case_id, label):
                    "日志未出现 dsh web 地址")
 
         x, y = click_ratio(hwnd, fx, fy)
-        time.sleep(3.0)
+        time.sleep(6.0 if SLOW else 3.0)
         after, shot2 = window_shot(hwnd, f"{tag}-02-after-{button_name}.png")
         delta = pixel_diff(before, after)
         titles = [w[1] for w in find_app_windows()]

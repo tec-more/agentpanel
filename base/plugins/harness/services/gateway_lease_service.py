@@ -82,6 +82,7 @@ class GatewayLeaseService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         budget_tokens: Optional[int] = None,
+        owner_override: Optional[tuple[str, int]] = None,
     ) -> Dict[str, Any]:
         cfg = issuance_config()
         rpm = int(rpm_limit or cfg.get("max_rpm") or 60)
@@ -110,6 +111,9 @@ class GatewayLeaseService:
 
         owner_type = session.owner_type if session else (run.owner_type if run else "usr")
         owner_id = session.owner_id if session else (run.owner_id if run else None)
+        # 账号直签（customer JWT → lease）：主体由鉴权层强制给定，不接受调用方传入。
+        if owner_override is not None:
+            owner_type, owner_id = owner_override
         # 租户覆盖需要先解析租户归属；显式 ttl_seconds 仍优先级最高
         ttl = _ttl_seconds(
             ttl_seconds,

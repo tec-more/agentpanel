@@ -795,3 +795,36 @@ import、配置读取与监控契约；`orchestration/app/api/{approval,business
 `l3-split-t75-closeout-plan.md` §2.1 两处、`l3-split-p4-ae-verification-report.md` 一处）；
 本批改动已提交：`74e5103`（改名主体 124 文件）、`86d26e6`（dshw 类型收敛）、`a2083f8`（文档残留）、
 另一仓库 aipaneladmin `48247eb1`（nginx upstream 容器名）。
+
+### 11.17 11:40–11:47 改名后回归补测：配额预占/结算/释放链路（用户选「现在补」）
+
+**为什么还要测**：§11.16 的写路径回归刻意走 0 token，`create_run` 的 `reserved_tokens>0` 分支
+从未进入——即 `app_quota_client` → app 内部额度 API 的 reserve/settle/release 三次调用在改名后
+**一次都没有真实跑过**。本轮补这一段。
+
+**载体**：新增 `services/orchestration/tests/verify_quota_path.py`。fixture 仿 `plan_golden.py`：
+临时 `quota_plan`+`role`+`quota_plan_binding`+`user`+`harness_client`，统一 `eq_` 前缀
+（踩坑：`user.username` 只有 varchar(20)，首版 `e2equota_user_<12hex>` 直接
+`StringDataRightTruncationError`）；`finally` 删 14 张表的行 + Redis 键，双重断言 0 残留。
+
+**结果：28/28 PASS，1.6s**（11:45）：
+- 预占：`reserved_tokens=1500`、`hold_id=orch:hr_…`、`quota_reservation.status=active`、
+  `items.token=1500`、Redis `quota_held:usr:…` 由 0→1500、此时 `usage_record` 仍为 0 行；
+- 结算：complete 带 usage(100+50) → `usage_record` 1 行（amount=150、`resource_type=token`、
+  `idem_key=orch:<run>:n1:1`、`source=client`）；Redis `quota:usr:…` used=150、held 归零；
+- **状态语义（实测，此前未记录）**：预占 1500 但实际只消耗 150 → settle 判定 residual>0 记 `partial`，
+  complete 随后释放剩余 → 终态 `released`、`used_items.token=150`、
+  **`settled_at` 为空而 `released_at` 有值**（`_persist_hold_state` 只在 `settled` 时写 settled_at）。
+  记为观察项：部分结算的预占行不保留结算时间戳，属现有实现口径，非本次改名引入，未改动；
+- 释放：第二个运行预占 2000 → start → cancel → `released`、held 归零、不产生用量流水；
+- 超限：申请 10^9 token → **429 `quota_exceeded`（remaining=9850）**，且不落 run、不落预占
+  （预占在 run 落库之前，失败即返回，库内无脏行）。
+
+**断言修正过程（3 轮，均为断言找错存储位置，非产品缺陷）**：
+① 会话归属不在 create 响应体里（`session_to_dict` 未序列化 owner）→ 改查 `harness_session`；
+② 结算后预占行是 `released` 而非 `settled`（partial→release，见上）；
+③ `quota_account.used` 在 redis 模式恒为 `{}`，实时计数只落 Redis，DB 由对账周期回填 → 断言改到 Redis。
+
+**计量中立复核**：跑后 11:46 巡检 **16/16 PASS**，`used 3 键与起算基线一致`、`held 全 0`、
+`quota_holds_index 空`、无新增 `quota:*` / `quota_held:*` / `conc:*` 键。
+观察期口径不变（起算 2026-11-09 13:33:40 +0800，最早收口 2026-11-23 13:33:40 +0800）。

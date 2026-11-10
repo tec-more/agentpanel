@@ -22,26 +22,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-
-/** Account view consumed by the desktop welcome/onboarding UI. */
-export interface AccountView {
-  readonly status: 'signed-out' | 'credential-stored'
-  readonly links: { usageUrl: string; topUpUrl: string }
-  readonly attempt: SignInAttempt | null
-}
-
-export interface SignInAttempt {
-  readonly id: string
-  readonly phase: string
-  readonly authorizeUrl?: string
-  readonly expiresAt?: number
-  readonly errorCode?: string
-}
-
-/** Opaque client identity passed by the UI; not used by agentpanel login. */
-export type AccountClientMetadata = Record<string, unknown>
-
-export type SignInAttemptId = string
+import type { AccountClientMetadata, AccountView, SignInAttemptId } from '@deepseek-ai/dsh-deepseek-account/types'
 
 /** Native account operations; mirrors the contract the desktop UI expects. */
 export interface DesktopAccountBackend {
@@ -62,14 +43,14 @@ export interface AgentpanelAccountConfig {
   gatewayUrl: string
   /** 网关【控制面】基址（租约签发/续期/吊销）。默认 http://127.0.0.1:9998/v1/harness */
   controlPlaneUrl?: string
-  clientToken?: string
-  clientId?: string
-  clientSecret?: string
-  storageDir?: string
-  usageUrl?: string
-  topUpUrl?: string
-  renewRatio?: number
-  renewCheckMs?: number
+  clientToken?: string | undefined
+  clientId?: string | undefined
+  clientSecret?: string | undefined
+  storageDir?: string | undefined
+  usageUrl?: string | undefined
+  topUpUrl?: string | undefined
+  renewRatio?: number | undefined
+  renewCheckMs?: number | undefined
 }
 
 interface StoredLease {
@@ -140,7 +121,7 @@ function extractLease(body: unknown): {
           lease_id: d.lease_id,
           virtual_key: d.virtual_key,
           expires_at: String(d.expires_at ?? ''),
-          ttl_seconds: typeof d.ttl_seconds === 'number' ? d.ttl_seconds : undefined,
+          ...(typeof d.ttl_seconds === 'number' ? { ttl_seconds: d.ttl_seconds } : {}),
         }
       }
     }

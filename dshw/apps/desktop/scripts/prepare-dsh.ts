@@ -46,6 +46,7 @@ const PNPM_BUILD_STATE = BUILD_PATHS.dshPnpm
 const PACKAGE_SET_ROOT = BUILD_PATHS.packageSet
 const NODE = join(BUILD_PATHS.electron, process.platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron')
 const PNPM = join(RUNTIME_ROOT, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
+const PNPM_DIST = join(RUNTIME_ROOT, 'primary-runtime', 'dependencies', 'pnpm', 'dist', 'pnpm.mjs')
 
 function manifestVersion(path: string, subject: string): string {
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }
@@ -67,6 +68,27 @@ function desktopRelease(): DesktopRelease {
     nodeVersion: runtime.node,
     pnpmVersion: runtime.pnpm,
   })
+}
+
+/**
+ * Patch the bundled pnpm to skip store project registration. pnpm v11's
+ * symlink-dir races on Windows when the same project registers concurrently
+ * against a fresh store (the renameTried fallback ends up unlinking a
+ * directory, which fails with EPERM, or livelocks renaming it back and
+ * forth). Registration only feeds `pnpm store prune` discovery, which the
+ * ephemeral build store never runs, so skipping it is safe here.
+ * Idempotent: skips when the marker is present; fails loudly when the anchor
+ * drifts so a pnpm bundling change is noticed instead of resurfacing the race.
+ */
+function patchBundledPnpmProjectRegistration(): void {
+  const source = readFileSync(PNPM_DIST, 'utf8')
+  if (source.includes('desktop build: skip project registration')) return
+  const pattern = /(\n\s*const linkPath = \w+\.join\(registryDir, createShortHash\(projectDir\)\);)\n\s*await symlinkDir\(projectDir, linkPath\);/u
+  const match = pattern.exec(source)
+  if (match === null) throw new Error('desktop runtime: bundled pnpm project registration anchor not found')
+  const replacement = `${match[1]}\n  void linkPath; // desktop build: skip project registration to avoid a Windows concurrent-symlink race in pnpm's symlink-dir`
+  writeFileSync(PNPM_DIST, source.slice(0, match.index) + replacement + source.slice(match.index + match[0].length))
+  console.log('desktop runtime: patched bundled pnpm to skip store project registration for the Windows symlink race')
 }
 
 function runPnpm(args: readonly string[]): Promise<void> {
@@ -94,6 +116,7 @@ function runPnpm(args: readonly string[]): Promise<void> {
       env: {
         ...Object.fromEntries(Object.entries(process.env).filter(([name]) => (
           name !== 'NODE_OPTIONS' && name !== 'NODE_PATH' && !/^DSH_DESKTOP_/u.test(name) && !/^(?:npm|pnpm|corepack)_/iu.test(name)
+          && !/^(?:HTTP|HTTPS|ALL|NO)_PROXY$/iu.test(name)
         ))),
         NPM_CONFIG_REGISTRY: registry,
         NPM_CONFIG_STORE_DIR: STORE_ROOT,
@@ -129,6 +152,7 @@ async function main(): Promise<void> {
       createRuntimeProjectMetadata(BUILD_ROOT, release)
       return prepareRuntimePatches(BUILD_ROOT, resolve(APP_ROOT, '..', '..'))
     })
+    patchBundledPnpmProjectRegistration()
     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:lockfile', () => runPnpm(['install', '--lockfile-only']))
     verifyRuntimePatches(BUILD_ROOT, patches)
     const lockfile = readFileSync(join(BUILD_ROOT, 'pnpm-lock.yaml'), 'utf8')

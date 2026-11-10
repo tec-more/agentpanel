@@ -1064,6 +1064,7 @@ class FaceAnalyzer {
     const result: ServiceModel[] = []
     const seen = new Set<SymbolId>()
     for (const record of records) {
+      if (record.declaration === undefined) continue
       const tag = typertServiceTag(record.declaration)
       if (tag === undefined) continue
       const words = (ts.getTextOfJSDocComment(tag.comment) ?? '').trim().split(/\s+/)

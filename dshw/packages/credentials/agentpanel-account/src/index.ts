@@ -25,25 +25,25 @@ import type {
 /** Deployment options for the agentpanel account backend. */
 export interface Config {
   /** agentpanel gateway 【data-plane】 base URL (default http://127.0.0.1:9999). Used by `resolveToken` so the lease key is only sent to the gateway origin. */
-  gatewayUrl?: string
+  gatewayUrl?: string | undefined
   /** agentpanel gateway 【control-plane】 base URL for lease issue/renew/revoke (default http://127.0.0.1:9998/v1/harness). */
-  controlPlaneUrl?: string
+  controlPlaneUrl?: string | undefined
   /** Harness client id used as `Bearer <clientId>.<clientSecret>`. */
-  clientId?: string
+  clientId?: string | undefined
   /** Harness client secret. */
-  clientSecret?: string
+  clientSecret?: string | undefined
   /** Lease TTL in seconds (30-3600); defaults to 900. */
-  leaseTtlSeconds?: number
+  leaseTtlSeconds?: number | undefined
   /** Lease requests-per-minute limit; defaults to 60. */
-  leaseRpmLimit?: number
+  leaseRpmLimit?: number | undefined
   /** Renew the lease after this fraction of its TTL elapses; defaults to 0.8. */
-  renewalRatio?: number
+  renewalRatio?: number | undefined
   /** Usage page URL shown in the account UI (agentpanel has none by default). */
-  usageUrl?: string
+  usageUrl?: string | undefined
   /** Top-up page URL shown in the account UI. */
-  topUpUrl?: string
+  topUpUrl?: string | undefined
   /** Optional gateway API key header (x-api-key) when the gateway requires one. */
-  gatewayApiKey?: string
+  gatewayApiKey?: string | undefined
 }
 
 /** Resolved configuration with defaults applied. */
@@ -198,7 +198,7 @@ export class AgentPanelAccount extends Service {
     return this.getState()
   }
 
-  async *watch(signal: AbortSignal, includeIdentityChanges = false): AsyncIterable<AccountView> {
+  async *watch(signal: AbortSignal, includeIdentityChanges: boolean = false): AsyncIterable<AccountView> {
     let dirty = true
     let wake: (() => void) | undefined
     const wakeUp = (): void => { dirty = true; wake?.() }

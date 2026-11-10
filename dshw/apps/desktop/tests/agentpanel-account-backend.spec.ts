@@ -7,7 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { agentpanelAccountBackend } from '../src/agentpanel-account-backend.ts'
+import { agentpanelAccountBackend, type AgentpanelAccountConfig } from '../src/agentpanel-account-backend.ts'
+import type { AccountClientMetadata } from '@deepseek-ai/dsh-deepseek-account/types'
 
 function leaseResponse(): Record<string, unknown> {
   return {
@@ -36,12 +37,18 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const config = (): Record<string, unknown> => ({
+const config = (): AgentpanelAccountConfig => ({
   gatewayUrl: 'http://gw.test',
   controlPlaneUrl: 'http://cp.test/v1/harness',
   clientToken: 'cid.csec',
   storageDir: dir,
   renewCheckMs: 10,
+})
+
+const client = (): AccountClientMetadata => ({
+  version: '1.0.0',
+  locale: 'en_US',
+  timezoneOffsetSeconds: 0,
 })
 
 it('start issues a lease on the control plane, reports credential-stored, and persists it', async () => {
@@ -50,7 +57,7 @@ it('start issues a lease on the control plane, reports credential-stored, and pe
   const backend = agentpanelAccountBackend(config())
 
   expect((await backend.state()).status).toBe('signed-out')
-  const view = await backend.start({})
+  const view = await backend.start(client())
   expect(view.status).toBe('credential-stored')
 
   expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -69,8 +76,8 @@ it('signOut revokes the lease and clears the persisted credential', async () => 
   vi.stubGlobal('fetch', fetchMock)
   const backend = agentpanelAccountBackend(config())
 
-  await backend.start({})
-  const view = await backend.signOut({})
+  await backend.start(client())
+  const view = await backend.signOut(client())
   expect(view.status).toBe('signed-out')
 
   expect(existsSync(path.join(dir, 'account.json'))).toBe(false)

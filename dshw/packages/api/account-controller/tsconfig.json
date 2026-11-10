@@ -18,6 +18,9 @@
       "path": "../../credentials/deepseek-account"
     },
     {
+      "path": "../../credentials/agentpanel-account"
+    },
+    {
       "path": "../../typert/protocol"
     },
     {

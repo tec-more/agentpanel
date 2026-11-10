@@ -1,0 +1,15 @@
+# lefthook 钩子配置（必需文件，勿删）。
+#
+# `.git/hooks/prepare-commit-msg` 会在每次提交时执行 `lefthook run prepare-commit-msg`，
+# 该命令要求仓库根部存在本文件；缺失时每次 commit 都会打印
+# "No config files with names [lefthook .lefthook ...] have been found" 警告。
+#
+# 当前**未启用任何 job**（空配置 = 全空跑，不改变提交行为）。
+# 需要加钩子时按 https://lefthook.dev/configuration/ 追加，例如：
+#
+#   pre-commit:
+#     parallel: true
+#     jobs:
+#       - name: python-syntax
+#         glob: "*.py"
+#         run: python -m compileall -q {staged_files}

@@ -262,6 +262,12 @@ async def chat_completions(request: Request, lease: Any = Depends(require_gatewa
             headers=_lease_headers(lease),
         )
 
+    # 客户端未传 model：用凭据解析出的模型回填转发体，避免上游因缺 model 报错（如 422）。
+    # 这也是「调用方不显式传 model」场景闭环的关键：凭据解析只负责选 key，模型回填由网关负责。
+    if not body_model and getattr(credential, "model", None):
+        body["model"] = credential.model
+        body_model = credential.model
+
     headers = {
         "authorization": f"Bearer {credential.api_key}",
         "content-type": "application/json",

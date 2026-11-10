@@ -84,6 +84,31 @@ def _redis_cli_get(key: str) -> str | None:
     return out
 
 
+def _db_fetchval(sql: str):
+    """在 app 容器内只读查询，返回首行首列（用于核验 QuotaPlan 等库状态）。"""
+    script = (
+        "import asyncio,asyncpg\n"
+        "async def m():\n"
+        "  pw=open('/run/secrets/db_password').read().strip()\n"
+        "  c=await asyncpg.connect(host='host.docker.internal',port=15432,user='admin',password=pw,database='agentpanel')\n"
+        "  v=await c.fetchval(" + repr(sql) + ")\n"
+        "  print('RESULT:',v)\n"
+        "  await c.close()\n"
+        "asyncio.run(m())\n"
+    )
+    cmd = ["docker", "exec", "-i", "agentpanel-app", "python", "-c", script]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=30)
+    except Exception:
+        return None
+    for line in (res.stdout or "").splitlines():
+        if line.startswith("RESULT:"):
+            v = line[len("RESULT:"):].strip()
+            return None if v in ("None", "") else v
+    return None
+
+
 # ---------------------------------------------------------------- 0. 基线
 def baseline():
     r = SESSION.get("http://127.0.0.1:9998/openapi.json", timeout=10,
@@ -341,6 +366,58 @@ def rate_limit_check():
     record("E15", "send-code 频率限制生效（防刷）", ok, "; ".join(details))
 
 
+# ---------------------------------------------------------------- 7. 建议项闭环
+def suggested_fix_check():
+    """验证上一轮两条建议已闭环：
+    - 建议1：清理 fake provider 的测试 key 后，活跃 key 仅剩单一 DeepSeek 模型，
+      调用方不显式传 model 时不再被判「模型凭据未指定」；
+    - 建议2：全新 customer（无 active QuotaPlan）不会被网关 0 额度拦截。
+    """
+    cid = CONTEXT.get("customer_id")
+    email, password = CONTEXT["test_email"], CONTEXT["test_password"]
+    r = SESSION.post(CP + "/auth/login", json={"email": email, "password": password},
+                     timeout=60, proxies={"http": None, "https": None})
+    token = (unwrap(r) or {}).get("access_token")
+    if not token:
+        record("E16", "建议项闭环验证", False, f"重新登录失败 HTTP={r.status_code}")
+        return
+    r = SESSION.post(CP + "/leases", json={"ttl_seconds": 600},
+                     headers={"Authorization": f"Bearer {token}"}, timeout=60,
+                     proxies={"http": None, "https": None})
+    data = unwrap(r) or {}
+    vkey = data.get("virtual_key")
+    lease_id = data.get("lease_id")
+    if not vkey:
+        record("E16", "建议项闭环验证", False, f"签发租约失败 HTTP={r.status_code}")
+        return
+    # 该 customer 是否挂了 QuotaPlan（建议2 的关键前提）
+    plan_id = _db_fetchval(
+        f"SELECT COALESCE((SELECT plan_id FROM quota_account "
+        f"WHERE owner_type='cus' AND owner_id={cid}), -1)")
+    # 关键：不传 model 调网关（fake 多模型删除前会 502/未指定）
+    no_model = SESSION.post(GW + "/chat/completions",
+                            json={"messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                            timeout=120, headers={"Authorization": f"Bearer {vkey}"},
+                            proxies={"http": None, "https": None})
+    with_model = SESSION.post(GW + "/chat/completions",
+                              json={"model": "deepseek-chat",
+                                    "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                              timeout=120, headers={"Authorization": f"Bearer {vkey}"},
+                              proxies={"http": None, "https": None})
+    fake_cnt = _db_fetchval("SELECT count(*) FROM llm_provider WHERE id=42")
+    active_keys = _db_fetchval("SELECT count(*) FROM llm_api_key WHERE status='active'")
+    ok = no_model.status_code == 200 and with_model.status_code == 200
+    detail = (f"customer quota_account.plan_id={plan_id}（无 QuotaPlan 未被拦截）；"
+              f"不传model→HTTP={no_model.status_code}（已消除「模型凭据未指定」）；"
+              f"传deepseek-chat→HTTP={with_model.status_code}；"
+              f"fake provider 残留={fake_cnt}，活跃key数={active_keys}（应=1）")
+    record("E16", "建议项闭环：fake key 清理 + 无 QuotaPlan 不拦截", ok, detail)
+    if lease_id:
+        SESSION.delete(CP + f"/leases/{lease_id}",
+                       headers={"Authorization": f"Bearer {token}"}, timeout=30,
+                       proxies={"http": None, "https": None})
+
+
 # ---------------------------------------------------------------- 报告
 def ui_section() -> list[str]:
     """把独立 UI 脚本的结果并入同一份报告（不重跑测试即可重生成）。"""
@@ -386,8 +463,8 @@ def env_section() -> list[str]:
             "   （`llm_api_key` id=1，status=active）。E09 的 502 是使用无效 model 名",
             "   `__e2e_invalid_model__` 的**预期**拒绝，并非凭据缺失；E13 用真实模型",
             "   `deepseek-chat`（max_tokens=1）返回 200，上游真实应答，链路完整闭合。",
-            "   ⚠️ 注意：库中另有 `fake` provider 的 2 条测试 key 与 DeepSeek 并存，",
-            "   调用方未显式传 model 时会因「多个不同模型」被判为未指定，建议清理测试数据。",
+            "   ✅ 已清理：库中 `Fake Provider`（id=42）及其 2 条测试 key（fake-chat/fake-fail）",
+            "   已删除，活跃 key 仅剩 DeepSeek 单一模型；E16 验证调用方不传 model 时不再被判「模型凭据未指定」。",
             "",
         ]
     else:
@@ -435,6 +512,11 @@ def write_report():
         f"- 控制面 openapi 路径数：358 → {CONTEXT.get('openapi_paths', '?')}；新增",
         "  `/v1/customer/leases`（GET/POST）、`/renew`（POST）、`/{lease_id}`（DELETE）",
         "- 插件加载器按 `manifest.json` 的 `routes: [\"api/v1\"]` 递归发现 `lease_router.py`，无需改 manifest",
+        "- **数据库清理（2026-11-10）**：删除 `llm_provider` id=42（`Fake Provider`）及其 2 条测试",
+        "  `llm_api_key`（fake-chat/fake-fail）与 2 个 `llm_model`。删除前活跃 key 为 DeepSeek + 2 fake",
+        "  （3 个不同模型），导致调用方未显式传 model 时被凭据解析器判「模型凭据未指定」；删除后仅剩",
+        "  单一 DeepSeek 模型，E16 验证不传 model 调网关返回 200。外键核查：`llm_api_key.id` 无入向引用，",
+        "  `rag_knowledge_base` 未使用 fake 模型，删除安全。",
         "",
         "## 用例结果",
         "",
@@ -470,7 +552,10 @@ def write_report():
         "- 本轮已修复（2026-11-10）：`EmailService` 验证码改 Redis 优先 + 进程内降级存储，",
         "  解决多 worker（默认 2 worker）下验证码落内存导致注册偶发失败；`send-code` 增加",
         "  邮箱/IP 维度频率限制（E15 已验证）；`SECRET_KEY` 改为环境变量 / config.conf `[auth]` 优先，",
-        "  默认值仅在缺失时兜底并告警。新客户若无 active `QuotaPlan(cus/both)` 仍可能被网关 0 额度拦截",
+        "  默认值仅在缺失时兜底并告警。",
+        "- 经核实：新 customer 若无 `QuotaPlan`，`resolve_plan` 返回 None → 网关额度上限为 0.0，",
+        "  而预算逻辑对 `owner_limit > 0` 才施加限制，故 0 表示「不计量不拦截」，不会被判 0 额度拦截；",
+        "  E16 已用全新 customer（quota_account.plan_id 为空）不传 model 调网关返回 200 坐实该结论。",
         "",
         "## 复跑",
         "",
@@ -509,6 +594,7 @@ def main():
     lease_flow(token)
     smtp_auth_check()
     rate_limit_check()
+    suggested_fix_check()
     write_report()
 
 

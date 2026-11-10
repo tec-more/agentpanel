@@ -38,7 +38,7 @@
 | `base/plugins/harness/services/orchestration_config.py` | `DEFAULTS["mode"]`、`validate_orchestration_config()` 的 `app/proxy` 枚举校验 |
 | `services/orchestration/app/config.py` | 同上（编排侧独立配置副本） |
 | `services/orchestration/manifest.json` | `config.orchestration` 段的 mode 项 |
-| `base/plugins/harness/services/orchestration_proxy.py` | `proxy_mode_enabled()`、`require_client_or_proxy()` 的 `l2` 回落分支 |
+| `base/plugins/harness/services/orchestration_proxy.py` | `proxy_mode_enabled()`、`require_client_or_proxy()` 的 `app` 回落分支（mode≠proxy 时走 app 本地鉴权） |
 | `base/plugins/harness/services/service_auth.py` | 约 260–272 行「只有 mode=proxy 才是写主」闸门 |
 | `services/orchestration/app/auth.py` | 约 256–266 行同语义的写接口总开关 |
 | `base/plugins/harness/api/app_internal/quota_router.py` | `_ensure_primary()`（409 `orchestration_not_primary`）、`/status` 的 `primary` 字段 |
@@ -71,7 +71,7 @@
 
 ### 2.3 配置与部署
 
-- `deploy/gateway/docker-compose.yml`、三份 `Dockerfile`（`deploy/gateway/Dockerfile.app`、`services/gateway/Dockerfile`、`services/orchestration/Dockerfile`）：复核 COPY 边界与环境注入，删除仅服务于 `l2` 模式的分支；
+- `deploy/gateway/docker-compose.yml`、三份 `Dockerfile`（`deploy/gateway/Dockerfile.app`、`services/gateway/Dockerfile`、`services/orchestration/Dockerfile`）：复核 COPY 边界与环境注入，删除仅服务于 `app` 模式的分支；
 - `services/orchestration/manifest.json` 与 `base/plugins/harness/services/orchestration_config.py` 的默认值同步；
 - `deploy/gateway/.env` / secrets：仅线下受控核对，密钥不入库、不进任何报告。
 
@@ -92,7 +92,7 @@
 
 ## 3. 建议执行顺序（分提交，便于逐段回退）
 
-1. **提交 A：开关收口** —— §2.1 删除 `l2` 分支，保留结构性单写者闸门；同步 `observe_check.py` 口径。
+1. **提交 A：开关收口** —— §2.1 删除 `app` 分支，保留结构性单写者闸门；同步 `observe_check.py` 口径。
 2. **提交 B：旧代码清理** —— §2.2 / §2.3，逐项 grep 判据通过后删除。
 3. **提交 C：文档与架构图** —— §2.4 统一更新并打勾。
 

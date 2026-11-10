@@ -4,7 +4,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { isRunningAccountTask } from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
-import type { AgentPanelAccount } from '@deepseek-ai/dsh-agentpanel-account'
+import type { AgentPanelAccount, ImportedLeaseSession } from '@deepseek-ai/dsh-agentpanel-account'
 import type { AccountView, SignInAttemptId } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -102,6 +102,24 @@ export class AccountController extends TypertRemoteService {
    */
   @Remote
   signOut(client: AccountClientMetadata): Promise<AccountView> { return this.ctx.agentpanelAccount.signOut(client) }
+  /**
+   * Adopt the lease issued by the desktop customer sign-in flow. The desktop
+   * owns renewal and revocation; this only mirrors the session so workspace
+   * surfaces report signed-in and gateway requests carry the key.
+   * @param session - lease snapshot from the desktop account store.
+   * @returns account state after adopting the session.
+   */
+  @Remote
+  importSession(session: ImportedLeaseSession): Promise<AccountView> {
+    return this.ctx.agentpanelAccount.importSession(session)
+  }
+  /**
+   * Drop the previously imported desktop session locally, for example when the
+   * desktop account store reports signed-out or an expired credential.
+   * @returns account state after clearing the session.
+   */
+  @Remote
+  clearSession(): Promise<AccountView> { return this.ctx.agentpanelAccount.clearSession() }
   /**
    * Subscribe to credential expiry without replaying prior notifications.
    * @param signal - stream lifetime.

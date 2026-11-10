@@ -544,6 +544,13 @@ async function main(): Promise<void> {
         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
         injections = ready.injections
         welcomeBackend = connectDesktopWelcome(ready.url, cookie)
+        // 把 customer 登录的网关租约镜像进 Host 账号服务：工作区账号菜单与
+        // 网关注入都读 Host 进程内的 agentpanelAccount，桌面负责续期后再次导入。
+        const syncWorkspaceSession = (): void => {
+          void welcomeBackend?.importSession().catch((error: unknown) => {
+            console.error('desktop account: workspace session import failed', error)
+          })
+        }
         analyticsEnabled = await welcomeBackend.analyticsEnabled().catch(() => false)
         if (!reportedLaunch) { reportedLaunch = true; void track('desktop_app_launch', {}) }
         stopAccount?.()
@@ -561,6 +568,7 @@ async function main(): Promise<void> {
             focusPrimaryWindow()
           }
           if (state.status === 'credential-stored' && attempt?.phase === 'succeeded' && welcomeWindow !== undefined) void enterWorkspace({ activate: false }).catch(() => undefined)
+          if (state.status === 'credential-stored' || state.status === 'signed-out') syncWorkspaceSession()
           if (previousAccountStatus === 'credential-stored' && state.status === 'signed-out') {
             void readWelcomeState().then(async (value) => {
               if (needsWelcome(value) && !quitting) {

@@ -148,3 +148,19 @@ it('start without a stored JWT stays signed out instead of issuing an anonymous 
   expect((await backend.start(client())).status).toBe('signed-out')
   expect(fetchMock).not.toHaveBeenCalled()
 })
+
+it('session exposes the lease snapshot for workspace import and null when signed out', async () => {
+  mockControlPlane()
+  const backend = agentpanelAccountBackend(config())
+  expect(backend.session()).toBeNull()
+
+  await backend.login('customer@example.test', 'secret123')
+  const session = backend.session()
+  expect(session).not.toBeNull()
+  expect(session!.leaseId).toBe('L1')
+  expect(session!.virtualKey).toBe('dgw.L1.s')
+  expect(session!.expiresAtMs).toBeGreaterThan(Date.now())
+
+  await backend.signOut(client())
+  expect(backend.session()).toBeNull()
+})

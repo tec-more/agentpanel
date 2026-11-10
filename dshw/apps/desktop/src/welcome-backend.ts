@@ -24,6 +24,12 @@ export interface DesktopWelcomeBackend {
   /** @returns The saved UI language without account or provider requests. */
   readLocalePreference(): Promise<string | null>
   /**
+   * Mirror the customer lease into the Host account service so workspace
+   * surfaces report signed-in. Clears the Host copy when signed out.
+   * @returns after the Host adopted (or cleared) the session.
+   */
+  importSession(): Promise<void>
+  /**
    * @param apiKey - User-entered official provider key.
    * @returns A safe write outcome without provider diagnostics.
    */
@@ -130,6 +136,14 @@ export function connectDesktopWelcome(
   }
   return {
     account,
+    async importSession() {
+      const session = account.session()
+      if (session === null) {
+        await invoke({ namespace: 'account', method: 'clearSession', args: {} })
+        return
+      }
+      await invoke({ namespace: 'account', method: 'importSession', args: { session } })
+    },
     read,
     async analyticsEnabled() {
       const enabled = await invoke({ namespace: 'productAnalytics', method: 'enabled', args: {} }, AbortSignal.timeout(1000))

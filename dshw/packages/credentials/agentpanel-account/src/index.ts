@@ -88,11 +88,32 @@ export class AgentPanelAuthError extends Error {
   }
 }
 
+/**
+ * Lease snapshot adopted from the desktop customer sign-in flow.
+ *
+ * The desktop main process authenticates the customer (email/password or email
+ * code), exchanges the customer JWT for a `cus`-bound gateway lease, and keeps
+ * renewing it. The Host process only needs the key so `resolveToken` can inject
+ * it into gateway requests; renewal and revocation stay with the desktop.
+ */
+export interface ImportedLeaseSession {
+  /** Control-plane lease id. */
+  leaseId: string
+  /** Gateway virtual key (`dgw.<lease_id>.<secret>`). */
+  virtualKey: string
+  /** Lease expiry in epoch milliseconds. */
+  expiresAtMs: number
+  /** Seconds before expiry the desktop renews (informational). */
+  renewAfterSeconds?: number
+}
+
 /** Account backend that authenticates dshw against the agentpanel gateway lease. */
 export class AgentPanelAccount extends Service {
   static inject: string[] = []
   private readonly config: ResolvedConfig
   private lease: Lease | undefined
+  /** True when the lease was imported from the desktop customer session (no self-renewal/revocation). */
+  private externalLease = false
   private attempt: Attempt | undefined
   private readonly listeners = new Set<(identityOnly: boolean) => void>()
   private renewTimer: ReturnType<typeof setTimeout> | undefined
@@ -179,7 +200,7 @@ export class AgentPanelAccount extends Service {
   }
 
   async signOut(_client: AccountClientMetadata): Promise<AccountView> {
-    if (this.lease !== undefined) {
+    if (this.lease !== undefined && !this.externalLease) {
       const { clientId, clientSecret, controlPlaneUrl, gatewayApiKey } = this.config
       const headers: Record<string, string> = { authorization: `Bearer ${clientId}.${clientSecret}` }
       if (gatewayApiKey) headers['x-api-key'] = gatewayApiKey
@@ -192,6 +213,50 @@ export class AgentPanelAccount extends Service {
     if (this.renewTimer !== undefined) clearTimeout(this.renewTimer)
     this.renewTimer = undefined
     this.lease = undefined
+    this.externalLease = false
+    this.attempt = undefined
+    this.ctx.emit('agentpanel-account/signed-out')
+    this.changed()
+    return this.getState()
+  }
+
+  /**
+   * Adopt a lease issued through the desktop customer sign-in flow.
+   *
+   * The desktop keeps renewing the lease and re-imports after each renewal, so
+   * this service must not schedule its own renewal (it has no renewal
+   * credentials). Sign-out through this service clears the imported lease
+   * locally without revoking it; the desktop session stays authoritative.
+   *
+   * @param session - lease snapshot from the desktop account store.
+   * @returns the account state after adopting the session.
+   */
+  async importSession(session: ImportedLeaseSession): Promise<AccountView> {
+    if (this.closed) throw new AgentPanelAuthError('protocol')
+    if (this.renewTimer !== undefined) { clearTimeout(this.renewTimer); this.renewTimer = undefined }
+    this.lease = {
+      leaseId: session.leaseId,
+      virtualKey: session.virtualKey,
+      expiresAtMs: session.expiresAtMs,
+      renewAfterSeconds: session.renewAfterSeconds ?? 0,
+    }
+    this.externalLease = true
+    this.attempt = undefined
+    this.changed()
+    return this.getState()
+  }
+
+  /**
+   * Drop the imported desktop session locally (for example after the desktop
+   * account store was signed out or expired).
+   * @returns the account state after clearing.
+   */
+  async clearSession(): Promise<AccountView> {
+    if (this.closed) throw new AgentPanelAuthError('protocol')
+    if (!this.externalLease) return this.getState()
+    if (this.renewTimer !== undefined) { clearTimeout(this.renewTimer); this.renewTimer = undefined }
+    this.lease = undefined
+    this.externalLease = false
     this.attempt = undefined
     this.ctx.emit('agentpanel-account/signed-out')
     this.changed()
@@ -291,7 +356,9 @@ export class AgentPanelAccount extends Service {
   }
 
   private async renewLease(): Promise<void> {
-    if (this.lease === undefined || this.closed) return
+    // Imported (desktop-owned) leases renew on the desktop, which re-imports
+    // after each renewal; this service has no renewal credentials for them.
+    if (this.lease === undefined || this.externalLease || this.closed) return
     const { clientId, clientSecret, controlPlaneUrl, leaseTtlSeconds, gatewayApiKey } = this.config
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -322,6 +389,7 @@ export class AgentPanelAccount extends Service {
     this.renewTimer = undefined
     const hadLease = this.lease !== undefined
     this.lease = undefined
+    this.externalLease = false
     if (hadLease) {
       this.ctx.emit('agentpanel-account/session-expired')
       this.changed()

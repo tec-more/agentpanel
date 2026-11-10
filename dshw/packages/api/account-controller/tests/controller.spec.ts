@@ -30,6 +30,8 @@ function fixture() {
     startSignIn: vi.fn<AgentPanelAccount['startSignIn']>().mockResolvedValue(state),
     cancelSignIn: vi.fn<AgentPanelAccount['cancelSignIn']>().mockResolvedValue(state),
     signOut: vi.fn<AgentPanelAccount['signOut']>().mockResolvedValue(state),
+    importSession: vi.fn<AgentPanelAccount['importSession']>().mockResolvedValue(state),
+    clearSession: vi.fn<AgentPanelAccount['clearSession']>().mockResolvedValue(state),
     watch: vi.fn<AgentPanelAccount['watch']>(),
   }
   ctx.provide('agentpanelAccount', provider as never)
@@ -49,6 +51,11 @@ it('delegates account operations without coupling profile and balance queries', 
   expect(provider.cancelSignIn).toHaveBeenCalledExactlyOnceWith(id)
   expect(await controller.signOut(client)).toBe(state)
   expect(provider.signOut).toHaveBeenCalledExactlyOnceWith(client)
+  const session = { leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAtMs: Date.now() + 900_000 }
+  expect(await controller.importSession(session)).toBe(state)
+  expect(provider.importSession).toHaveBeenCalledExactlyOnceWith(session)
+  expect(await controller.clearSession()).toBe(state)
+  expect(provider.clearSession).toHaveBeenCalledExactlyOnceWith()
   const failure = new Error('storage unavailable')
   provider.signOut.mockRejectedValueOnce(failure)
   await expect(controller.signOut(client)).rejects.toBe(failure)

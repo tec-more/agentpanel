@@ -50,6 +50,14 @@ export interface AgentpanelAccountConfig {
   renewCheckMs?: number | undefined
 }
 
+/** 租约快照，供导入工作区 Host 的账号服务（desktop 负责续期与吊销）。 */
+export interface ImportedSession {
+  leaseId: string
+  virtualKey: string
+  /** 租约过期时间（epoch 毫秒）。 */
+  expiresAtMs: number
+}
+
 /** 欢迎页可调用的客户账号操作，超出 DesktopAccountBackend 的部分。 */
 export interface CustomerAccountOperations {
   /** @param email - 待验证邮箱。 @param purpose - 验证码用途。 */
@@ -60,6 +68,8 @@ export interface CustomerAccountOperations {
   login(email: string, password: string): Promise<CustomerAuthOutcome>
   /** @returns 邮箱验证码登录成功后的账号状态。 */
   loginCode(email: string, code: string): Promise<CustomerAuthOutcome>
+  /** @returns 当前有效租约快照；未登录或已过期时为 null。 */
+  session(): ImportedSession | null
 }
 
 export type CustomerAccountBackend = DesktopAccountBackend & CustomerAccountOperations
@@ -310,6 +320,13 @@ export function agentpanelAccountBackend(config: AgentpanelAccountConfig): Custo
     async state() {
       current = readStored()
       return view()
+    },
+    session() {
+      const lease = current?.lease
+      if (!lease || expired(lease.expiresAt)) return null
+      const expiresAtMs = new Date(lease.expiresAt).getTime()
+      if (!Number.isFinite(expiresAtMs)) return null
+      return { leaseId: lease.leaseId, virtualKey: lease.virtualKey, expiresAtMs }
     },
     async start(_client) {
       const account = readStored()

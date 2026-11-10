@@ -117,3 +117,63 @@ it('revokes the lease on signOut via the control plane', async () => {
   expect(deleteCall).toBeTruthy()
   expect(String(deleteCall![0])).toBe('http://cp.test/v1/harness/gateway/leases/lease-1')
 })
+
+it('adopted desktop sessions report signed-in without contacting the control plane', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, CONFIG)
+
+  const state = await svc.importSession({
+    leaseId: 'lease-cus',
+    virtualKey: 'dgw.lease-cus.secret',
+    expiresAtMs: Date.now() + 900_000,
+    renewAfterSeconds: 720,
+  })
+  expect(state.status).toBe('credential-stored')
+  expect(fetchMock).not.toHaveBeenCalled()
+
+  // 续约 key 仅对数据面网关生效，与自签租约一致。
+  expect(await svc.resolveToken('http://gw.test/x')).toBe('dgw.lease-cus.secret')
+  expect(await svc.resolveToken('http://cp.test/x')).toBeUndefined()
+})
+
+it('imported leases are never self-renewed and sign-out clears them without a revoke call', async () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, CONFIG)
+
+  await svc.importSession({ leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAtMs: Date.now() + 900_000 })
+  // 桌面负责续期：本服务没有续期凭据，不应发出任何续期请求。
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  expect(fetchMock).not.toHaveBeenCalled()
+
+  const state = await svc.signOut(client)
+  expect(state.status).toBe('signed-out')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('clearSession drops the imported desktop session', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, CONFIG)
+  await svc.importSession({ leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAtMs: Date.now() + 900_000 })
+  expect((await svc.getState()).status).toBe('credential-stored')
+
+  const state = await svc.clearSession()
+  expect(state.status).toBe('signed-out')
+  expect(await svc.resolveToken('http://gw.test/x')).toBeUndefined()
+})
+
+it('a gateway rejection expires the imported session', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, CONFIG)
+  await svc.importSession({ leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAtMs: Date.now() + 900_000 })
+
+  await svc.rejectToken('dgw.lease-cus.secret')
+  expect((await svc.getState()).status).toBe('signed-out')
+})

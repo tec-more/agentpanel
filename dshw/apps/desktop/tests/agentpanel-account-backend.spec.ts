@@ -134,6 +134,17 @@ it('sends a register verification code through the customer auth endpoint', asyn
   expect(JSON.parse(String(opts.body))).toEqual({ email: 'new@example.test', type: 'register' })
 })
 
+it('accepts a send-code success whose payload is null', async () => {
+  // agentpanel answers send-code with success_response(data=None); only `msg` is set.
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ code: 0, msg: '验证码已发送', data: null, status_code: 200, success: true }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+  const backend = agentpanelAccountBackend(config())
+  expect(await backend.sendCode('new@example.test', 'register')).toEqual({ ok: true })
+})
+
 it('rejects an invalid verification code before contacting the control plane', async () => {
   const fetchMock = mockControlPlane()
   const backend = agentpanelAccountBackend(config())

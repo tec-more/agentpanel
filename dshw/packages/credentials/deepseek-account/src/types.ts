@@ -39,6 +39,11 @@ export interface AccountView {
   readonly status: 'signed-out' | 'credential-stored'
   readonly links: AccountLinks
   readonly attempt: SignInAttemptView | null
+  /**
+   * Deployment display brand (for example the agentpanel project name). Account copy uses it in place of the
+   * built-in DeepSeek name; absent keeps the built-in product name.
+   */
+  readonly brandName?: string
 }
 
 /** Platform account identifier supplied by the current-user endpoint. */
@@ -50,6 +55,12 @@ export interface AccountProfile {
   readonly contact: string | null
   /** Profile image URL supplied by Platform, absent when no picture is configured. */
   readonly avatarUrl?: string | null
+  /**
+   * Remaining purchased usage allowance in hours, read from the deployment's own
+   * business service (agentpanel customer membership). Absent for deployments
+   * that hold currency wallets instead of an hourly allowance.
+   */
+  readonly remainingHours?: string
 }
 /** Platform recharge or bonus wallet balance; decimal strings retain server precision. */
 export interface AccountWallet {

@@ -170,6 +170,17 @@ export class AccountController extends TypertRemoteService {
     return this.ctx.agentpanelAccount.loginCode(email, code)
   }
   /**
+   * Reset a customer password with an email verification code.
+   * @param email - customer mailbox.
+   * @param code - 6-digit verification code from the mail.
+   * @param password - new account password (at least 6 characters).
+   * @returns whether the reset was accepted, with a user-facing message on failure.
+   */
+  @Remote
+  customerResetPassword(email: string, code: string, password: string): Promise<CustomerCodeOutcome> {
+    return this.ctx.agentpanelAccount.resetPassword(email, code, password)
+  }
+  /**
    * Subscribe to credential expiry without replaying prior notifications.
    * @param signal - stream lifetime.
    * @returns notifications emitted while subscribed.

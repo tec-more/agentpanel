@@ -19,3 +19,15 @@ function addCommas(value: string): string {
   const [integer, fraction] = value.split('.')
   return `${Number(integer).toLocaleString()}.${fraction}`
 }
+
+/**
+ * Format a purchased usage allowance in hours, truncating to hundredths and
+ * dropping trailing zeros.
+ * @param amount - decimal hour allowance reported by the deployment.
+ * @returns grouped hours without a unit.
+ */
+export function formatHours(amount: string): string {
+  const value = new Big(amount)
+  if (value.lte(0)) return '0'
+  return value.round(2, Big.roundDown).toFixed(2).replace(/\.?0+$/, '')
+}

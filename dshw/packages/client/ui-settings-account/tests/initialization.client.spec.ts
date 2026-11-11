@@ -11,6 +11,7 @@ it.each(['accepted', 'refused', 'disconnected', 'pending'] as const)('initialize
   vi.stubEnv('DSH_CLIENT_VERSION', '0.0.0-test')
   const log = vi.spyOn(console, 'error').mockImplementation(() => {})
   const observed: { status: string | undefined; failed: boolean | undefined }[] = []
+  const registered: Record<string, Record<string, string>>[] = []
   const abort = new AbortController()
   const done = Promise.withResolvers<undefined>()
   const release = Promise.withResolvers<undefined>()
@@ -23,13 +24,14 @@ it.each(['accepted', 'refused', 'disconnected', 'pending'] as const)('initialize
   const links = { usageUrl: 'https://example.test/usage', topUpUrl: 'https://example.test/top_up' }
   const signedIn: AccountView = {
     status: 'credential-stored', links, attempt: { id: 'login' as SignInAttemptId, phase: 'succeeded' },
+    brandName: 'AgentPanel',
   }
   const frames: AccountView[] = [signedIn, signedIn, { status: 'signed-out', links, attempt: null }]
   const disposers: (() => void)[] = []
   let operations: AccountSectionInjected | undefined
   const ctx = {
     effect: (install: () => (() => void) | undefined) => { const dispose = install(); if (dispose) disposers.push(dispose) },
-    locale: { register: () => () => {}, bind: () => (key: string) => key, getSnapshot: () => ({ active: 'en' }) },
+    locale: { register: (_ns: string, dicts: Record<string, Record<string, string>>) => { registered.push(dicts); return () => {} }, bind: () => (key: string) => key, getSnapshot: () => ({ active: 'en' }) },
     configForms: {
       get: () => ({ subscribe: () => () => {}, getSnapshot: () => ({ status: 'loading', value: undefined }) }),
       describe: () => ({ subscribe: () => () => {}, getSnapshot: () => ({ error: null }) }),
@@ -87,6 +89,8 @@ it.each(['accepted', 'refused', 'disconnected', 'pending'] as const)('initialize
       reason: outcome === 'refused' ? 'refused' : 'disconnected',
     })
     expect(operations?.hooks.account.getSnapshot()).toMatchObject({ view: { status: 'signed-out' }, failed: false })
+    expect(registered.some(dicts => dicts.zh?.signedIn === '已登录 AgentPanel')).toBe(true)
+    expect(registered.some(dicts => dicts.en?.signedIn === 'Signed in to AgentPanel')).toBe(true)
   } finally {
     initialization.resolve(undefined)
     await Promise.resolve()

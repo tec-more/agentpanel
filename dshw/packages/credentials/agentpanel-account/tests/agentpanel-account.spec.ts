@@ -8,11 +8,11 @@
  * e.g. http://127.0.0.1:9998/v1/harness); `resolveToken` only returns the lease
  * key for the 【data-plane】 gateway origin (`gatewayUrl`, e.g. http://127.0.0.1:9999).
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { AgentPanelAccount } from '../src/index.ts'
 
 interface LeaseArgs {
@@ -86,6 +86,104 @@ it('issues a renewable lease on the control plane and resolves the key for the d
   expect(await svc.resolveToken('http://other.test/x')).toBeUndefined()
 })
 
+it('reports the deployment brand in account state', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, { ...CONFIG, brandName: '  AgentPanel  ' })
+  const state = await svc.getState()
+  expect(state.status).toBe('signed-out')
+  expect(state.brandName).toBe('AgentPanel')
+})
+
+it('reads the customer account name and remaining hours for the account card', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ap-profile-'))
+  onTestFinished(() => { rmSync(dir, { recursive: true, force: true }) })
+  const expiresAt = new Date(Date.now() + 600_000).toISOString()
+  writeFileSync(join(dir, 'account.json'), JSON.stringify({
+    accessToken: 'jwt.customer.token', tokenExpiresAt: expiresAt, customerId: '42',
+    customerEmail: 'user@example.com',
+    lease: { leaseId: 'L1', virtualKey: 'dgw.L1.s', expiresAt, ttlSeconds: 900 },
+  }))
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: { id: 42, email: 'user@example.com', nickname: 'Alice', username: 'alice', remaining_hours: 12.5 },
+    }),
+  } as Response)
+  vi.stubGlobal('fetch', fetchMock)
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, {
+    ...CONFIG, customerUrl: 'http://cp.test/v1/customer', storageDir: dir, brandName: 'AgentPanel',
+  })
+  expect((await svc.getState()).brandName).toBe('AgentPanel')
+  expect(await svc.getProfile(client)).toEqual({
+    status: 'ready',
+    value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '12.5' },
+  })
+  const [url, init] = started(...(fetchMock.mock.calls[0] as [string, RequestInit]))
+  expect(url).toBe('http://cp.test/v1/customer/auth/me')
+  expect(init.method).toBe('GET')
+  expect((init.headers as Record<string, string>).authorization).toBe('Bearer jwt.customer.token')
+  // The refreshed identity is persisted for later launches.
+  const stored = JSON.parse(readFileSync(join(dir, 'account.json'), 'utf8')) as Record<string, unknown>
+  expect(stored.customerName).toBe('Alice')
+  expect(stored.remainingHours).toBe('12.5')
+  // A repeated read keeps the stored values and still reports them.
+  expect(await svc.getProfile(client)).toEqual({
+    status: 'ready',
+    value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '12.5' },
+  })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+it('keeps the persisted identity when the business profile read fails', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ap-profile-'))
+  onTestFinished(() => { rmSync(dir, { recursive: true, force: true }) })
+  const expiresAt = new Date(Date.now() + 600_000).toISOString()
+  writeFileSync(join(dir, 'account.json'), JSON.stringify({
+    accessToken: 'jwt.customer.token', tokenExpiresAt: expiresAt, customerId: '42',
+    customerEmail: 'user@example.com', customerName: 'Stored Name', remainingHours: '3.25',
+    lease: { leaseId: 'L1', virtualKey: 'dgw.L1.s', expiresAt, ttlSeconds: 900 },
+  }))
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, {
+    ...CONFIG, customerUrl: 'http://cp.test/v1/customer', storageDir: dir,
+  })
+  expect(await svc.getProfile(client)).toEqual({
+    status: 'ready',
+    value: { id: null, name: 'Stored Name', contact: 'user@example.com', remainingHours: '3.25' },
+  })
+})
+
+it('falls back to the username and omits fields the business service does not return', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ap-profile-'))
+  onTestFinished(() => { rmSync(dir, { recursive: true, force: true }) })
+  const expiresAt = new Date(Date.now() + 600_000).toISOString()
+  writeFileSync(join(dir, 'account.json'), JSON.stringify({
+    accessToken: 'jwt.customer.token', tokenExpiresAt: expiresAt, customerId: '42',
+    customerEmail: 'user@example.com',
+    lease: { leaseId: 'L1', virtualKey: 'dgw.L1.s', expiresAt, ttlSeconds: 900 },
+  }))
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ success: true, data: { username: 'alice' } }),
+  } as Response)
+  vi.stubGlobal('fetch', fetchMock)
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, {
+    ...CONFIG, customerUrl: 'http://cp.test/v1/customer', storageDir: dir,
+  })
+  expect(await svc.getProfile(client)).toEqual({
+    status: 'ready',
+    value: { id: null, name: 'alice', contact: 'user@example.com' },
+  })
+})
+
 it('stays signed-out when the gateway rejects the lease', async () => {
   const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({}) } as Response)
   vi.stubGlobal('fetch', fetchMock)
@@ -142,6 +240,44 @@ it('adopted desktop sessions report signed-in without contacting the control pla
   expect(await svc.resolveToken('http://cp.test/x')).toBeUndefined()
 })
 
+it('an imported desktop lease reads the shared customer identity without owning renewal', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ap-import-profile-'))
+  onTestFinished(() => { rmSync(dir, { recursive: true, force: true }) })
+  const leaseExpiresAt = new Date(Date.now() + 900_000).toISOString()
+  writeFileSync(join(dir, 'account.json'), JSON.stringify({
+    accessToken: 'jwt.customer.token',
+    tokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    customerId: '42', customerEmail: 'user@example.com', customerName: 'Alice', remainingHours: '3',
+    lease: { leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAt: leaseExpiresAt, ttlSeconds: 900 },
+  }))
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: { nickname: 'Alice', email: 'user@example.com', remaining_hours: 2.5 },
+    }),
+  } as Response)
+  vi.stubGlobal('fetch', fetchMock)
+  const ctx = new Context()
+  roots.push(ctx)
+  const svc = new AgentPanelAccount(ctx, {
+    ...CONFIG, customerUrl: 'http://cp.test/v1/customer', storageDir: dir,
+  })
+
+  // 桌面端把同一张租约镜像进来；本进程只读取业务端资料，不负责续期/吊销。
+  await svc.importSession({ leaseId: 'lease-cus', virtualKey: 'dgw.lease-cus.secret', expiresAtMs: Date.now() + 900_000 })
+  expect(await svc.getProfile(client)).toEqual({
+    status: 'ready',
+    value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '2.5' },
+  })
+  expect(fetchMock.mock.calls.map(call => String(call[0])))
+    .toEqual(['http://cp.test/v1/customer/auth/me'])
+
+  await svc.signOut(client)
+  // 桌面拥有吊销；本进程退出登录不发出任何请求。
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
 it('imported leases are never self-renewed and sign-out clears them without a revoke call', async () => {
   const fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)
@@ -194,7 +330,13 @@ describe('customer sign-in', () => {
     return { success: true, data: {
       access_token: 'jwt.cus',
       expires_in: 86_400,
-      customer: { id: 'cus-1', email: 'user@example.com' },
+      customer: { id: 'cus-1', email: 'user@example.com', nickname: 'Alice', username: 'alice', remaining_hours: 7.5 },
+    } }
+  }
+
+  function customerProfileResponse(): Record<string, unknown> {
+    return { success: true, data: {
+      id: 'cus-1', email: 'user@example.com', nickname: 'Alice', username: 'alice', remaining_hours: 6.25,
     } }
   }
 
@@ -234,6 +376,7 @@ describe('customer sign-in', () => {
     const fetchMock = route({
       'POST http://cp.test/v1/customer/auth/login': authResponse,
       'POST http://cp.test/v1/customer/leases': customerLeaseResponse,
+      'GET http://cp.test/v1/customer/auth/me': customerProfileResponse,
     })
     vi.stubGlobal('fetch', fetchMock)
     const ctx = new Context()
@@ -248,6 +391,11 @@ describe('customer sign-in', () => {
     // 客户租约同样只对数据面网关注入。
     expect(await svc.resolveToken('http://gw.test/x')).toBe('dgw.lease-cus.secret')
     expect(await svc.resolveToken('http://cp.test/x')).toBeUndefined()
+    // 账号名与余量来自业务端；读取后余量随业务数据更新。
+    expect(await svc.getProfile(client)).toEqual({
+      status: 'ready',
+      value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '6.25' },
+    })
 
     const [loginUrl, loginInit] = started(...(fetchMock.mock.calls[0]! as [string, RequestInit]))
     expect(loginUrl).toBe('http://cp.test/v1/customer/auth/login')
@@ -260,6 +408,8 @@ describe('customer sign-in', () => {
     const stored = JSON.parse(readFileSync(join(CUSTOMER.storageDir, 'account.json'), 'utf8')) as Record<string, unknown>
     expect(stored.accessToken).toBe('jwt.cus')
     expect(stored.customerEmail).toBe('user@example.com')
+    expect(stored.customerName).toBe('Alice')
+    expect(stored.remainingHours).toBe('6.25')
     expect((stored.lease as Record<string, unknown>).virtualKey).toBe('dgw.lease-cus.secret')
 
     const state = await svc.signOut(client)
@@ -285,6 +435,69 @@ describe('customer sign-in', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toBe('密码错误')
     expect((await svc.getState()).status).toBe('signed-out')
+  })
+
+  it('accepts a control-plane success whose payload is null', async () => {
+    CUSTOMER.storageDir = mkdtempSync(join(tmpdir(), 'agentpanel-account-'))
+    const fetchMock = route({
+      'POST http://cp.test/v1/customer/auth/send-code': () => ({ success: true, data: null, msg: '验证码已发送' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = new Context()
+    roots.push(ctx)
+    const svc = new AgentPanelAccount(ctx, { ...CUSTOMER })
+
+    expect(await svc.sendCode('user@example.com', 'register')).toEqual({ ok: true, message: '' })
+  })
+
+  it('resets a password through the customer control plane', async () => {
+    CUSTOMER.storageDir = mkdtempSync(join(tmpdir(), 'agentpanel-account-'))
+    const fetchMock = route({
+      'POST http://cp.test/v1/customer/auth/reset-password': () => ({ success: true, data: null, msg: '密码重置成功' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = new Context()
+    roots.push(ctx)
+    const svc = new AgentPanelAccount(ctx, { ...CUSTOMER })
+
+    expect(await svc.resetPassword('user@example.com', '123456', 'secret123')).toEqual({ ok: true, message: '' })
+    const [url, init] = started(...(fetchMock.mock.calls[0]! as [string, RequestInit]))
+    expect(url).toBe('http://cp.test/v1/customer/auth/reset-password')
+    expect(JSON.parse(String(init.body))).toEqual({
+      email: 'user@example.com', code: '123456', new_password: 'secret123',
+    })
+  })
+
+  it('validates reset inputs locally and surfaces control-plane failures', async () => {
+    const fetchMock = route({
+      'POST http://cp.test/v1/customer/auth/reset-password': () => ({ success: false, msg: '验证码错误或已过期' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = new Context()
+    roots.push(ctx)
+    const svc = new AgentPanelAccount(ctx, { ...CUSTOMER })
+
+    expect((await svc.resetPassword('not-an-email', '123456', 'secret123')).message).toContain('邮箱')
+    expect((await svc.resetPassword('user@example.com', '12ab', 'secret123')).message).toContain('6 位')
+    expect((await svc.resetPassword('user@example.com', '123456', '123')).message).toContain('6 位')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await svc.resetPassword('user@example.com', '123456', 'secret123'))
+      .toEqual({ ok: false, message: '验证码错误或已过期' })
+    const browserCtx = new Context()
+    roots.push(browserCtx)
+    expect((await new AgentPanelAccount(browserCtx, CONFIG).resetPassword('user@example.com', '123456', 'secret123')).message)
+      .toContain('not configured')
+  })
+
+  it('reports a withdrawn password reset as a user-facing failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    const ctx = new Context()
+    roots.push(ctx)
+    const svc = new AgentPanelAccount(ctx, {
+      ...CUSTOMER, storageDir: mkdtempSync(join(tmpdir(), 'agentpanel-account-')),
+    })
+    expect(await svc.resetPassword('user@example.com', '123456', 'secret123'))
+      .toEqual({ ok: false, message: 'offline' })
   })
 
   it('validates inputs locally before calling the control plane', async () => {

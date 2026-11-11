@@ -55,7 +55,10 @@ function mount(state: Omit<AccountView, 'links'>, copy: typeof en | typeof zh = 
     <AccountSection {...globals} {...operations}
       useAccount={selector => selector(operations.hooks.account.getSnapshot())}
       useTheme={selector => selector(operations.hooks.theme.getSnapshot())}
-      close={() => {}} t={key => key in copy ? copy[key as AccountKey] : key} />
+      close={() => {}} t={(key, values) => {
+        const template = key in copy ? copy[key as AccountKey] : key
+        return values === undefined ? template : template.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name]))
+      }} />
     {/* The application renders this from `shell.overlay`; the settings page only requests a page. */}
     {platform !== undefined && pages !== undefined
       && <SharedPlatformHost Globals={globals} pages={pages} platform={platform} copy={copy}
@@ -109,11 +112,11 @@ function emailDialog(copy: typeof en | typeof zh = en) {
     details: undefined, avatar: undefined, failed: false, customerAuth: true,
   }
   const operations = {
-    sendCode: vi.fn(async (_email: string, _purpose: 'register' | 'login') => ({ ok: true, message: '' })),
+    sendCode: vi.fn(async (_email: string, _purpose: 'register' | 'reset_password') => ({ ok: true, message: '' })),
     login: vi.fn(async (_email: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
-    loginCode: vi.fn(async (_email: string, _code: string) => ({ ok: true, message: '', signedIn: true })),
     register: vi.fn(async (_email: string, _code: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
-    close: vi.fn(), useApiKey: vi.fn(),
+    resetPassword: vi.fn(async (_email: string, _code: string, _password: string) => ({ ok: true, message: '' })),
+    close: vi.fn(),
   }
   const element = () => <EmailSignInDialog
     account={{ ...state, get view() { return state.view } }} {...operations}
@@ -125,6 +128,7 @@ function emailDialog(copy: typeof en | typeof zh = en) {
 describe('EmailSignInDialog', () => {
   it('signs in with the password tab and closes once the account reports stored', async () => {
     const dialog = emailDialog()
+    expect(screen.queryByRole('button', { name: en.addApiKey })).toBeNull()
     fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'secret123' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
@@ -145,12 +149,13 @@ describe('EmailSignInDialog', () => {
     expect(dialog.close).not.toHaveBeenCalled()
   })
 
-  it('sends a login code from the email-code tab and locks resending', async () => {
+  it('offers only login and register, and locks resending a register code', async () => {
     const dialog = emailDialog()
-    fireEvent.click(screen.getByRole('tab', { name: en.tabCode }))
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([en.signIn, en.tabRegister])
+    fireEvent.click(screen.getByRole('tab', { name: en.tabRegister }))
     fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.sendCode })) })
-    expect(dialog.sendCode).toHaveBeenCalledExactlyOnceWith('user@example.com', 'login')
+    expect(dialog.sendCode).toHaveBeenCalledExactlyOnceWith('user@example.com', 'register')
     expect(screen.getByRole('status').textContent).toBe(en.codeSent)
     const resend = screen.getByRole('button', { name: new RegExp(en.resend) })
     expect(resend.textContent).not.toBe(en.sendCode)
@@ -166,6 +171,63 @@ describe('EmailSignInDialog', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.registerSubmit })) })
     expect(screen.getByRole('alert').textContent).toBe(en.passwordInvalid)
     expect(dialog.register).not.toHaveBeenCalled()
+  })
+
+  it('resets a forgotten password and returns to login', async () => {
+    const dialog = emailDialog()
+    fireEvent.click(screen.getByRole('button', { name: en.forgotPassword }))
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    expect(screen.getByRole('button', { name: en.resetSubmit })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.sendCode })) })
+    expect(dialog.sendCode).toHaveBeenLastCalledWith('user@example.com', 'reset_password')
+    fireEvent.change(screen.getByLabelText(en.codeLabel), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'newsecret' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.resetSubmit })) })
+    expect(dialog.resetPassword).toHaveBeenCalledExactlyOnceWith('user@example.com', '123456', 'newsecret')
+    expect(screen.getByRole('status').textContent).toBe(en.resetDone)
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([en.signIn, en.tabRegister])
+  })
+
+  it('keeps the reset form on a rejected reset and returns on demand', async () => {
+    const dialog = emailDialog()
+    dialog.resetPassword.mockResolvedValueOnce({ ok: false, message: '验证码错误' })
+    fireEvent.click(screen.getByRole('button', { name: en.forgotPassword }))
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(en.codeLabel), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'newsecret' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.resetSubmit })) })
+    expect(screen.getByRole('alert').textContent).toBe('验证码错误')
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: en.backToSignIn }))
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  it('ignores a reset submit after the host withdraws password recovery', async () => {
+    const state: AccountSnapshot = {
+      view: { status: 'signed-out', links: { usageUrl: '', topUpUrl: '' }, attempt: null },
+      details: undefined, avatar: undefined, failed: false, customerAuth: true,
+    }
+    const resetPassword = vi.fn(async (_email: string, _code: string, _password: string) => ({ ok: true, message: '' }))
+    const props = {
+      account: state,
+      sendCode: vi.fn(async (_email: string, _purpose: 'register' | 'reset_password') => ({ ok: true, message: '' })),
+      login: vi.fn(async (_email: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
+      register: vi.fn(async (_email: string, _code: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
+      close: vi.fn(), t: (key: AccountKey) => en[key],
+    }
+    const view = render(<EmailSignInDialog {...props} resetPassword={resetPassword} />)
+    fireEvent.click(screen.getByRole('button', { name: en.forgotPassword }))
+    // The capability disappears while the reset form is open: submitting changes nothing.
+    view.rerender(<EmailSignInDialog {...props} />)
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(en.codeLabel), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'newsecret' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.resetSubmit })) })
+    expect(resetPassword).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: en.forgotPassword })).toBeNull()
+    view.unmount()
   })
 })
 
@@ -349,6 +411,47 @@ it('keeps the confirmation dialog open after a failed sign-out', async () => {
   // The confirmation dialog owns the failure; the launcher renders no error of its own.
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByRole('alert').textContent).toBe(en.failed)
+})
+
+it('hides the balance sheet when the deployment has no Platform links', () => {
+  mount({ status: 'credential-stored', attempt: null }, en,
+    { profile: { status: 'ready', value: { id: null, name: 'AgentPanel', contact: 'user@example.com' } } },
+    undefined, undefined, { usageUrl: '', topUpUrl: '' })
+  expect(screen.getByText('AgentPanel')).toBeTruthy()
+  expect(screen.queryByText(en.balance)).toBeNull()
+  expect(screen.queryByText(en.bonusBalance)).toBeNull()
+  expect(screen.queryByText(en.usage)).toBeNull()
+  expect(screen.queryByText(en.topUp)).toBeNull()
+})
+
+it.each([en, zh])('shows the agentpanel account name and remaining hours without Platform links', (copy) => {
+  mount({ status: 'credential-stored', attempt: null }, copy,
+    { profile: { status: 'ready', value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '12.50000000' } } },
+    undefined, undefined, { usageUrl: '', topUpUrl: '' })
+  expect(screen.getByText('Alice')).toBeTruthy()
+  expect(screen.getByText('user@example.com')).toBeTruthy()
+  expect(screen.getByText(copy.quota).parentElement!.textContent)
+    .toBe(`${copy.quota}${copy.quotaHours.replace('{hours}', '12.5')}`)
+  expect(screen.queryByText(copy.balance)).toBeNull()
+  expect(screen.queryByRole('link')).toBeNull()
+})
+
+it('keeps a zero remaining allowance visible', () => {
+  mount({ status: 'credential-stored', attempt: null }, en,
+    { profile: { status: 'ready', value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '0' } } },
+    undefined, undefined, { usageUrl: '', topUpUrl: '' })
+  expect(screen.getByText(en.quota).parentElement!.textContent).toBe(`${en.quota}${en.quotaHours.replace('{hours}', '0')}`)
+})
+
+it('separates the remaining hours from the Platform wallet rows', () => {
+  mount({ status: 'credential-stored', attempt: null }, en, {
+    profile: { status: 'ready', value: { id: null, name: 'Alice', contact: 'user@example.com', remainingHours: '4' } },
+    balance: { status: 'ready', value: [{ currency: 'CNY', balance: '10.00' }], bonusWallets: [] },
+  })
+  expect(screen.getByText(en.quota).parentElement!.textContent).toBe(`${en.quota}${en.quotaHours.replace('{hours}', '4')}`)
+  expect(screen.getByText('¥10.00')).toBeTruthy()
+  // One divider below the remaining row and one above the More row.
+  expect(screen.getByRole('region').querySelectorAll(`.${css.divider}`)).toHaveLength(2)
 })
 
 it.each([en, zh])('renders Platform profile and recharge wallet balances', async (copy) => {
@@ -677,7 +780,7 @@ it('reports a rejected settings login and disables login while initial state is 
   expect(screen.getByRole('status').textContent).toBe(en.failed)
 })
 
-it('dismisses a collapsed menu and hands its login dialog to the API-key onboarding step', async () => {
+it('dismisses a collapsed menu and closes its login dialog without an API-key entry', async () => {
   const operations = mount({ status: 'credential-stored', attempt: null }, en, { profile: { status: 'failed' } })
   cleanup()
   const { AccountMenu } = await import('../src/client/AccountMenu.tsx')
@@ -694,10 +797,10 @@ it('dismisses a collapsed menu and hands its login dialog to the API-key onboard
   expect(screen.queryByRole('menu')).toBeNull()
   snapshot = { ...snapshot, view: { ...snapshot.view!, status: 'signed-out' }, loginVisible: true }
   view.rerender(<AccountMenu {...props} />)
+  expect(screen.queryByRole('button', { name: en.addApiKey })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: en.close }))
   expect(operations.showLogin).toHaveBeenLastCalledWith(false)
-  fireEvent.click(screen.getByRole('button', { name: en.addApiKey }))
-  expect(openOnboarding).toHaveBeenCalledExactlyOnceWith('deepseek-official')
+  expect(openOnboarding).not.toHaveBeenCalled()
   snapshot = { ...snapshot, onboarding: true }
   view.rerender(<AccountMenu {...props} />)
   expect(screen.queryByRole('dialog')).toBeNull()

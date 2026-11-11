@@ -131,6 +131,10 @@
         clientSecret: !!js process.env.DSH_AGENTPANEL_CLIENT_SECRET || ''
         customerUrl: !!js process.env.DSH_AGENTPANEL_CUSTOMER_URL || 'http://127.0.0.1:9998/v1/customer'
         storageDir: !!js process.env.DSH_AGENTPANEL_ACCOUNT_STORE || ''
+        # Deployment brand for account copy (Web + Desktop). Desktop exports the
+        # backend project name as DSH_AGENTPANEL_PROJECT_NAME before starting the
+        # Host; Web falls back to the agentpanel product name here.
+        brandName: !!js process.env.DSH_AGENTPANEL_PROJECT_NAME || 'AgentPanel'
 
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'

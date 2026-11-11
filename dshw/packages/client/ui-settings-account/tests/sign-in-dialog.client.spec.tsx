@@ -12,8 +12,7 @@ function dialogProps(attempt: AccountView['attempt'], copy: typeof en | typeof z
   const start = vi.fn(async () => {})
   const cancel = vi.fn(async () => {})
   const close = vi.fn()
-  const useApiKey = vi.fn()
-  return { start, cancel, close, useApiKey, colorScheme, t: (key: keyof typeof en) => copy[key],
+  return { start, cancel, close, colorScheme, t: (key: keyof typeof en) => copy[key],
     account: { view: { status: 'signed-out' as const, attempt, links: { usageUrl: 'https://platform.deepseek.com/usage', topUpUrl: 'https://platform.deepseek.com/top_up' } }, details: undefined, avatar: undefined, failed: false } }
 }
 function mount(attempt: AccountView['attempt'], copy: typeof en | typeof zh = en, colorScheme: 'light' | 'dark' = 'dark') {
@@ -21,17 +20,19 @@ function mount(attempt: AccountView['attempt'], copy: typeof en | typeof zh = en
   render(<SignInDialog {...props} />)
   return props
 }
-it.each([en, zh])('offers sign in or the existing API key editor', async (copy) => {
+it.each([en, zh])('offers sign in without an API-key entry', async (copy) => {
   const props = mount(null, copy)
   await expect(`${screen.getByRole('dialog').textContent}\n`).toMatchFileSnapshot(`./expected/login-${copy === en ? 'en' : 'zh'}.txt`)
-  fireEvent.click(screen.getByRole('button', { name: copy.addApiKey }))
-  expect(props.useApiKey).toHaveBeenCalledOnce()
+  expect(screen.getByRole('button', { name: copy.signIn })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: copy.addApiKey })).toBeNull()
   expect(props.start).not.toHaveBeenCalled()
 })
 it.each([en, zh])('requires a user action after timeout', async (copy) => {
   const props = mount({ id, phase: 'expired', errorCode: 'expired' }, copy)
   expect(props.start).not.toHaveBeenCalled()
   await expect(`${screen.getByRole('dialog').textContent}\n`).toMatchFileSnapshot(`./expected/login-timeout-${copy === en ? 'en' : 'zh'}.txt`)
+  expect(screen.getByRole('button', { name: copy.retry })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: copy.addApiKey })).toBeNull()
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: copy.retry })) })
   expect(props.start).toHaveBeenCalledOnce()
 })
@@ -187,8 +188,6 @@ it('does not report workspace login views or login choices', async () => {
   view.rerender(<SignInDialog {...props} colorScheme="light" />)
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
   expect(props.start).toHaveBeenCalledOnce()
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.addApiKey })) })
-  expect(props.useApiKey).toHaveBeenCalledOnce()
   expect(track).not.toHaveBeenCalled()
 })
 

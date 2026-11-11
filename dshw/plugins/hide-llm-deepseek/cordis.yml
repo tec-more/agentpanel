@@ -1,0 +1,3 @@
+id: hide-llm-deepseek
+name: hide-llm-deepseek
+client: ./client.ts

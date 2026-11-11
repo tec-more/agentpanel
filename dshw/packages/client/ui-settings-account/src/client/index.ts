@@ -43,10 +43,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Services required by account settings. */
 export const inject = ['slots', 'locale', 'remote', 'remote.account', 'remote.session', 'theme', 'configForms', 'remoteAccess']
+/**
+ * Replace the built-in product names in one locale dictionary with the deployment brand.
+ * @param dictionary - complete locale dictionary for the account namespace.
+ * @param brand - Host-provided display brand.
+ * @returns a copy using the brand wherever the built-in DeepSeek names appear.
+ */
+function brandDictionary<T extends Record<string, string>>(dictionary: T, brand: string): T {
+  return Object.fromEntries(Object.entries(dictionary).map(([key, value]) => [
+    key, value.replaceAll('DeepSeek Harness', brand).replaceAll('DeepSeek', brand),
+  ])) as T
+}
 /** Register account UI in Desktop and plain Web clients. @param ctx - client plugin context. */
 export function apply(ctx: Context): void {
   const desktop = 'dshDesktop' in globalThis
-  ctx.effect(() => ctx.locale.register('settings.account', { en, zh, ja, es, fr, de, ru, pt }), 'account: dictionaries')
   const t = ctx.locale.bind('settings.account')
   const page = globalThis as Partial<Record<typeof CONTACT_CONFIG_GLOBAL, unknown>>
   const config = ContactConfig(page[CONTACT_CONFIG_GLOBAL] ?? {})
@@ -68,7 +78,35 @@ export function apply(ctx: Context): void {
   const browser = new BrowserLogin(url => authorizeUrlWithTheme(url, ctx.theme.getTheme().active.colorScheme))
   ctx.effect(() => () => { browser.dispose() }, 'account: pending browser window')
   const listeners = new Set<() => void>()
-  const publish = (value: AccountSnapshot) => { snapshot = value; for (const listener of listeners) listener() }
+  // Account copy follows the Host-provided deployment brand; dictionaries are
+  // re-registered when the account view first carries (or drops) the brand.
+  let registeredBrand: string | undefined
+  let dictionariesRegistered = false
+  let disposeDictionaries: (() => void) | undefined
+  const registerDictionaries = (): void => {
+    const brand = snapshot.view?.brandName?.trim()
+    if (dictionariesRegistered && brand === registeredBrand) return
+    dictionariesRegistered = true
+    registeredBrand = brand
+    disposeDictionaries?.()
+    if (brand === undefined) {
+      disposeDictionaries = ctx.locale.register('settings.account', { en, zh, ja, es, fr, de, ru, pt })
+      return
+    }
+    disposeDictionaries = ctx.locale.register('settings.account', {
+      en: brandDictionary(en, brand), zh: brandDictionary(zh, brand),
+      ja: brandDictionary(ja, brand), es: brandDictionary(es, brand),
+      fr: brandDictionary(fr, brand), de: brandDictionary(de, brand),
+      ru: brandDictionary(ru, brand), pt: brandDictionary(pt, brand),
+    })
+  }
+  const publish = (value: AccountSnapshot) => {
+    snapshot = value
+    registerDictionaries()
+    for (const listener of listeners) listener()
+  }
+  registerDictionaries()
+  ctx.effect(() => () => { disposeDictionaries?.(); disposeDictionaries = undefined }, 'account: dictionaries')
   const avatar = new AccountAvatarLoader((value) => { publish({ ...snapshot, avatar: value }) })
   ctx.effect(() => () => { avatar.dispose() }, 'account: profile picture lifetime')
   /** @returns the client identity for one account call, read at call time so it carries the language and zone in effect then. */
@@ -107,8 +145,12 @@ export function apply(ctx: Context): void {
       let value: AccountDetails[K] | null
       try { value = await query() }
       catch { value = { status: 'failed' } }
-      if (value?.status === 'failed') console.error('[deepseek-account] account read failed', { field })
-      if (generation === revision && value !== null) publish({ ...snapshot, details: { ...snapshot.details, [field]: value } })
+      // null means the provider has no such Platform concept (agentpanel); render
+      // it as an unavailable field instead of leaving the card loading forever.
+      // It is not a query failure, so it stays out of the error log.
+      const resolved = value ?? ({ status: 'failed' } as AccountDetails[K])
+      if (value !== null && resolved.status === 'failed') console.error('[deepseek-account] account read failed', { field })
+      if (generation === revision) publish({ ...snapshot, details: { ...snapshot.details, [field]: resolved } })
     }
     const request = Promise.all([
       read('profile', async () => {
@@ -288,15 +330,15 @@ export function apply(ctx: Context): void {
       if (!result.ok) throw new Error('account login failed')
       return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
     },
-    async loginCode(email, code) {
-      const result = await ctx.remote.account.customerLoginCode(email, code)
-      if (!result.ok) throw new Error('account login failed')
-      return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
-    },
     async register(email, code, password) {
       const result = await ctx.remote.account.customerRegister(email, code, password)
       if (!result.ok) throw new Error('account register failed')
       return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
+    },
+    async resetPassword(email, code, password) {
+      const result = await ctx.remote.account.customerResetPassword(email, code, password)
+      if (!result.ok) throw new Error('account password reset failed')
+      return result.value
     },
     async hasRunningAccountTasks() {
       const result = await ctx.remote.account.hasRunningAccountTasks()

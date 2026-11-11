@@ -142,9 +142,13 @@ function expired(value: string | undefined): boolean {
 
 /** Pull the payload out of agentpanel's `success_response` envelope (or a bare object). */
 function envelopeData(body: unknown): Record<string, unknown> {
-  const source = body && typeof body === 'object' && 'data' in body
-    ? (body as Record<string, unknown>).data
-    : body
+  const envelope = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : undefined
+  if (envelope === undefined) throw new Error('agentpanel account: 响应格式无效')
+  const source = 'data' in envelope ? envelope.data : envelope
+  // Successful calls without a payload (send-code) report only `msg`.
+  if (source === null) return {}
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     throw new Error('agentpanel account: 响应格式无效')
   }

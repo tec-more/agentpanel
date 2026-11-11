@@ -21,9 +21,9 @@ export type AccountMenuProps = PropsRuntime<'settings.launcher'> & PropsLocale<'
  * @returns account menu launcher.
  */
 export function AccountMenu({
-  subscribeSessionExpired, subscribeModelSignInRequired, wide, settingsShortcut, openSettings, openOnboarding, settingsOpen,
+  subscribeSessionExpired, subscribeModelSignInRequired, wide, settingsShortcut, openSettings, settingsOpen,
   useAccount, useTheme, signOut, hasRunningAccountTasks, refreshAccount, bonusNoticeShown, bonusNoticeDismissed,
-  contactUs, showLogin, start, cancel, avatarFailed, sendCode, login, loginCode, register, t,
+  contactUs, showLogin, start, cancel, avatarFailed, sendCode, login, register, resetPassword, t,
 }: AccountMenuProps) {
   const anchor = useRef<HTMLDivElement>(null)
   // The launcher outlives the panel, so a false-to-true edge is one Settings entry:
@@ -87,12 +87,12 @@ export function AccountMenu({
         else void requestSignOut()
       }} />
     {account.loginVisible && !account.onboarding && (account.customerAuth === undefined ? null : account.customerAuth
-      ? sendCode !== undefined && login !== undefined && loginCode !== undefined && register !== undefined
-        && <EmailSignInDialog account={account} sendCode={sendCode} login={login} loginCode={loginCode} register={register} t={t}
-          close={() => { showLogin(false) }} useApiKey={() => { showLogin(false); openOnboarding('deepseek-official') }} />
+      ? sendCode !== undefined && login !== undefined && register !== undefined
+        && <EmailSignInDialog account={account} sendCode={sendCode} login={login} register={register} resetPassword={resetPassword} t={t}
+          close={() => { showLogin(false) }} />
       : <SignInDialog account={account} colorScheme={colorScheme}
         start={start} cancel={cancel} t={t}
-        close={() => { showLogin(false) }} useApiKey={() => { showLogin(false); openOnboarding('deepseek-official') }} />)}
+        close={() => { showLogin(false) }} />)}
     {signedIn && signOutImpact !== undefined && <SignOutDialog running={signOutImpact} signOut={signOut}
       close={() => { setSignOutImpact(undefined) }} t={t} />}
   </div>

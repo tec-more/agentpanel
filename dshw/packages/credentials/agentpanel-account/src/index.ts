@@ -48,6 +48,11 @@ export interface Config {
   usageUrl?: string | undefined
   /** Top-up page URL shown in the account UI. */
   topUpUrl?: string | undefined
+  /**
+   * Deployment display brand for account copy (for example the agentpanel
+   * project name). Empty keeps the built-in DeepSeek product name.
+   */
+  brandName?: string | undefined
   /** Optional gateway API key header (x-api-key) when the gateway requires one. */
   gatewayApiKey?: string | undefined
   /**
@@ -77,6 +82,7 @@ interface ResolvedConfig {
   renewalRatio: number
   usageUrl: string
   topUpUrl: string
+  brandName: string
   gatewayApiKey: string
   customerUrl: string
   storageFile: string
@@ -113,7 +119,18 @@ interface StoredAccount {
   tokenExpiresAt: string
   customerId: string
   customerEmail: string
+  /** Account display name from the customer profile (nickname, then username). */
+  customerName?: string
+  /** Remaining purchased hours last reported by the agentpanel customer service. */
+  remainingHours?: string
   lease: StoredLease | null
+}
+
+/** Customer identity and allowance read from `/auth/me`; absent fields keep the persisted values. */
+interface CustomerSummary {
+  name?: string
+  email?: string
+  remainingHours?: string
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -136,15 +153,39 @@ function messageOf(error: unknown): string {
   return error instanceof Error && error.message !== '' ? error.message.slice(0, 200) : '操作失败，请重试'
 }
 
-/** @returns the payload object inside agentpanel's `success_response` envelope (or a bare object). */
+/**
+ * Unwrap agentpanel's `success_response` envelope.
+ * @returns the payload object; an empty object for a success response that carries
+ * `data: null` (for example send-code, which reports only `msg`).
+ */
 function envelopeData(body: unknown): Record<string, unknown> {
-  const source = body && typeof body === 'object' && 'data' in body
-    ? (body as Record<string, unknown>).data
-    : body
+  const envelope = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : undefined
+  if (envelope === undefined) throw new Error('agentpanel account: 响应格式无效')
+  const source = 'data' in envelope ? envelope.data : envelope
+  if (source === null) return {}
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     throw new Error('agentpanel account: 响应格式无效')
   }
   return source as Record<string, unknown>
+}
+
+/** @returns the non-empty string at `key`, undefined for any other value. */
+function textField(data: Record<string, unknown>, key: string): string | undefined {
+  const value = data[key]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** @returns the customer display name: nickname, then username. */
+function displayNameOf(data: Record<string, unknown>): string | undefined {
+  return textField(data, 'nickname') ?? textField(data, 'username')
+}
+
+/** @returns `remaining_hours` as a decimal string, undefined when the field is absent. */
+function remainingHoursOf(data: Record<string, unknown>): string | undefined {
+  const value = data.remaining_hours
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : undefined
 }
 
 /** Resolve the customer session file; the default matches the desktop account store. */
@@ -178,6 +219,8 @@ export class AgentPanelAccount extends Service {
   private customerLease = false
   /** Persisted customer session backing a customer lease. */
   private customer: StoredAccount | undefined
+  /** In-flight customer identity read shared by concurrent profile refreshes. */
+  private summaryRead: Promise<CustomerSummary | undefined> | undefined
   private attempt: Attempt | undefined
   private readonly listeners = new Set<(identityOnly: boolean) => void>()
   private renewTimer: ReturnType<typeof setTimeout> | undefined
@@ -196,6 +239,7 @@ export class AgentPanelAccount extends Service {
       renewalRatio: config.renewalRatio ?? 0.8,
       usageUrl: config.usageUrl ?? '',
       topUpUrl: config.topUpUrl ?? '',
+      brandName: (config.brandName ?? '').trim(),
       gatewayApiKey: config.gatewayApiKey ?? '',
       customerUrl: config.customerUrl || '',
       storageFile: resolveStorageFile(config.storageDir),
@@ -212,15 +256,32 @@ export class AgentPanelAccount extends Service {
   }
 
   getState(): Promise<AccountView> {
+    const brandName = this.config.brandName
     return Promise.resolve({
       status: this.lease === undefined ? 'signed-out' : 'credential-stored',
       links: { usageUrl: this.config.usageUrl, topUpUrl: this.config.topUpUrl },
       attempt: this.attempt?.view ?? null,
+      ...(brandName === '' ? {} : { brandName }),
     })
   }
 
-  getProfile(_client: AccountClientMetadata): Promise<AccountDetails['profile'] | null> {
-    return Promise.resolve(null)
+  async getProfile(_client: AccountClientMetadata): Promise<AccountDetails['profile'] | null> {
+    // agentpanel has no Platform profile: the customer session carries the
+    // account name and the remaining purchased hours. Re-read them from the
+    // business service on every account refresh so the page follows usage.
+    const account = this.customer
+    if (account === undefined) return null
+    const summary = await this.readCustomerSummary(account)
+    const name = summary?.name ?? account.customerName ?? account.customerEmail
+    const contact = summary?.email ?? account.customerEmail
+    const remainingHours = summary?.remainingHours ?? account.remainingHours
+    return {
+      status: 'ready',
+      value: {
+        id: null, name, contact,
+        ...(remainingHours === undefined ? {} : { remainingHours }),
+      },
+    }
   }
 
   getBalance(_client: AccountClientMetadata): Promise<AccountDetails['balance'] | null> {
@@ -306,6 +367,10 @@ export class AgentPanelAccount extends Service {
     this.renewTimer = undefined
     this.lease = undefined
     this.externalLease = false
+    // The desktop-owned shared session stays on disk; this Host only stops
+    // reading it until the next import.
+    this.customer = undefined
+    this.customerLease = false
     this.attempt = undefined
     this.ctx.emit('agentpanel-account/signed-out')
     this.changed()
@@ -326,9 +391,12 @@ export class AgentPanelAccount extends Service {
   async importSession(session: ImportedLeaseSession): Promise<AccountView> {
     if (this.closed) throw new AgentPanelAuthError('protocol')
     if (this.renewTimer !== undefined) { clearTimeout(this.renewTimer); this.renewTimer = undefined }
-    // The desktop session supersedes any self-owned customer session; its
-    // renewal and revocation stay with the desktop.
-    this.customer = undefined
+    // The desktop owns lease renewal and revocation. Its shared customer
+    // session still names the account and carries the business allowance, so
+    // keep it for read-only profile reads; no renewal or revocation runs
+    // through it (externalLease short-circuits both). Without a customer
+    // control plane there is no profile to read.
+    this.customer = this.config.customerUrl === '' ? undefined : this.readStoredCustomer()
     this.customerLease = false
     this.lease = {
       leaseId: session.leaseId,
@@ -356,6 +424,8 @@ export class AgentPanelAccount extends Service {
     const ownedCustomer = this.customerLease
     this.lease = undefined
     this.externalLease = false
+    this.customer = undefined
+    this.customerLease = false
     if (ownedCustomer) this.dropCustomerStore()
     this.attempt = undefined
     this.ctx.emit('agentpanel-account/signed-out')
@@ -460,6 +530,29 @@ export class AgentPanelAccount extends Service {
     const resumed = await this.resumeCustomer()
     if (resumed !== null) return resumed
     return this.customerAuthenticate('/login-code', { email: address, code: code.trim() }, address)
+  }
+
+  /**
+   * Reset a customer password with an email verification code.
+   * @param email - customer mailbox.
+   * @param code - 6-digit mail code sent with the `reset_password` purpose.
+   * @param password - new account password.
+   * @returns whether the control plane accepted the reset, with a user-facing message on failure.
+   */
+  async resetPassword(email: string, code: string, password: string): Promise<CustomerCodeOutcome> {
+    if (this.config.customerUrl === '') return { ok: false, message: 'customer sign-in is not configured' }
+    const address = validEmail(email)
+    if (address === null) return { ok: false, message: '请输入有效的邮箱地址' }
+    if (!/^\d{6}$/.test(code.trim())) return { ok: false, message: '请输入 6 位邮箱验证码' }
+    if (password.length < 6) return { ok: false, message: '密码至少需要 6 位' }
+    try {
+      await this.customerRequest('/auth/reset-password', {
+        email: address, code: code.trim(), new_password: password,
+      })
+      return { ok: true, message: '' }
+    } catch (error) {
+      return { ok: false, message: messageOf(error) }
+    }
   }
 
   private async issueLease(attempt: Attempt): Promise<void> {
@@ -648,11 +741,57 @@ export class AgentPanelAccount extends Service {
   }
 
   /**
+   * Read the customer identity and remaining allowance once for concurrent
+   * account refreshes; finished reads are not cached so the page follows usage.
+   * @param account - customer session the read belongs to.
+   * @returns the business-service summary, or undefined when the read failed.
+   */
+  private readCustomerSummary(account: StoredAccount): Promise<CustomerSummary | undefined> {
+    this.summaryRead ??= this.fetchCustomerSummary(account)
+      .finally(() => { this.summaryRead = undefined })
+    return this.summaryRead
+  }
+
+  /**
+   * GET the customer's current profile and fold its identity fields into the
+   * persisted session. A failure keeps the previously stored values.
+   * @param account - customer session the read belongs to.
+   * @returns the fields the business service reported.
+   */
+  private async fetchCustomerSummary(account: StoredAccount): Promise<CustomerSummary | undefined> {
+    try {
+      const data = await this.customerRequest('/auth/me', undefined, account.accessToken)
+      const name = displayNameOf(data)
+      const email = textField(data, 'email')
+      const remainingHours = remainingHoursOf(data)
+      let changed = false
+      if (name !== undefined && name !== account.customerName) { account.customerName = name; changed = true }
+      if (email !== undefined && email !== account.customerEmail) { account.customerEmail = email; changed = true }
+      if (remainingHours !== undefined && remainingHours !== account.remainingHours) {
+        account.remainingHours = remainingHours
+        changed = true
+      }
+      if (changed) this.persistCustomer()
+      return {
+        ...(name === undefined ? {} : { name }),
+        ...(email === undefined ? {} : { email }),
+        ...(remainingHours === undefined ? {} : { remainingHours }),
+      }
+    } catch (error) {
+      console.error('[agentpanel-account] customer profile read failed', error instanceof Error ? error.message : error)
+      return undefined
+    }
+  }
+
+  /**
    * Resume a persisted customer session: return the signed-in state when a live
    * lease exists, re-issue the lease when only the token remains valid, and
    * null when the caller must authenticate from scratch.
    */
   private async resumeCustomer(): Promise<CustomerAuthOutcome | null> {
+    // An imported desktop lease owns renewal; never issue or resume a second
+    // customer lease from this Host while it is in force.
+    if (this.externalLease) return null
     const account = this.customer
     if (account === undefined || expiredIso(account.tokenExpiresAt)) return null
     if (account.lease !== null && !expiredIso(account.lease.expiresAt) && this.lease !== undefined) {
@@ -684,11 +823,15 @@ export class AgentPanelAccount extends Service {
       if (typeof accessToken !== 'string' || accessToken === '') throw new Error('登录态无效，请重试')
       const expiresIn = typeof data.expires_in === 'number' && data.expires_in > 0 ? data.expires_in : 86_400
       const customer = data.customer && typeof data.customer === 'object' ? data.customer as Record<string, unknown> : {}
+      const name = displayNameOf(customer)
+      const remainingHours = remainingHoursOf(customer)
       const account: StoredAccount = {
         accessToken,
         tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
         customerId: String(customer.id ?? ''),
         customerEmail: typeof customer.email === 'string' ? customer.email : email,
+        ...(name === undefined ? {} : { customerName: name }),
+        ...(remainingHours === undefined ? {} : { remainingHours }),
         lease: null,
       }
       // 认证成功但换租约失败：保留 JWT 供重试，避免用户重新走一遍邮箱验证。
@@ -762,14 +905,20 @@ export class AgentPanelAccount extends Service {
     }
   }
 
-  /** POST a JSON request to the customer control plane and unwrap the `success_response` envelope. */
-  private async customerRequest(endpoint: string, body: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
+  /**
+   * Call the customer control plane and unwrap the `success_response` envelope.
+   * @param endpoint - path below `customerUrl`.
+   * @param body - JSON body for a POST; absent issues a GET.
+   * @param token - customer JWT for authenticated reads.
+   * @returns the response payload.
+   */
+  private async customerRequest(endpoint: string, body: Record<string, unknown> | undefined, token?: string): Promise<Record<string, unknown>> {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (token !== undefined) headers.authorization = `Bearer ${token}`
     const res = await fetch(`${this.config.customerUrl}${endpoint}`, {
-      method: 'POST',
+      method: body === undefined ? 'GET' : 'POST',
       headers,
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     let payload: unknown
     try { payload = await res.json() } catch { throw new Error(`agentpanel account: 服务响应无效 (${res.status})`) }

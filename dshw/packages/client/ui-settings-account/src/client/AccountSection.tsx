@@ -6,7 +6,7 @@ import type { AccountDetails, AccountView, SignInAttemptId } from '@deepseek-ai/
 import type { PropsRuntime, PropsLocale, InjectFace, HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ThemeSnapshot } from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { PlatformPage, PlatformPages } from './platform-pages.ts'
-import { formatBalance } from './formatBalance.ts'
+import { formatBalance, formatHours } from './formatBalance.ts'
 import { AccountAvatar } from './AccountAvatar.tsx'
 import type { AccountAvatarSnapshot } from './account-avatar.ts'
 import { authorizeUrlWithTheme } from './authorize-url.ts'
@@ -90,13 +90,13 @@ export interface AccountSectionInjected {
   /** Customer email-code sign-in; present when the deployment offers the agentpanel customer flow.
    * @param email - customer mailbox. @param purpose - code purpose. @returns whether the mail was accepted.
    */
-  sendCode?: (email: string, purpose: 'register' | 'login') => Promise<{ ok: boolean; message: string }>
+  sendCode?: (email: string, purpose: 'register' | 'login' | 'reset_password') => Promise<{ ok: boolean; message: string }>
   /** @param email - customer mailbox. @param password - account password. @returns the sign-in outcome. */
   login?: (email: string, password: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
-  /** @param email - customer mailbox. @param code - 6-digit mail code. @returns the sign-in outcome. */
-  loginCode?: (email: string, code: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
   /** @param email - customer mailbox. @param code - 6-digit mail code. @param password - new account password. @returns the sign-in outcome. */
   register?: (email: string, code: string, password: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
+  /** @param email - customer mailbox. @param code - 6-digit mail code. @param password - new account password. @returns whether the reset was accepted. */
+  resetPassword?: (email: string, code: string, password: string) => Promise<{ ok: boolean; message: string }>
 }
 /** Composed account section props. */
 export type AccountSectionProps =
@@ -128,6 +128,12 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
   // Deployments without a Platform (agentpanel) publish empty link strings; empty hrefs must not crash URL construction.
   const usageUrl = state?.links.usageUrl || undefined
   const topUpUrl = state?.links.topUpUrl || undefined
+  // agentpanel deployments have no Platform pages; hide the balance sheet instead
+  // of showing permanently disabled "View on Platform" links. Their customer
+  // account instead carries the remaining purchased hours.
+  const hasPlatformLinks = usageUrl !== undefined || topUpUrl !== undefined
+  const remainingHours = profile?.remainingHours
+  const hasQuota = signedIn && remainingHours !== undefined
   const usageHomeUrl = usageHomeOf(usageUrl)
   useEffect(() => () => { releasePage.current?.(); releasePage.current = undefined }, [])
   useEffect(() => {
@@ -206,43 +212,50 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
         <Button variant="outline" disabled={busy || attempt.phase === 'committing'}
           onClick={() => { void run(() => cancel(attempt.id)) }}>{t('cancel')}</Button>
       </div>}
-      <div className={css.balanceCard}>
-        <div className={css.row}>
-          <span>{t('balance')}</span>
-          {signedIn && wallets !== undefined && wallets.length > 0
-            ? <span className={css.amount}>{wallets.map(wallet => <span key={wallet.currency}>
-              {formatBalance(wallet.balance, wallet.currency === 'CNY' ? '¥' : '$')}
-            </span>)}</span>
-            : !signedIn || details?.balance === undefined
-              ? <span className={css.unavailable}>{t(!signedIn ? 'balanceSignedOut' : 'loading')}</span>
-              : platformLink(t('balanceUnavailable'), css.unavailableLink)}
-        </div>
-        {signedIn && showBonusRow && <>
+      {(hasPlatformLinks || hasQuota) && <div className={css.balanceCard}>
+        {hasQuota && <div className={css.row}>
+          <span>{t('quota')}</span>
+          <span className={css.amount}>{t('quotaHours', { hours: formatHours(remainingHours) })}</span>
+        </div>}
+        {hasPlatformLinks && <>
+          {hasQuota && <div className={css.divider} />}
+          <div className={css.row}>
+            <span>{t('balance')}</span>
+            {signedIn && wallets !== undefined && wallets.length > 0
+              ? <span className={css.amount}>{wallets.map(wallet => <span key={wallet.currency}>
+                {formatBalance(wallet.balance, wallet.currency === 'CNY' ? '¥' : '$')}
+              </span>)}</span>
+              : !signedIn || details?.balance === undefined
+                ? <span className={css.unavailable}>{t(!signedIn ? 'balanceSignedOut' : 'loading')}</span>
+                : platformLink(t('balanceUnavailable'), css.unavailableLink)}
+          </div>
+          {signedIn && showBonusRow && <>
+            <div className={css.divider} />
+            <div className={css.row}>
+              <span>{t('bonusBalance')}</span>
+              <span className={css.bonusValue}>
+                {bonusWallets.length > 0
+                  ? <span className={css.amount}>{bonusWallets.map(wallet => <span key={wallet.currency}>
+                    {formatBalance(wallet.balance, wallet.currency === 'CNY' ? '¥' : '$')}
+                  </span>)}</span>
+                  : details?.balance === undefined
+                    ? <span className={css.unavailable}>{t('loading')}</span>
+                    : platformLink(t('balanceUnavailable'), css.unavailableLink)}
+              </span>
+            </div>
+          </>}
           <div className={css.divider} />
           <div className={css.row}>
-            <span>{t('bonusBalance')}</span>
-            <span className={css.bonusValue}>
-              {bonusWallets.length > 0
-                ? <span className={css.amount}>{bonusWallets.map(wallet => <span key={wallet.currency}>
-                  {formatBalance(wallet.balance, wallet.currency === 'CNY' ? '¥' : '$')}
-                </span>)}</span>
-                : details?.balance === undefined
-                  ? <span className={css.unavailable}>{t('loading')}</span>
-                  : platformLink(t('balanceUnavailable'), css.unavailableLink)}
-            </span>
+            <span className={css.secondary}>{t('more')}</span>
+            <div className={css.links}>
+              {platformLink(t('usage'), css.linkButton)}
+              <a className={`${css.linkButton} ${css.primary}`} href={topUpUrl} aria-disabled={topUpUrl === undefined}
+                target="_blank" rel="noreferrer"
+                onClick={(event) => { if (openPlatformPage !== undefined && signedIn) { event.preventDefault(); showPage(openPlatformPage, 'top-up') } }}>{t('topUp')}</a>
+            </div>
           </div>
         </>}
-        <div className={css.divider} />
-        <div className={css.row}>
-          <span className={css.secondary}>{t('more')}</span>
-          <div className={css.links}>
-            {platformLink(t('usage'), css.linkButton)}
-            <a className={`${css.linkButton} ${css.primary}`} href={topUpUrl} aria-disabled={topUpUrl === undefined}
-              target="_blank" rel="noreferrer"
-              onClick={(event) => { if (openPlatformPage !== undefined && signedIn) { event.preventDefault(); showPage(openPlatformPage, 'top-up') } }}>{t('topUp')}</a>
-          </div>
-        </div>
-      </div>
+      </div>}
     </section>
   )
 }

@@ -2,7 +2,7 @@
 
 顺序固定：客户端凭据校验 → write_enabled 总开关（false 时 409）→ 复用
 HarnessRunService / HarnessEventService / HarnessPolicyService，保证状态机与
-错误码与 app 本地实现同源。额度写操作由 quota_backend 转发到 app 内部 API。
+错误码与 app 本地实现同源。真实用量与额度扣减统一由网关完成，编排不写额度。
 """
 from typing import Optional
 

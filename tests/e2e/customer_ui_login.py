@@ -20,6 +20,7 @@ import win32api  # noqa: E402
 import win32clipboard  # noqa: E402
 import win32con  # noqa: E402
 import win32gui  # noqa: E402
+import win32process  # noqa: E402
 from PIL import ImageGrab  # noqa: E402
 import argparse  # noqa: E402
 
@@ -73,14 +74,46 @@ proc = subprocess.Popen([str(EXE), f"--user-data-dir={USER_DATA}"],
                         cwd=str(UNPACKED), env=env, stdout=log, stderr=subprocess.STDOUT)
 
 
+def app_pids() -> set[int]:
+    """枚举本应用（按可执行文件名）的全部进程，含渲染/GPU 子进程。
+
+    只按窗口标题匹配会误命中用户浏览器（标题常含 DeepSeek），导致点击落到别的窗口。
+    """
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {EXE.name}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, encoding="gbk", errors="replace", timeout=10,
+        )
+    except Exception:
+        return set()
+    pids: set[int] = set()
+    for line in (out.stdout or "").splitlines():
+        parts = line.split('","')
+        if len(parts) < 2:
+            continue
+        try:
+            pids.add(int(parts[1].strip('"')))
+        except ValueError:
+            continue
+    return pids
+
+
 def app_windows():
     out = []
+    pids = app_pids()
 
     def cb(h, _):
-        if win32gui.IsWindowVisible(h):
-            title = win32gui.GetWindowText(h)
-            if "harness" in title.lower() or "deepseek" in title.lower():
-                out.append((h, title, win32gui.GetWindowRect(h)))
+        if not win32gui.IsWindowVisible(h):
+            return
+        try:
+            if win32process.GetWindowThreadProcessId(h)[1] not in pids:
+                return
+        except Exception:
+            return
+        title = win32gui.GetWindowText(h)
+        if title:
+            out.append((h, title, win32gui.GetWindowRect(h)))
+
     win32gui.EnumWindows(cb, None)
     return out
 

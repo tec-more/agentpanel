@@ -129,6 +129,8 @@
         controlPlaneUrl: !!js process.env.DSH_AGENTPANEL_CONTROL_PLANE_URL || 'http://127.0.0.1:9998/v1/harness'
         clientId: !!js process.env.DSH_AGENTPANEL_CLIENT_ID || ''
         clientSecret: !!js process.env.DSH_AGENTPANEL_CLIENT_SECRET || ''
+        customerUrl: !!js process.env.DSH_AGENTPANEL_CUSTOMER_URL || 'http://127.0.0.1:9998/v1/customer'
+        storageDir: !!js process.env.DSH_AGENTPANEL_ACCOUNT_STORE || ''
 
     - id: credentials
       name: '@deepseek-ai/dsh-credentials-local'

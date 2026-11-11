@@ -5,6 +5,7 @@ import { isRunningAccountTask } from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
 import type { AgentPanelAccount } from '@deepseek-ai/dsh-agentpanel-account'
+import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose } from '@deepseek-ai/dsh-agentpanel-account/types'
 import type { AccountView, ImportedLeaseSession, SignInAttemptId } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -120,6 +121,54 @@ export class AccountController extends TypertRemoteService {
    */
   @Remote
   clearSession(): Promise<AccountView> { return this.ctx.agentpanelAccount.clearSession() }
+  /**
+   * Report which sign-in surface the deployment offers: the agentpanel customer
+   * email-code form or the upstream browser authorization flow.
+   * @returns the active sign-in mode.
+   */
+  @Remote
+  getAuthMode(): Promise<'customer' | 'browser'> { return this.ctx.agentpanelAccount.getAuthMode() }
+  /**
+   * Request a customer verification mail.
+   * @param email - customer mailbox.
+   * @param purpose - code purpose mirrored by the control plane's `type` field.
+   * @returns whether the mail was accepted, with a user-facing message on failure.
+   */
+  @Remote
+  customerSendCode(email: string, purpose: CustomerCodePurpose): Promise<CustomerCodeOutcome> {
+    return this.ctx.agentpanelAccount.sendCode(email, purpose)
+  }
+  /**
+   * Register a customer account with an email verification code and a password.
+   * @param email - customer mailbox.
+   * @param code - 6-digit verification code from the mail.
+   * @param password - account password (at least 6 characters).
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  @Remote
+  customerRegister(email: string, code: string, password: string): Promise<CustomerAuthOutcome> {
+    return this.ctx.agentpanelAccount.register(email, code, password)
+  }
+  /**
+   * Sign in with the customer email and password.
+   * @param email - customer mailbox.
+   * @param password - account password.
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  @Remote
+  customerLogin(email: string, password: string): Promise<CustomerAuthOutcome> {
+    return this.ctx.agentpanelAccount.login(email, password)
+  }
+  /**
+   * Sign in with the customer email and a verification code.
+   * @param email - customer mailbox.
+   * @param code - 6-digit verification code from the mail.
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  @Remote
+  customerLoginCode(email: string, code: string): Promise<CustomerAuthOutcome> {
+    return this.ctx.agentpanelAccount.loginCode(email, code)
+  }
   /**
    * Subscribe to credential expiry without replaying prior notifications.
    * @param signal - stream lifetime.

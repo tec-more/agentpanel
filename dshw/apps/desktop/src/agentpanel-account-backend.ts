@@ -391,6 +391,10 @@ export function agentpanelAccountBackend(config: AgentpanelAccountConfig): Custo
       const timer = setInterval(() => {
         const before = view().status
         current = readStored()
+        // A sign-in written by another surface (for example the workspace web UI
+        // through the shared store) adopts renewal here, so the lease survives
+        // even though this process never ran its own sign-in flow.
+        if (current?.lease && !renewTimer) ensureRenewLoop(expiredCallback)
         const after = view()
         if (after.status !== before) emit(after)
         if (after.status === 'signed-out' && before === 'credential-stored') expiredCallback()

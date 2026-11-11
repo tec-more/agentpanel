@@ -242,12 +242,17 @@ async function launchPanel(failureShot: string, scenario: 'normal' | 'follow-up'
   const gh = join(root, 'gh')
   await writeFile(gh, GH)
   await chmod(gh, 0o755)
+  // Windows cannot spawn a shebang script that has no extension: execa has no
+  // interpreter fallback there. A .cmd wrapper runs the same double with node,
+  // and execa executes .cmd files through cmd.exe automatically.
+  const ghCommand = process.platform === 'win32' ? join(root, 'gh.cmd') : gh
+  if (process.platform === 'win32') await writeFile(ghCommand, '@node "%~dp0gh" %*\n')
   await writeFile(join(root, 'pr-7.diff'), PR7_DIFF)
   await writeFile(join(root, 'pr-9.refused'), PR9_REFUSAL)
   const panelText = `${Array.from({ length: 20 }, (_, index) => panelLine(index + 1, 'new')).join('\n')}\n`
   await writeFile(join(root, 'contents.json'), JSON.stringify({ [`src/panel.ts@${HEAD7}`]: panelText }))
   const overlay = join(root, 'forge.patch.yml')
-  await writeFile(overlay, `- id: forge-github\n  config: ${JSON.stringify({ ghCommand: gh })}\n`
+  await writeFile(overlay, `- id: forge-github\n  config: ${JSON.stringify({ ghCommand })}\n`
     + (options.maxDiffBytes === undefined ? '' : `- id: forge-panel\n  config: ${JSON.stringify({ maxDiffBytes: options.maxDiffBytes })}\n`)
     + (options.missingSandbox ? `- id: sandbox\n  config: ${JSON.stringify({ runnerCommand: [join(root, 'missing-sandbox')], runnerFailureSignatures: ['sandbox startup failed'] })}\n` : ''))
   const override = join(root, 'replay.override.json')

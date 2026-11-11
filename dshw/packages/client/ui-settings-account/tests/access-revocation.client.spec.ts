@@ -71,7 +71,7 @@ it('withdraws every account surface and the account stream on revocation, and re
     remote: {
       $on: () => () => {},
       session: { initializeDefaultModel: async () => ({ ok: true, value: undefined }) },
-      account: { getProfile: async () => ({ ok: true, value: null }), getBalance: async () => ({ ok: true, value: null }) },
+      account: { getAuthMode: async () => ({ ok: true, value: 'browser' }), getProfile: async () => ({ ok: true, value: null }), getBalance: async () => ({ ok: true, value: null }) },
       $stream: () => {
         const abort = new AbortController()
         const accepted = Promise.withResolvers<undefined>()
@@ -147,7 +147,7 @@ it('drops reads a revoked grant started, and the next grant shows no account sec
     remote: {
       $on: () => () => {},
       session: { initializeDefaultModel: async () => ({ ok: true, value: undefined }) },
-      account: { getProfile: async () => await profile.promise, getBalance: async () => ({ ok: true, value: null }) },
+      account: { getAuthMode: async () => ({ ok: true, value: 'browser' }), getProfile: async () => await profile.promise, getBalance: async () => ({ ok: true, value: null }) },
       $stream: () => {
         const abort = new AbortController()
         const gate = Promise.withResolvers<undefined>()
@@ -238,6 +238,7 @@ function revocationHarness(scripts: StreamScript[]) {
       $on: () => () => {},
       session: { initializeDefaultModel: async () => ({ ok: true, value: undefined }) },
       account: {
+        getAuthMode: async () => ({ ok: true, value: 'browser' }),
         getProfile, getBalance: async () => ({ ok: true, value: null }), getUnnotifiedBonuses, startSignIn,
       },
       $stream: () => {
@@ -301,8 +302,9 @@ it('closes the sign-in dialog, its failure, and the pending authorization tab on
     await b.accepted[1]
     popup.close.mockClear()
     b.startSignIn.mockReturnValueOnce(new Promise(() => {}))
-    void b.operations().start()
-    expect(open).toHaveBeenCalledTimes(2)
+    // start() first resolves the sign-in mode before opening the browser flow.
+    void b.operations().start().catch(() => undefined)
+    await vi.waitFor(() => { expect(open).toHaveBeenCalledTimes(2) })
     revoke(b.guards)
     expect(popup.close).toHaveBeenCalledOnce()
   } finally {

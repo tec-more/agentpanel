@@ -32,6 +32,11 @@ function fixture() {
     signOut: vi.fn<AgentPanelAccount['signOut']>().mockResolvedValue(state),
     importSession: vi.fn<AgentPanelAccount['importSession']>().mockResolvedValue(state),
     clearSession: vi.fn<AgentPanelAccount['clearSession']>().mockResolvedValue(state),
+    getAuthMode: vi.fn<AgentPanelAccount['getAuthMode']>().mockResolvedValue('customer'),
+    sendCode: vi.fn<AgentPanelAccount['sendCode']>().mockResolvedValue({ ok: true, message: '' }),
+    register: vi.fn<AgentPanelAccount['register']>().mockResolvedValue({ ok: true, message: '', state }),
+    login: vi.fn<AgentPanelAccount['login']>().mockResolvedValue({ ok: true, message: '', state }),
+    loginCode: vi.fn<AgentPanelAccount['loginCode']>().mockResolvedValue({ ok: true, message: '', state }),
     watch: vi.fn<AgentPanelAccount['watch']>(),
   }
   ctx.provide('agentpanelAccount', provider as never)
@@ -59,6 +64,23 @@ it('delegates account operations without coupling profile and balance queries', 
   const failure = new Error('storage unavailable')
   provider.signOut.mockRejectedValueOnce(failure)
   await expect(controller.signOut(client)).rejects.toBe(failure)
+})
+
+it('delegates the customer sign-in surface to the provider', async () => {
+  const { provider, controller } = fixture()
+  const denied = { ok: false, message: '密码错误', state: null }
+  expect(await controller.getAuthMode()).toBe('customer')
+  expect(provider.getAuthMode).toHaveBeenCalledExactlyOnceWith()
+  expect(await controller.customerSendCode('user@example.com', 'login')).toEqual({ ok: true, message: '' })
+  expect(provider.sendCode).toHaveBeenCalledExactlyOnceWith('user@example.com', 'login')
+  expect(await controller.customerLogin('user@example.com', 'secret')).toEqual({ ok: true, message: '', state })
+  expect(provider.login).toHaveBeenCalledExactlyOnceWith('user@example.com', 'secret')
+  expect(await controller.customerLoginCode('user@example.com', '123456')).toEqual({ ok: true, message: '', state })
+  expect(provider.loginCode).toHaveBeenCalledExactlyOnceWith('user@example.com', '123456')
+  expect(await controller.customerRegister('user@example.com', '123456', 'secret')).toEqual({ ok: true, message: '', state })
+  expect(provider.register).toHaveBeenCalledExactlyOnceWith('user@example.com', '123456', 'secret')
+  provider.login.mockResolvedValueOnce(denied)
+  expect(await controller.customerLogin('user@example.com', 'wrong')).toBe(denied)
 })
 
 it('delegates bonus reads and acknowledgements without altering their values', async () => {

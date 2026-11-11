@@ -53,6 +53,17 @@ export function apply(ctx: Context): void {
   let snapshot: AccountSnapshot = {
     view: undefined, details: undefined, avatar: undefined, failed: false, loginVisible: false, desktopOnboardingVisible: desktop,
   }
+  // Which sign-in surface this deployment offers: the agentpanel customer
+  // email-code form or the upstream browser authorization flow. Resolved once
+  // and cached; a failed probe keeps the browser dialog.
+  let authModePromise: Promise<'customer' | 'browser'> | undefined
+  const authMode = (): Promise<'customer' | 'browser'> => {
+    authModePromise ??= ctx.remote.account.getAuthMode()
+      .then(result => result.ok && result.value === 'customer' ? 'customer' : 'browser')
+      .catch(() => 'browser')
+    return authModePromise
+  }
+  void authMode().then((mode) => { publish({ ...snapshot, customerAuth: mode === 'customer' }) }).catch(() => undefined)
   // Desktop main opens the authorization page natively; a plain browser opens it in a tab it owns.
   const browser = new BrowserLogin(url => authorizeUrlWithTheme(url, ctx.theme.getTheme().active.colorScheme))
   ctx.effect(() => () => { browser.dispose() }, 'account: pending browser window')
@@ -245,6 +256,9 @@ export function apply(ctx: Context): void {
     },
     async start() {
       publish({ ...snapshot, loginVisible: true, loginFailed: false })
+      // Customer deployments open the email-code dialog; the browser flow only
+      // starts an attempt when the browser dialog is actually in charge.
+      if ((await authMode()) === 'customer') return
       const transport = (globalThis as typeof globalThis & {
         __DSH_TRANSPORT__?: { streamBaseUrl?: string }
       }).__DSH_TRANSPORT__
@@ -264,6 +278,26 @@ export function apply(ctx: Context): void {
       }
     },
     async cancel(id) { const result = await ctx.remote.account.cancelSignIn(id); if (!result.ok) throw new Error('account cancel failed') },
+    async sendCode(email, purpose) {
+      const result = await ctx.remote.account.customerSendCode(email, purpose)
+      if (!result.ok) throw new Error('account send-code failed')
+      return result.value
+    },
+    async login(email, password) {
+      const result = await ctx.remote.account.customerLogin(email, password)
+      if (!result.ok) throw new Error('account login failed')
+      return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
+    },
+    async loginCode(email, code) {
+      const result = await ctx.remote.account.customerLoginCode(email, code)
+      if (!result.ok) throw new Error('account login failed')
+      return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
+    },
+    async register(email, code, password) {
+      const result = await ctx.remote.account.customerRegister(email, code, password)
+      if (!result.ok) throw new Error('account register failed')
+      return { ok: result.value.ok, message: result.value.message, signedIn: result.value.ok }
+    },
     async hasRunningAccountTasks() {
       const result = await ctx.remote.account.hasRunningAccountTasks()
       if (!result.ok) throw new Error('account task query failed')

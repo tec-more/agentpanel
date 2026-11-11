@@ -18,7 +18,7 @@ const theme: ThemeSnapshot = {
 }
 
 it('claims onboarding while loading, offers API key fallback, and completes after login', () => {
-  let account: AccountSnapshot = { view: undefined, details: undefined, avatar: undefined, failed: false }
+  let account: AccountSnapshot = { view: undefined, details: undefined, avatar: undefined, failed: false, customerAuth: false }
   const unused = (): never => { throw new Error('AccountOnboarding does not consume global hooks') }
   const globals: GlobalStandardProps = {
     usePanelInfo: unused, useSessions: unused, useSessionStatus: unused,

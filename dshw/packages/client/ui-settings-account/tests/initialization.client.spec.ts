@@ -55,7 +55,11 @@ it.each(['accepted', 'refused', 'disconnected', 'pending'] as const)('initialize
     remote: {
       $on: () => () => {},
       session: { initializeDefaultModel },
-      account: { getProfile: async () => ({ ok: true, value: null }), getBalance: async () => ({ ok: true, value: null }) },
+      account: {
+        getAuthMode: async () => ({ ok: true, value: 'browser' }),
+        getProfile: async () => ({ ok: true, value: null }),
+        getBalance: async () => ({ ok: true, value: null }),
+      },
       $stream: () => ({
         signal: abort.signal, dispose: () => { abort.abort(); release.resolve(undefined) },
         async *[Symbol.asyncIterator]() {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, act, within } from '@testing-library/react'
 import { useMemo, useSyncExternalStore } from 'react'
-import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AccountDetails, AccountView, SignInAttemptId } from '@deepseek-ai/dsh-deepseek-account/types'
 import type { ThemeSnapshot } from '@deepseek-ai/dsh-client-ui-theme/client'
@@ -9,6 +9,7 @@ import type { PlatformBridge } from '../src/client/PlatformOverlay.tsx'
 import { createPlatformPages, type PlatformPages } from '../src/client/platform-pages.ts'
 import { AccountPlatformHost } from '../src/client/AccountPlatformHost.tsx'
 import { AccountSection, type AccountSectionInjected, type AccountSnapshot } from '../src/client/AccountSection.tsx'
+import { EmailSignInDialog } from '../src/client/EmailSignInDialog.tsx'
 import type { BonusNotice } from '../src/client/bonus-notices.ts'
 import type { AccountMenuProps } from '../src/client/AccountMenu.tsx'
 import type {} from '../src/client/index.ts'
@@ -30,7 +31,7 @@ function operationsOf(state: Omit<AccountView, 'links'>, details?: Partial<Accou
     ...pages === undefined ? {} : { openPlatformPage: pages.open },
     hooks: {
       account: {
-        getSnapshot: () => ({ view: { ...state, links }, details, avatar, failed: false }),
+        getSnapshot: (): AccountSnapshot => ({ view: { ...state, links }, details, avatar, failed: false, customerAuth: false }),
         subscribe: () => () => {},
       },
       theme: { getSnapshot: () => themeOf('light'), subscribe: () => () => {} },
@@ -100,6 +101,73 @@ async function accountMenu(operations: AccountSectionInjected, snapshot: () => A
     useTheme={selector => selector(operations.hooks.theme.getSnapshot())}
     openOnboarding={() => {}} openSettings={() => {}} t={key => en[key as AccountKey]} />
 }
+
+/** One mutable customer sign-in dialog mount; rerendering reflects `state` changes. */
+function emailDialog(copy: typeof en | typeof zh = en) {
+  const state: AccountSnapshot = {
+    view: { status: 'signed-out', links: { usageUrl: '', topUpUrl: '' }, attempt: null },
+    details: undefined, avatar: undefined, failed: false, customerAuth: true,
+  }
+  const operations = {
+    sendCode: vi.fn(async (_email: string, _purpose: 'register' | 'login') => ({ ok: true, message: '' })),
+    login: vi.fn(async (_email: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
+    loginCode: vi.fn(async (_email: string, _code: string) => ({ ok: true, message: '', signedIn: true })),
+    register: vi.fn(async (_email: string, _code: string, _password: string) => ({ ok: true, message: '', signedIn: true })),
+    close: vi.fn(), useApiKey: vi.fn(),
+  }
+  const element = () => <EmailSignInDialog
+    account={{ ...state, get view() { return state.view } }} {...operations}
+    t={key => copy[key as AccountKey]} />
+  const view = render(element())
+  return { ...operations, state, rerender: () => { view.rerender(element()) } }
+}
+
+describe('EmailSignInDialog', () => {
+  it('signs in with the password tab and closes once the account reports stored', async () => {
+    const dialog = emailDialog()
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'secret123' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+    expect(dialog.login).toHaveBeenCalledExactlyOnceWith('user@example.com', 'secret123')
+    expect(dialog.close).not.toHaveBeenCalled()
+    dialog.state.view = { status: 'credential-stored', links: { usageUrl: '', topUpUrl: '' }, attempt: null }
+    dialog.rerender()
+    expect(dialog.close).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces the control-plane failure message on the active tab', async () => {
+    const dialog = emailDialog()
+    dialog.login.mockResolvedValueOnce({ ok: false, message: '密码错误', signedIn: false })
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: 'wrong' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+    expect(screen.getByRole('alert').textContent).toBe('密码错误')
+    expect(dialog.close).not.toHaveBeenCalled()
+  })
+
+  it('sends a login code from the email-code tab and locks resending', async () => {
+    const dialog = emailDialog()
+    fireEvent.click(screen.getByRole('tab', { name: en.tabCode }))
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.sendCode })) })
+    expect(dialog.sendCode).toHaveBeenCalledExactlyOnceWith('user@example.com', 'login')
+    expect(screen.getByRole('status').textContent).toBe(en.codeSent)
+    const resend = screen.getByRole('button', { name: new RegExp(en.resend) })
+    expect(resend.textContent).not.toBe(en.sendCode)
+    expect((resend as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('validates the register tab locally before submitting', async () => {
+    const dialog = emailDialog()
+    fireEvent.click(screen.getByRole('tab', { name: en.tabRegister }))
+    fireEvent.change(screen.getByLabelText(en.emailLabel), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(en.codeLabel), { target: { value: '123456' } })
+    fireEvent.change(screen.getByLabelText(en.passwordLabel), { target: { value: '123' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.registerSubmit })) })
+    expect(screen.getByRole('alert').textContent).toBe(en.passwordInvalid)
+    expect(dialog.register).not.toHaveBeenCalled()
+  })
+})
 
 it.each([en, zh])('renders account cards without inventing profile or balance data', async (copy) => {
   mount({ status: 'credential-stored', attempt: null }, copy)
@@ -240,7 +308,7 @@ it('reports a failed start in the login dialog, not as a sidebar alert', async (
   cleanup()
   const { AccountMenu } = await import('../src/client/AccountMenu.tsx')
   const links = { usageUrl: 'http://localhost:8081/usage', topUpUrl: 'http://localhost:8081/top_up' }
-  let snapshot: AccountSnapshot = { view: { status: 'signed-out', attempt: null, links }, details: undefined, avatar: undefined, failed: false }
+  let snapshot: AccountSnapshot = { view: { status: 'signed-out', attempt: null, links }, details: undefined, avatar: undefined, failed: false, customerAuth: false }
   // The plugin's start publishes the failure through the account snapshot, then rejects.
   const start = vi.fn((): Promise<void> => {
     snapshot = { ...snapshot, loginVisible: true, loginFailed: true }
@@ -593,7 +661,7 @@ it('opens the embedded Platform page from a failed balance row on Desktop', asyn
 it('reports a rejected settings login and disables login while initial state is unavailable', async () => {
   const operations = mount({ status: 'signed-out', attempt: null })
   cleanup()
-  let snapshot: AccountSnapshot = { view: undefined, details: undefined, avatar: undefined, failed: true }
+  let snapshot: AccountSnapshot = { view: undefined, details: undefined, avatar: undefined, failed: true, customerAuth: false }
   const props = { ...({} as GlobalStandardProps), ...operations,
     start: vi.fn(async () => { throw new Error('unavailable') }),
     useAccount: <T,>(select: (value: AccountSnapshot) => T) => select(snapshot),

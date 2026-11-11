@@ -706,6 +706,18 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       },
     }],
     { id: 'llm-deepseek', disabled: mode !== 'record' && !maskDeepSeekCredential },
+    // The shipped composition swaps the model-facing shell tool to pwsh on
+    // win32, but the recorded replay fixtures and live-tool scenarios speak
+    // `bash`. Windows hosts that have bash.exe on PATH can run that exact
+    // vocabulary, so swap the shell pair back for the test composition only:
+    // both sandbox executors register the same `shell` service, so the pwsh
+    // pair must be disabled alongside, mirroring the POSIX composition.
+    ...(process.platform === 'win32' ? [
+      { id: 'tool-bash', disabled: false },
+      { id: 'bash-sandbox', disabled: false },
+      { id: 'tool-pwsh', disabled: true },
+      { id: 'pwsh-sandbox', disabled: true },
+    ] : []),
   ]
 
   // Recorded standard sessions pin the optional patch tool in their request headers.
@@ -1654,6 +1666,11 @@ export async function captureStableAria(
   const normalize = (snapshot: string): string => {
     for (const [value, token] of options.replacements ?? []) {
       snapshot = snapshot.split(value).join(token)
+      // Windows: inside a double-quoted YAML scalar the aria snapshot escapes
+      // every backslash, so a Windows path appears with doubled separators
+      // and the raw form above never matches. Try the escaped spelling too;
+      // on POSIX the value has no backslashes and this is a no-op.
+      if (value.includes('\\')) snapshot = snapshot.split(value.replaceAll('\\', '\\\\')).join(token)
     }
     return normalizeAria(snapshot, workspaceCwd, age)
   }
@@ -1717,6 +1734,12 @@ export async function captureExpandedTurnProcessAria(
  * Compare a normalized golden, or rewrite it under refresh. Refresh is the
  * ONLY writer: a missing golden in replay mode fails with the healing command
  * instead of silently self-bootstrapping.
+ *
+ * On win32 the aria snapshot renders Windows path separators (and YAML-quoted
+ * lines double them), while the committed goldens were recorded on POSIX. Both
+ * sides are normalized symmetrically — CRLF to LF, escaped and raw backslashes
+ * to forward slashes — so platform separator spelling never fails a golden
+ * while any other difference still surfaces.
  * @param goldenPath - the committed ui.expected.md path.
  * @param actual - the stable normalized snapshot.
  * @param mode - the active snapshot mode.
@@ -1730,7 +1753,11 @@ export async function compareOrRefreshGolden(goldenPath: string, actual: string,
   if (!existsSync(goldenPath)) {
     throw new Error(`missing golden ${goldenPath} — run DSH_SNAPSHOT=refresh pnpm run test:web to generate it`)
   }
-  expect(payload).toBe(await readFile(goldenPath, 'utf8'))
+  const normalizeSeparators = (text: string): string =>
+    process.platform === 'win32'
+      ? text.replaceAll('\r\n', '\n').replace(/\\\\/g, '/').replaceAll('\\', '/')
+      : text
+  expect(normalizeSeparators(payload)).toBe(normalizeSeparators(await readFile(goldenPath, 'utf8')))
 }
 
 /**

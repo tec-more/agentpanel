@@ -36,6 +36,8 @@ export interface AccountSnapshot {
    * True on Desktop until shell.overlay reports visibility, false in browsers; Desktop layouts must render that slot.
    */
   desktopOnboardingVisible?: boolean
+  /** True when the Host offers the agentpanel customer email-code sign-in instead of the browser flow. */
+  customerAuth?: boolean
 }
 
 /** Host operations injected into the Cordis-free account component. */
@@ -85,6 +87,16 @@ export interface AccountSectionInjected {
   hasRunningAccountTasks: () => Promise<boolean>
   /** @returns after local account credentials are removed. */
   signOut: () => Promise<void>
+  /** Customer email-code sign-in; present when the deployment offers the agentpanel customer flow.
+   * @param email - customer mailbox. @param purpose - code purpose. @returns whether the mail was accepted.
+   */
+  sendCode?: (email: string, purpose: 'register' | 'login') => Promise<{ ok: boolean; message: string }>
+  /** @param email - customer mailbox. @param password - account password. @returns the sign-in outcome. */
+  login?: (email: string, password: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
+  /** @param email - customer mailbox. @param code - 6-digit mail code. @returns the sign-in outcome. */
+  loginCode?: (email: string, code: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
+  /** @param email - customer mailbox. @param code - 6-digit mail code. @param password - new account password. @returns the sign-in outcome. */
+  register?: (email: string, code: string, password: string) => Promise<{ ok: boolean; message: string; signedIn: boolean }>
 }
 /** Composed account section props. */
 export type AccountSectionProps =

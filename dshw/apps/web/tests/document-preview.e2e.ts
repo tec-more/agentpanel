@@ -1299,7 +1299,10 @@ else process.exit(1);
     await copyCode.hover()
     await page.getByRole('tooltip', { name: 'Copy', exact: true }).waitFor()
     await copyCode.click()
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(codeLines.join('\n'))
+    // Windows Chromium normalizes clipboard text line endings to CRLF on the
+    // OS round trip, so compare with separators collapsed back to LF.
+    await expect.poll(() => page.evaluate(async () => (await navigator.clipboard.readText()).replace(/\r\n/g, '\n')))
+      .toBe(codeLines.join('\n'))
     sections.push([
       '## Code paging', '',
       `- Viewer: ${await viewer.innerText()}`,

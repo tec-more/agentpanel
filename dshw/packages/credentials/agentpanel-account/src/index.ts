@@ -8,10 +8,13 @@
  * key through `resolveToken`. Platform-only features (profile, balance, bonuses)
  * have no agentpanel equivalent and return null.
  */
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { platform, release } from 'node:os'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { ImportedLeaseSession } from './types.ts'
+import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, ImportedLeaseSession } from './types.ts'
 import type {
   AccountBonusBatch,
   AccountBonusOrderId,
@@ -23,7 +26,7 @@ import type {
   SignInAttemptView,
 } from '@deepseek-ai/dsh-deepseek-account/types'
 
-export type { ImportedLeaseSession } from './types.ts'
+export type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, ImportedLeaseSession } from './types.ts'
 
 /** Deployment options for the agentpanel account backend. */
 export interface Config {
@@ -47,6 +50,20 @@ export interface Config {
   topUpUrl?: string | undefined
   /** Optional gateway API key header (x-api-key) when the gateway requires one. */
   gatewayApiKey?: string | undefined
+  /**
+   * agentpanel customer control-plane base URL for email-code sign-in and
+   * customer leases (for example http://127.0.0.1:9998/v1/customer). Empty
+   * (the default) keeps only the harness-lease flow and the browser dialog.
+   */
+  customerUrl?: string | undefined
+  /**
+   * Directory of the persisted customer session file. Defaults to the desktop
+   * account store (`%APPDATA%/dsh-agentpanel` / `~/.config/dsh-agentpanel`) so
+   * a web sign-in and the desktop share one session.
+   */
+  storageDir?: string | undefined
+  /** Customer lease renewal check interval in milliseconds; defaults to 30000. */
+  renewCheckMs?: number | undefined
 }
 
 /** Resolved configuration with defaults applied. */
@@ -61,6 +78,9 @@ interface ResolvedConfig {
   usageUrl: string
   topUpUrl: string
   gatewayApiKey: string
+  customerUrl: string
+  storageFile: string
+  renewCheckMs: number
 }
 
 interface Lease {
@@ -77,6 +97,62 @@ interface Attempt {
   view: SignInAttemptView
   controller: AbortController
   done: Promise<void>
+}
+
+/** Persisted customer lease; the schema is shared with the desktop account store. */
+interface StoredLease {
+  leaseId: string
+  virtualKey: string
+  expiresAt: string
+  ttlSeconds: number
+}
+
+/** Persisted customer session; the schema is shared with the desktop account store. */
+interface StoredAccount {
+  accessToken: string
+  tokenExpiresAt: string
+  customerId: string
+  customerEmail: string
+  lease: StoredLease | null
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** @returns true when an ISO timestamp is missing or in the past. */
+function expiredIso(value: string | undefined): boolean {
+  if (!value) return true
+  const time = new Date(value).getTime()
+  return !Number.isFinite(time) || time <= Date.now()
+}
+
+/** @returns the trimmed email when well-formed, null otherwise. */
+function validEmail(email: string): string | null {
+  const address = email.trim()
+  return EMAIL_PATTERN.test(address) && address.length <= 254 ? address : null
+}
+
+/** @returns a short user-facing message for an arbitrary failure. */
+function messageOf(error: unknown): string {
+  return error instanceof Error && error.message !== '' ? error.message.slice(0, 200) : '操作失败，请重试'
+}
+
+/** @returns the payload object inside agentpanel's `success_response` envelope (or a bare object). */
+function envelopeData(body: unknown): Record<string, unknown> {
+  const source = body && typeof body === 'object' && 'data' in body
+    ? (body as Record<string, unknown>).data
+    : body
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    throw new Error('agentpanel account: 响应格式无效')
+  }
+  return source as Record<string, unknown>
+}
+
+/** Resolve the customer session file; the default matches the desktop account store. */
+function resolveStorageFile(storageDir?: string): string {
+  const dir = storageDir || (process.env.APPDATA
+    ? path.join(process.env.APPDATA, 'dsh-agentpanel')
+    : path.join(homedir(), '.config', 'dsh-agentpanel'))
+  return path.join(dir, 'account.json')
 }
 
 /** Thrown for unrecoverable agentpanel account configuration or protocol errors. */
@@ -98,6 +174,10 @@ export class AgentPanelAccount extends Service {
   private lease: Lease | undefined
   /** True when the lease was imported from the desktop customer session (no self-renewal/revocation). */
   private externalLease = false
+  /** True when the active lease was issued through the customer control plane (renewed and revoked there). */
+  private customerLease = false
+  /** Persisted customer session backing a customer lease. */
+  private customer: StoredAccount | undefined
   private attempt: Attempt | undefined
   private readonly listeners = new Set<(identityOnly: boolean) => void>()
   private renewTimer: ReturnType<typeof setTimeout> | undefined
@@ -117,7 +197,13 @@ export class AgentPanelAccount extends Service {
       usageUrl: config.usageUrl ?? '',
       topUpUrl: config.topUpUrl ?? '',
       gatewayApiKey: config.gatewayApiKey ?? '',
+      customerUrl: config.customerUrl || '',
+      storageFile: resolveStorageFile(config.storageDir),
+      renewCheckMs: config.renewCheckMs ?? 30_000,
     }
+    // Adopt a persisted customer session (shared with the desktop account
+    // store) so a restart — of this Host or of `dsh web` — keeps the sign-in.
+    if (this.config.customerUrl !== '') this.adoptStoredCustomer()
     ctx.effect(() => async () => {
       this.closed = true
       if (this.renewTimer !== undefined) clearTimeout(this.renewTimer)
@@ -184,6 +270,28 @@ export class AgentPanelAccount extends Service {
   }
 
   async signOut(_client: AccountClientMetadata): Promise<AccountView> {
+    if (this.customerLease && this.customer !== undefined) {
+      // Customer session: revoke the lease through the customer control plane
+      // and drop the shared store so every surface (web Host, desktop main)
+      // observes the signed-out state.
+      const account = this.customer
+      if (account.lease !== null) {
+        try {
+          const res = await fetch(`${this.config.customerUrl}/leases/${encodeURIComponent(account.lease.leaseId)}`, {
+            method: 'DELETE',
+            headers: { authorization: `Bearer ${account.accessToken}` },
+          })
+          if (!res.ok) throw new Error(`revoke http ${res.status}`)
+        } catch (error) {
+          console.error('[agentpanel-account] customer lease revoke failed', error instanceof Error ? error.message : error)
+        }
+      }
+      this.dropCustomer()
+      this.attempt = undefined
+      this.ctx.emit('agentpanel-account/signed-out')
+      this.changed()
+      return this.getState()
+    }
     if (this.lease !== undefined && !this.externalLease) {
       const { clientId, clientSecret, controlPlaneUrl, gatewayApiKey } = this.config
       const headers: Record<string, string> = { authorization: `Bearer ${clientId}.${clientSecret}` }
@@ -218,6 +326,10 @@ export class AgentPanelAccount extends Service {
   async importSession(session: ImportedLeaseSession): Promise<AccountView> {
     if (this.closed) throw new AgentPanelAuthError('protocol')
     if (this.renewTimer !== undefined) { clearTimeout(this.renewTimer); this.renewTimer = undefined }
+    // The desktop session supersedes any self-owned customer session; its
+    // renewal and revocation stay with the desktop.
+    this.customer = undefined
+    this.customerLease = false
     this.lease = {
       leaseId: session.leaseId,
       virtualKey: session.virtualKey,
@@ -231,16 +343,20 @@ export class AgentPanelAccount extends Service {
   }
 
   /**
-   * Drop the imported desktop session locally (for example after the desktop
-   * account store was signed out or expired).
+   * Drop the local session mirror: an imported desktop lease, or a self-owned
+   * customer session that an authoritative surface (for example desktop main)
+   * reports as signed out. Owned customer sessions are cleared without
+   * revocation — the caller that observed the signed-out state owns revocation.
    * @returns the account state after clearing.
    */
   async clearSession(): Promise<AccountView> {
     if (this.closed) throw new AgentPanelAuthError('protocol')
-    if (!this.externalLease) return this.getState()
+    if (this.lease === undefined) return this.getState()
     if (this.renewTimer !== undefined) { clearTimeout(this.renewTimer); this.renewTimer = undefined }
+    const ownedCustomer = this.customerLease
     this.lease = undefined
     this.externalLease = false
+    if (ownedCustomer) this.dropCustomerStore()
     this.attempt = undefined
     this.ctx.emit('agentpanel-account/signed-out')
     this.changed()
@@ -281,6 +397,69 @@ export class AgentPanelAccount extends Service {
 
   getDeviceIdentity(): Promise<{ deviceId?: string; userId?: AccountUserId; osVersion: string }> {
     return Promise.resolve({ osVersion: `${platform()} ${release()}` })
+  }
+
+  /** @returns which sign-in surface the client should offer: the agentpanel customer form or the browser flow. */
+  getAuthMode(): Promise<'customer' | 'browser'> {
+    return Promise.resolve(this.config.customerUrl === '' ? 'browser' : 'customer')
+  }
+
+  /**
+   * Request a verification mail for the customer sign-in form.
+   * @param email - customer mailbox.
+   * @param purpose - code purpose mirrored by the control plane's `type` field.
+   * @returns whether the control plane accepted the request, with a user-facing message on failure.
+   */
+  async sendCode(email: string, purpose: CustomerCodePurpose): Promise<CustomerCodeOutcome> {
+    if (this.config.customerUrl === '') return { ok: false, message: 'customer sign-in is not configured' }
+    const address = validEmail(email)
+    if (address === null) return { ok: false, message: '请输入有效的邮箱地址' }
+    try {
+      await this.customerRequest('/auth/send-code', { email: address, type: purpose })
+      return { ok: true, message: '' }
+    } catch (error) {
+      return { ok: false, message: messageOf(error) }
+    }
+  }
+
+  /**
+   * Register a customer account with an email verification code and a password.
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  async register(email: string, code: string, password: string): Promise<CustomerAuthOutcome> {
+    const address = validEmail(email)
+    if (address === null) return { ok: false, message: '请输入有效的邮箱地址', state: null }
+    if (!/^\d{6}$/.test(code.trim())) return { ok: false, message: '请输入 6 位邮箱验证码', state: null }
+    if (password.length < 6) return { ok: false, message: '密码至少需要 6 位', state: null }
+    const resumed = await this.resumeCustomer()
+    if (resumed !== null) return resumed
+    return this.customerAuthenticate('/register', { email: address, code: code.trim(), password }, address)
+  }
+
+  /**
+   * Sign in with the customer email and password.
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  async login(email: string, password: string): Promise<CustomerAuthOutcome> {
+    const address = validEmail(email)
+    if (address === null) return { ok: false, message: '请输入有效的邮箱地址', state: null }
+    if (password === '') return { ok: false, message: '请输入密码', state: null }
+    const resumed = await this.resumeCustomer()
+    if (resumed !== null) return resumed
+    return this.customerAuthenticate('/login', { email: address, password }, address)
+  }
+
+  /**
+   * Sign in with the customer email and a verification code.
+   * @returns the signed-in account state, or a user-facing failure message.
+   */
+  async loginCode(email: string, code: string): Promise<CustomerAuthOutcome> {
+    const address = validEmail(email)
+    if (address === null) return { ok: false, message: '请输入有效的邮箱地址', state: null }
+    if (!/^\d{6}$/.test(code.trim())) return { ok: false, message: '请输入 6 位邮箱验证码', state: null }
+    const resumed = await this.resumeCustomer()
+    if (resumed !== null) return resumed
+    return this.customerAuthenticate('/login-code', { email: address, code: code.trim() }, address)
   }
 
   private async issueLease(attempt: Attempt): Promise<void> {
@@ -343,6 +522,10 @@ export class AgentPanelAccount extends Service {
     // Imported (desktop-owned) leases renew on the desktop, which re-imports
     // after each renewal; this service has no renewal credentials for them.
     if (this.lease === undefined || this.externalLease || this.closed) return
+    if (this.customerLease) {
+      await this.renewCustomerLease()
+      return
+    }
     const { clientId, clientSecret, controlPlaneUrl, leaseTtlSeconds, gatewayApiKey } = this.config
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -372,12 +555,230 @@ export class AgentPanelAccount extends Service {
     if (this.renewTimer !== undefined) clearTimeout(this.renewTimer)
     this.renewTimer = undefined
     const hadLease = this.lease !== undefined
+    const ownedCustomer = this.customerLease
     this.lease = undefined
     this.externalLease = false
+    this.customerLease = false
+    // A rejected or unrenewable customer lease is dead server-side; drop the
+    // shared store so the desktop account surfaces sign out as well.
+    if (ownedCustomer) {
+      this.customer = undefined
+      this.dropCustomerStore()
+    }
     if (hadLease) {
       this.ctx.emit('agentpanel-account/session-expired')
       this.changed()
     }
+  }
+
+  /** Clear the customer session in memory and its persisted store. */
+  private dropCustomer(): void {
+    if (this.renewTimer !== undefined) clearTimeout(this.renewTimer)
+    this.renewTimer = undefined
+    this.lease = undefined
+    this.externalLease = false
+    this.customerLease = false
+    this.customer = undefined
+    this.dropCustomerStore()
+  }
+
+  /** Read the persisted customer session; undefined when absent or its token expired. */
+  private readStoredCustomer(): StoredAccount | undefined {
+    try {
+      if (!existsSync(this.config.storageFile)) return undefined
+      const parsed = JSON.parse(readFileSync(this.config.storageFile, 'utf8')) as StoredAccount
+      if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') return undefined
+      if (expiredIso(parsed.tokenExpiresAt)) return undefined
+      return parsed
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Persist the current customer session (0o600); persistence failures do not block the sign-in. */
+  private persistCustomer(): void {
+    if (this.customer === undefined) return
+    try {
+      const dir = path.dirname(this.config.storageFile)
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+      writeFileSync(this.config.storageFile, JSON.stringify(this.customer), { mode: 0o600 })
+    } catch {
+      // 持久化失败不阻断本次登录态；下次启动会要求重新登录。
+    }
+  }
+
+  /** Remove the persisted customer session file. */
+  private dropCustomerStore(): void {
+    try {
+      if (existsSync(this.config.storageFile)) rmSync(this.config.storageFile)
+    } catch {
+      // Store removal is best-effort; the in-memory session is already gone.
+    }
+  }
+
+  /** Adopt the persisted customer session when its token and lease are still valid. */
+  private adoptStoredCustomer(): void {
+    const stored = this.readStoredCustomer()
+    if (stored === undefined) return
+    this.customer = stored
+    if (stored.lease !== null && !expiredIso(stored.lease.expiresAt)) {
+      this.applyCustomerLease(stored.lease)
+      this.scheduleRenewal()
+      this.changed()
+      return
+    }
+    // Token valid but no live lease (for example a crash between sign-in and
+    // lease exchange): resume in the background without blocking boot.
+    void this.resumeCustomer().then((outcome) => {
+      if (outcome?.ok === true) this.changed()
+    }).catch(() => undefined)
+  }
+
+  /** Point the active lease at a customer-issued lease snapshot. */
+  private applyCustomerLease(lease: StoredLease): void {
+    const expiresAtMs = Date.parse(lease.expiresAt)
+    this.lease = {
+      leaseId: lease.leaseId,
+      virtualKey: lease.virtualKey,
+      expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + lease.ttlSeconds * 1000,
+      renewAfterSeconds: Math.max(1, Math.floor(lease.ttlSeconds * this.config.renewalRatio)),
+    }
+    this.externalLease = false
+    this.customerLease = true
+  }
+
+  /**
+   * Resume a persisted customer session: return the signed-in state when a live
+   * lease exists, re-issue the lease when only the token remains valid, and
+   * null when the caller must authenticate from scratch.
+   */
+  private async resumeCustomer(): Promise<CustomerAuthOutcome | null> {
+    const account = this.customer
+    if (account === undefined || expiredIso(account.tokenExpiresAt)) return null
+    if (account.lease !== null && !expiredIso(account.lease.expiresAt) && this.lease !== undefined) {
+      return { ok: true, message: '', state: await this.getState() }
+    }
+    try {
+      const lease = await this.issueCustomerLease(account)
+      account.lease = lease
+      this.applyCustomerLease(lease)
+      this.persistCustomer()
+      this.markCustomerSucceeded()
+      this.scheduleRenewal()
+      this.changed()
+      return { ok: true, message: '', state: await this.getState() }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Authenticate a customer against the control plane, exchange the JWT for a
+   * gateway lease, persist the session, and publish the signed-in state.
+   */
+  private async customerAuthenticate(endpoint: string, body: Record<string, unknown>, email: string): Promise<CustomerAuthOutcome> {
+    if (this.config.customerUrl === '') return { ok: false, message: 'customer sign-in is not configured', state: null }
+    try {
+      const data = await this.customerRequest(`/auth${endpoint}`, body)
+      const accessToken = data.access_token
+      if (typeof accessToken !== 'string' || accessToken === '') throw new Error('登录态无效，请重试')
+      const expiresIn = typeof data.expires_in === 'number' && data.expires_in > 0 ? data.expires_in : 86_400
+      const customer = data.customer && typeof data.customer === 'object' ? data.customer as Record<string, unknown> : {}
+      const account: StoredAccount = {
+        accessToken,
+        tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+        customerId: String(customer.id ?? ''),
+        customerEmail: typeof customer.email === 'string' ? customer.email : email,
+        lease: null,
+      }
+      // 认证成功但换租约失败：保留 JWT 供重试，避免用户重新走一遍邮箱验证。
+      try {
+        account.lease = await this.issueCustomerLease(account)
+      } catch (error) {
+        this.customer = account
+        this.persistCustomer()
+        throw error
+      }
+      this.customer = account
+      this.applyCustomerLease(account.lease)
+      this.persistCustomer()
+      this.markCustomerSucceeded()
+      this.scheduleRenewal()
+      this.changed()
+      return { ok: true, message: '', state: await this.getState() }
+    } catch (error) {
+      return { ok: false, message: messageOf(error), state: null }
+    }
+  }
+
+  /** Publish a succeeded attempt so clients treat the transition as a completed sign-in. */
+  private markCustomerSucceeded(): void {
+    this.attempt = {
+      locale: 'zh_CN',
+      origin: '',
+      loginSource: 'web',
+      view: { id: randomUUID() as SignInAttemptId, phase: 'succeeded' },
+      controller: new AbortController(),
+      done: Promise.resolve(),
+    }
+  }
+
+  /** Exchange the customer JWT for a fresh gateway lease bound to the customer. */
+  private async issueCustomerLease(account: StoredAccount): Promise<StoredLease> {
+    const data = await this.customerRequest('/leases', {}, account.accessToken)
+    if (typeof data.lease_id !== 'string' || typeof data.virtual_key !== 'string') {
+      throw new Error('agentpanel account: 租约响应缺少字段')
+    }
+    const expiresAt = typeof data.expires_at === 'string' ? data.expires_at : ''
+    if (expiredIso(expiresAt)) throw new Error('agentpanel account: 租约已过期')
+    return {
+      leaseId: data.lease_id,
+      virtualKey: data.virtual_key,
+      expiresAt,
+      ttlSeconds: typeof data.ttl_seconds === 'number' ? data.ttl_seconds : 900,
+    }
+  }
+
+  /** Renew the customer lease through the control plane; expiry drops the shared session. */
+  private async renewCustomerLease(): Promise<void> {
+    const account = this.customer
+    const lease = account?.lease
+    if (account === undefined || lease === null || lease === undefined) return
+    try {
+      const data = await this.customerRequest(`/leases/${encodeURIComponent(lease.leaseId)}/renew`, {}, account.accessToken)
+      const expiresAt = typeof data.expires_at === 'string' ? data.expires_at : ''
+      if (expiredIso(expiresAt)) throw new Error('agentpanel account: 续期响应缺少有效过期时间')
+      account.lease = {
+        ...lease,
+        expiresAt,
+        ttlSeconds: typeof data.ttl_seconds === 'number' ? data.ttl_seconds : lease.ttlSeconds,
+      }
+      this.applyCustomerLease(account.lease)
+      this.persistCustomer()
+      this.scheduleRenewal()
+    } catch (error) {
+      console.error('[agentpanel-account] customer lease renewal failed', error instanceof Error ? error.message : error)
+      if (expiredIso(account.lease?.expiresAt)) this.dropCustomer()
+    }
+  }
+
+  /** POST a JSON request to the customer control plane and unwrap the `success_response` envelope. */
+  private async customerRequest(endpoint: string, body: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (token !== undefined) headers.authorization = `Bearer ${token}`
+    const res = await fetch(`${this.config.customerUrl}${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
+    let payload: unknown
+    try { payload = await res.json() } catch { throw new Error(`agentpanel account: 服务响应无效 (${res.status})`) }
+    const envelope = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+    if (!res.ok || envelope.success === false) {
+      const detail = typeof envelope.msg === 'string' && envelope.msg !== '' ? envelope.msg : `请求失败 (${res.status})`
+      throw new Error(detail)
+    }
+    return envelopeData(payload)
   }
 
   private update(attempt: Attempt, value: Partial<SignInAttemptView>): void {

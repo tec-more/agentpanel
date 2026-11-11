@@ -27,7 +27,6 @@ from packages.common.service_metrics import (
 )
 
 from app import health as health_module
-from app import quota_backend
 from app.api.approval import approval_router
 from app.api.business import business_router
 from app.api.internal import internal_router
@@ -70,7 +69,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     init_readonly_db(_SERVICES_CONFIG.db)
     health_module.init_health(_SERVICES_CONFIG)
-    quota_backend.configure_orchestration()
 
     await Tortoise.init(
         config=build_tortoise_orm(_SERVICES_CONFIG.db, shared_model_modules())

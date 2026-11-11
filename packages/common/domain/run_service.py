@@ -1,11 +1,10 @@
 """
 Harness 会话/运行生命周期服务
 
-- 会话由业务系统创建，run 创建时即完成「输入预估 + 最大输出预留」的配额预占；
-- hold_id 固定为 f"orch:{run_no}"，同一 run 多次步骤结算共享一个预占键；
-- 运行结束（成功/失败/取消/超时）都对剩余预占做释放，并写审计事件；
-- 额度执行统一走 quota_backend：app 直调 QuotaService，独立服务调 app 内部额度 API；
-- 用量幂等键固定为 orch:{run_no}:{node}:{seq}（quota_reservation / usage_record 唯一约束）。
+- 会话由业务系统创建；run 创建只落业务记录，不做额度预占；
+- 计量契约：真实模型用量与额度扣减只由网关（services/gateway）完成；
+- 运行结束（成功/失败/取消/超时）只推进状态并写审计事件，不再结算/释放额度；
+- `reserved_tokens`/`hold_id` 字段保留但恒为 0/空，供历史数据与看板兼容。
 """
 import re
 import secrets
@@ -13,11 +12,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
-from loguru import logger
 
-from packages.common.domain.quota_errors import QuotaError
-from packages.common.domain import quota_backend
-from packages.common.domain.quota_backend import QuotaReservationConflict, QuotaUnavailable
 from packages.common.models.harness import (
     HarnessIdentity,
     HarnessRun,
@@ -384,7 +379,9 @@ class HarnessRunService:
             )
 
         run_no = f"hr_{secrets.token_hex(12)}"
-        reserved_tokens = int(payload.estimated_input_tokens or 0) + int(payload.max_output_tokens or 0)
+        # 计量契约：只有网关写真实用量并扣减额度；编排不再做运行级预占。
+        reserved_tokens = 0
+        hold_id = ""
         provider = payload.provider or "deepseek"
         price = await ModelPriceService.estimate_cost(
             provider, payload.model,
@@ -392,77 +389,32 @@ class HarnessRunService:
             output_tokens=payload.max_output_tokens or 0,
         )
 
-        hold_id = ""
-        if reserved_tokens > 0 and session.owner_id:
-            try:
-                hold_id = await quota_backend.reserve(
-                    (session.owner_type, session.owner_id),
-                    {"token": reserved_tokens},
-                    hold_id=f"orch:{run_no}",
-                    source="client",
-                    ref_type="run",
-                    ref_id=run_no,
-                    member_id=member_id,
-                )
-            except QuotaReservationConflict as e:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={"code": 409, "msg": str(e), "data": e.data},
-                )
-            except QuotaUnavailable as e:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={"code": 503, "msg": "额度服务不可用，本次运行未创建",
-                            "data": {"error_code": "orchestration_dependency_unavailable",
-                                     "message": str(e), "downstream": "app_quota"}},
-                )
-            except QuotaError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail={"code": 42901, "msg": str(e),
-                            "data": {"error_code": "quota_exceeded", "item": e.item,
-                                     "remaining": e.remaining, "estimated": e.estimated}},
-                )
-
-        try:
-            run = await HarnessRun.create(
-                run_no=run_no,
-                session_no=session_no,
-                session_id=session.id,
-                client_id=client_id,
-                identity_id=session.identity_id,
-                user_id=session.user_id,
-                owner_type=session.owner_type,
-                owner_id=session.owner_id,
-                task_type=payload.task_type,
-                task_payload=payload.task_payload,
-                input_summary=payload.input_summary,
-                status="created",
-                priority=payload.priority,
-                model=payload.model,
-                provider=provider,
-                estimated_input_tokens=payload.estimated_input_tokens or 0,
-                max_output_tokens=payload.max_output_tokens or 0,
-                reserved_tokens=reserved_tokens,
-                estimated_cost=price["cost"],
-                currency=price["currency"],
-                price_snapshot=price["price_snapshot"],
-                hold_id=hold_id or None,
-                metrics=_run_metrics(payload.metadata, member_id),
-                created_by=session.user_id,
-            )
-        except Exception:
-            if hold_id:
-                # 预扣成功但 run 落库失败：立即释放；释放失败只记日志，
-                # 由 quota_hold_cleanup_task / 对账按 expire_at 兜底。
-                try:
-                    await quota_backend.release(hold_id, reason="run_create_failed")
-                except Exception as release_exc:
-                    logger.error(
-                        f"[harness] run 落库失败后释放预占失败 hold={hold_id}: "
-                        f"{type(release_exc).__name__}: {release_exc}"
-                    )
-            raise
+        run = await HarnessRun.create(
+            run_no=run_no,
+            session_no=session_no,
+            session_id=session.id,
+            client_id=client_id,
+            identity_id=session.identity_id,
+            user_id=session.user_id,
+            owner_type=session.owner_type,
+            owner_id=session.owner_id,
+            task_type=payload.task_type,
+            task_payload=payload.task_payload,
+            input_summary=payload.input_summary,
+            status="created",
+            priority=payload.priority,
+            model=payload.model,
+            provider=provider,
+            estimated_input_tokens=payload.estimated_input_tokens or 0,
+            max_output_tokens=payload.max_output_tokens or 0,
+            reserved_tokens=reserved_tokens,
+            estimated_cost=price["cost"],
+            currency=price["currency"],
+            price_snapshot=price["price_snapshot"],
+            hold_id=None,
+            metrics=_run_metrics(payload.metadata, member_id),
+            created_by=session.user_id,
+        )
 
         session.run_count = int(session.run_count or 0) + 1
         session.last_activity_at = _now()
@@ -608,66 +560,7 @@ class HarnessRunService:
             return run
 
         final_status = payload.status if payload.status in TERMINAL_STATUSES else "succeeded"
-        usage_items: List[Dict[str, Any]] = []
-        for entry in payload.usage:
-            billed_input = int(entry.tokens_in) + int(entry.cache_read_tokens) + int(entry.cache_write_tokens)
-            amount = billed_input + int(entry.tokens_out)
-            if amount <= 0:
-                continue
-            price = await ModelPriceService.estimate_cost(
-                entry.provider or run.provider,
-                entry.model or run.model,
-                input_tokens=entry.tokens_in,
-                output_tokens=entry.tokens_out,
-                cache_read_tokens=entry.cache_read_tokens,
-                cache_write_tokens=entry.cache_write_tokens,
-            )
-            source = str(entry.source or "")
-            # 编排来源隔离：实际值统一写 client（历史 provider/harness 归一），估算值保持 estimated
-            source = "client" if source in ("", "provider", "harness") else source
-            usage_items.append({
-                "run_id": run.id,
-                "execution_id": None,
-                "node_id": entry.node_id,
-                "seq": entry.seq,
-                "session_ref": run.session_no,
-                "resource_type": "token",
-                "amount": amount,
-                "tokens_in": entry.tokens_in,
-                "tokens_out": entry.tokens_out,
-                "cache_read_tokens": entry.cache_read_tokens,
-                "cache_write_tokens": entry.cache_write_tokens,
-                "reasoning_tokens": entry.reasoning_tokens,
-                "source": source,
-                "idem_key": f"orch:{run.run_no}:{entry.node_id}:{int(entry.seq or 0)}",
-                "model": entry.model or run.model,
-                "provider": entry.provider or run.provider,
-                "cost": entry.cost if entry.cost is not None else price["cost"],
-                "currency": price["currency"],
-                "price_snapshot": price["price_snapshot"],
-                "raw_seq": entry.raw_seq,
-                "member_id": (run.metrics or {}).get("quota_member_id"),
-            })
-
-        # 结算/释放必须先确认成功，再推进 run 状态：app 不可用一律 503 fail-closed，
-        # 重试由 orch: 幂等键保证不双计。
-        try:
-            if usage_items:
-                await quota_backend.settle(
-                    run.hold_id or "",
-                    usage_items,
-                    owner=(run.owner_type, run.owner_id) if run.owner_id else None,
-                )
-            if run.hold_id:
-                await quota_backend.release(run.hold_id, reason="run_complete")
-        except QuotaUnavailable as e:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": 503, "msg": "额度服务不可用，运行状态未推进",
-                        "data": {"error_code": "orchestration_dependency_unavailable",
-                                 "message": str(e), "downstream": "app_quota"}},
-            )
-
+        # 计量契约：真实用量与额度扣减只由网关完成；编排只推进状态与写审计。
         run.status = final_status
         run.output_summary = payload.output_summary
         run.error_code = payload.error_code
@@ -689,7 +582,7 @@ class HarnessRunService:
             target_type="run",
             target_id=run.run_no,
             risk_level="low" if final_status == "succeeded" else "medium",
-            detail={"error_code": payload.error_code, "usage_entries": len(usage_items)},
+            detail={"error_code": payload.error_code, "usage_entries": len(payload.usage or [])},
         )
         return run
 
@@ -698,15 +591,7 @@ class HarnessRunService:
         run = await cls._get_run(run_no, client_id)
         if run.status in TERMINAL_STATUSES:
             return run
-        if run.hold_id:
-            try:
-                await quota_backend.release(run.hold_id, reason="run_cancel")
-            except QuotaUnavailable as e:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={"code": 503, "error_code": "orchestration_dependency_unavailable",
-                            "message": str(e), "downstream": "app_quota"},
-                )
+        # 计量契约：额度由网关按请求扣减，编排取消运行无需释放预占。
         run.status = "cancelled"
         run.error_code = "cancelled"
         run.error_message = reason

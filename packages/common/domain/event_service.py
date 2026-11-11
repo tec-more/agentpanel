@@ -3,7 +3,7 @@ Harness 事件映射服务：会话 JSONL / notification → step / audit_event 
 
 容错约定：
 - 截断行、非法 JSON、未知事件类型、缺失 usage 都不阻断整批采集，只计入统计并留审计缺口事件；
-- usage 必须携带 source（provider/gateway/estimated），不同 source 各自落 usage_record，不合并；
+- 计量契约：真实用量与额度扣减只由网关完成；本服务只把 usage 落成步骤明细与审计，不写 usage_record；
 - 计费输入 = inputTokens + cacheReadTokens + cacheWriteTokens；outputTokens 单独计；
 - compaction/summary 的 usage 是额外一次模型调用，使用独立 node_id（compaction:{seq}），不混入普通回合；
 - approval/asked 不带参数，按 callId 回查 tool/call 的参数。
@@ -13,8 +13,6 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 
-from packages.common.domain import quota_backend
-from packages.common.domain.quota_backend import QuotaUnavailable
 from packages.common.models.harness import (
     HarnessApprovalRequest,
     HarnessRun,
@@ -159,7 +157,7 @@ class HarnessEventService:
             elif ev_type in ("permission/preset", "sandbox/mode", "approval/policy"):
                 await cls._policy_state(run, seq, ev_type, data, counters)
             elif ev_type in USAGE_EVENT_TYPES:
-                await cls._usage(run, session, seq, ev_type, data, event, batch, counters)
+                await cls._usage(run, seq, ev_type, data, event, batch, counters)
             else:
                 counters["unknown"] += 1
                 key = ev_type or "<empty>"
@@ -421,7 +419,7 @@ class HarnessEventService:
         counters["policy_events"] += 1
 
     @classmethod
-    async def _usage(cls, run, session, seq, ev_type, data, event, batch, counters):
+    async def _usage(cls, run, seq, ev_type, data, event, batch, counters):
         usage = _usage_of(data)
         if not usage:
             counters["missing_usage"] += 1
@@ -439,7 +437,6 @@ class HarnessEventService:
         source = _normalize_source(
             data.get("source") or event.get("source") or batch.default_source
         )
-        gateway_key = batch.gateway_key or (session.gateway_key if session else None)
 
         billed_input = tokens_in + cache_read + cache_write
         amount = billed_input + tokens_out
@@ -452,48 +449,7 @@ class HarnessEventService:
         )
         cost = data.get("cost") if data.get("cost") is not None else price["cost"]
         node_id = f"{'compaction' if kind == 'compaction' else 'assistant'}:{seq}"
-        # 来源隔离：编排侧实际值写 client（provider/harness 归一），估算值保持 estimated
-        billed_source = "client" if source in ("provider", "harness") else source
-
-        entry = {
-            "run_id": run.id,
-            "execution_id": None,
-            "node_id": node_id,
-            "seq": seq,
-            "session_ref": run.session_no,
-            "resource_type": "token",
-            "amount": amount,
-            "tokens_in": tokens_in,
-            "tokens_out": tokens_out,
-            "cache_read_tokens": cache_read,
-            "cache_write_tokens": cache_write,
-            "reasoning_tokens": reasoning,
-            "source": billed_source,
-            "idem_key": f"orch:{run.run_no}:{node_id}:{seq}",
-            "gateway_key": gateway_key,
-            "usage_kind": kind,
-            "model": model,
-            "provider": provider,
-            "cost": cost,
-            "currency": price["currency"],
-            "price_snapshot": price["price_snapshot"],
-            "raw_seq": seq,
-            "member_id": (run.metrics or {}).get("quota_member_id"),
-        }
-        try:
-            result = await quota_backend.settle(
-                run.hold_id or "", [entry],
-                owner=(run.owner_type, run.owner_id) if run.owner_id else None,
-            )
-        except QuotaUnavailable as e:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": 503, "msg": "额度服务不可用，事件批次未确认",
-                        "data": {"error_code": "orchestration_dependency_unavailable",
-                                 "message": str(e), "downstream": "app_quota"}},
-            )
-        counters["usage_records"] += int(result.get("settled", 0))
-
+        # 计量契约：真实用量与额度扣减只由网关完成；这里只落步骤明细与审计。
         await cls._upsert_step(
             run, node_id, seq,
             step_type="llm_call" if kind == "normal" else "compaction",

@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""编排→app 配额链路定向回归（2026-11-10 改名后补测，第二项）。
+"""编排额度中立回归（2026-11-11 计量契约调整后）。
 
-`verify_write_path.py` 刻意走 0 token 绕开了预占/结算；本脚本专门补这一段：
-经真实业务入口（建运行）触发 `app_quota_client` → app 内部额度 API 的
-reserve / settle / release，验证 hold、用量流水、账户计数与 Redis 键。
+计量契约：真实模型用量与额度扣减**只由网关**完成；编排不再做
+reserve / settle / release，也不写 usage_record。
 
-覆盖：
-- 预占：`reserved_tokens>0` 建运行 → `quota_reservation` 落行、Redis `quota_held` 增加
-- 结算：complete 带 usage → `usage_record` 落行（amount/idem_key/source 口径）、
-  账户 `used` 推进、hold 归零
-- 释放：start 后 cancel → 预占行置 released、不产生用量流水、hold 归零
-- 超限：申请额度远超套餐 → 429 `quota_exceeded`，且不落 run / 不落预占
+本脚本验证：
+- 建运行即使带 estimated_input_tokens / max_output_tokens，也不产生 quota_reservation 与 Redis 预占键；
+- complete 带 usage 不产生 usage_record、不推进 Redis used / quota_account；
+- events 里的 usage 只落 harness_step 明细，不记账；
+- cancel 无预占可释放，仍保持幂等；
+- 清理后 DB / Redis 无残留。
 
 fixture 隔离（仿 `services/gateway/tests/plan_golden.py`）：
-临时 plan + role + binding + user + harness_client，全部 `eq_` 前缀（`user.username` 只有
-varchar(20)，名字必须短）；`finally` 里删 DB 行与 Redis 键，并断言残留为 0。跑完请复核
-`observe_check.py` 仍是 `used 3 键基线一致 / held 全 0`。
+临时 plan + role + binding + user + harness_client，全部 `eq_` 前缀
+（`user.username` 只有 varchar(20)，名字必须短）；`finally` 里删 DB 行与 Redis 键，
+并断言残留为 0。跑完请复核 `observe_check.py` 仍是 `used 基线一致 / held 全 0`。
 
 用法（必须**在 orchestration 容器内**执行）：
     docker exec -i agentpanel-orchestration python - < services/orchestration/tests/verify_quota_path.py
@@ -41,9 +40,8 @@ import redis.asyncio as aioredis
 ORCH_BASE = os.environ.get("ORCH_BASE", "http://127.0.0.1:9100")
 PREFIX = "eq_"
 PLAN_TOKENS = 10000
-RESERVE_A = (1000, 500)   # → 1500
-SETTLE_A = (100, 50)      # → amount 150
-RESERVE_B = (1200, 800)   # → 2000
+RESERVE_A = (1000, 500)   # 运行 A 上报的预估输入 + 最大输出（旧实现会预占 1500）
+SETTLE_A = (100, 50)      # 运行 A 上报的真实用量（旧实现会写 150）
 
 results: List[Tuple[str, str, str]] = []
 
@@ -116,7 +114,7 @@ async def build_fixture(conn: asyncpg.Connection, tag: str, secret: str) -> Dict
         "INSERT INTO harness_client "
         "(client_id,name,secret_hash,secret_prefix,status,scopes,allowed_ips) "
         "VALUES ($1,$2,$3,$4,'active',$5::jsonb,NULL)",
-        fx["client_id"], "e2e 配额链路回归（临时）",
+        fx["client_id"], "e2e 额度中立回归（临时）",
         hashlib.sha256(secret.encode("utf-8")).hexdigest(), secret[:8], json.dumps([]),
     )
     return fx
@@ -159,6 +157,7 @@ async def residue(conn: asyncpg.Connection, fx: Dict[str, Any]) -> Dict[str, int
         ("quota_reservation", "owner_id", uid),
         ("quota_account", "owner_id", uid),
         ("harness_client", "client_id", cid),
+        ("harness_run", "client_id", cid),
     ):
         counts[table] = int(await conn.fetchval(
             f"SELECT count(*) FROM {table} WHERE {col}=$1", val) or 0)
@@ -173,10 +172,6 @@ class Api:
         self.base = base.rstrip("/")
         self.client = client
         self.headers = {"X-Harness-Client-Id": cid, "X-Harness-Secret": secret}
-
-    async def get(self, path: str) -> Tuple[int, Dict[str, Any]]:
-        r = await self.client.get(f"{self.base}{path}", headers=self.headers)
-        return r.status_code, self._json(r)
 
     async def post(self, path: str, body: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict[str, Any]]:
         r = await self.client.post(f"{self.base}{path}", json=body or {}, headers=self.headers)
@@ -194,11 +189,16 @@ def data_of(p: Dict[str, Any]) -> Any:
     return p.get("data")
 
 
-async def held_of(rds: Optional[aioredis.Redis], uid: int, period: str) -> Optional[float]:
+def period() -> str:
+    return datetime.datetime.now().strftime("%Y-%m")
+
+
+async def quota_keys(rds: Optional[aioredis.Redis], uid: int) -> Tuple[Optional[float], Optional[float]]:
     if rds is None:
-        return None
-    val = await rds.get(f"quota_held:usr:{uid}:token:{period}")
-    return float(val or 0)
+        return None, None
+    used = await rds.get(f"quota:usr:{uid}:token:{period()}")
+    held = await rds.get(f"quota_held:usr:{uid}:token:{period()}")
+    return float(used or 0), float(held or 0)
 
 
 # ---------------------------------------------------------------- 主流程
@@ -213,7 +213,7 @@ async def main() -> int:
     fx: Dict[str, Any] = {"user_id": 0, "client_id": PREFIX + "c_" + tag, "role_id": 0,
                           "binding_id": 0, "plan_id": 0}
 
-    print(f"配额链路回归  {datetime.datetime.now().astimezone():%Y-%m-%d %H:%M:%S %z}")
+    print(f"编排额度中立回归  {datetime.datetime.now().astimezone():%Y-%m-%d %H:%M:%S %z}")
     print(f"fixture tag = {tag}\n")
 
     try:
@@ -223,12 +223,10 @@ async def main() -> int:
         async with httpx.AsyncClient(timeout=25.0) as http:
             api = Api(ORCH_BASE, http, fx["client_id"], secret)
 
-            # ---- 会话（owner=usr/uid，保证预占走用户账）
+            # ---- 会话（owner=usr/uid；即使挂了 10000 token 套餐也不应预占）
             status, body = await api.post("/v1/harness/sessions",
                                           {"client_id": fx["client_id"], "user_id": uid})
-            session = data_of(body) or {}
-            session_no = str(session.get("session_no") or "")
-            # 响应体不含 owner 字段（session_to_dict 未序列化），归属以库为准
+            session_no = str((data_of(body) or {}).get("session_no") or "")
             sess_row = await conn.fetchrow(
                 "SELECT owner_type, owner_id FROM harness_session WHERE session_no=$1", session_no)
             check("会话创建且归属 usr",
@@ -237,166 +235,122 @@ async def main() -> int:
                   f"HTTP {status} owner={sess_row['owner_type'] if sess_row else None}/"
                   f"{sess_row['owner_id'] if sess_row else None} 期望 usr/{uid}")
 
-            # ---- A. 预占
+            # ---- A. 建运行：带预估输入/输出，但不应预占
             status, body = await api.post(
                 f"/v1/harness/sessions/{session_no}/runs",
-                {"task_type": "agent", "estimated_input_tokens": RESERVE_A[0],
-                 "max_output_tokens": RESERVE_A[1]},
+                {"estimated_input_tokens": RESERVE_A[0], "max_output_tokens": RESERVE_A[1],
+                 "model": "deepseek-chat", "provider": "deepseek"},
             )
             run_a = data_of(body) or {}
             run_a_no = str(run_a.get("run_no") or "")
-            hold_a = str(run_a.get("hold_id") or "")
-            check("A 建运行触发预占 200", status == 200, f"HTTP {status} msg={body.get('msg')}")
-            check("A reserved_tokens=1500", int(run_a.get("reserved_tokens") or 0) == 1500,
+            check("A 建运行 200", status == 200 and bool(run_a_no), f"HTTP {status} run={run_a_no}")
+            check("A reserved_tokens=0", int(run_a.get("reserved_tokens") or 0) == 0,
                   f"reserved={run_a.get('reserved_tokens')}")
-            check("A hold_id 形如 orch:hr_", hold_a.startswith("orch:hr_"), hold_a or "(空)")
+            check("A hold_id 为空", not run_a.get("hold_id"), f"hold_id={run_a.get('hold_id')!r}")
+            reservations = int(await conn.fetchval(
+                "SELECT count(*) FROM quota_reservation WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
+            check("A 未落 quota_reservation", reservations == 0, f"rows={reservations}")
+            used, held = await quota_keys(rds, uid)
+            check("A Redis 无 used/held", used in (None, 0.0) and held in (None, 0.0),
+                  f"used={used} held={held}")
 
-            res_a = await conn.fetchrow(
-                "SELECT status, items, original_items, owner_type, owner_id, period "
-                "FROM quota_reservation WHERE hold_id=$1", hold_a)
-            check("A 预占行落库且 owner 正确",
-                  res_a is not None and res_a["owner_type"] == "usr" and int(res_a["owner_id"]) == uid,
-                  f"status={res_a['status'] if res_a else None}")
-            items_a = json.loads(res_a["items"]) if res_a and isinstance(res_a["items"], str) else (
-                res_a["items"] if res_a else {})
-            check("A 预占额度 1500 token", float((items_a or {}).get("token") or 0) == 1500,
-                  f"items={items_a}")
-            period = (res_a["period"] if res_a else "") or datetime.datetime.now().strftime("%Y-%m")
-
-            held_a = await held_of(rds, uid, period)
-            check("A Redis quota_held 增加 1500",
-                  held_a is None or held_a == 1500, f"held={held_a}（None=Redis 未启用，跳过）")
-            used_before = int(await conn.fetchval(
-                "SELECT count(*) FROM usage_record WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
-            check("A 预占阶段无用量流水", used_before == 0, f"rows={used_before}")
-
-            # ---- 结算
-            status, body = await api.post(f"/v1/harness/runs/{run_a_no}/start")
-            check("A 启动运行 running", status == 200 and
-                  (data_of(body) or {}).get("status") == "running", f"HTTP {status}")
+            # ---- A. 启动 + 完成（带 usage）：不写 usage_record、不动账户
+            status, _ = await api.post(f"/v1/harness/runs/{run_a_no}/start")
+            check("A 启动运行 running", status == 200, f"HTTP {status}")
             status, body = await api.post(
                 f"/v1/harness/runs/{run_a_no}/complete",
-                {"status": "succeeded", "usage": [{
-                    "node_id": "n1", "seq": 1,
-                    "tokens_in": SETTLE_A[0], "tokens_out": SETTLE_A[1],
-                }]},
+                {"status": "succeeded",
+                 "usage": [{"node_id": "assistant:1", "seq": 1,
+                            "tokens_in": SETTLE_A[0], "tokens_out": SETTLE_A[1],
+                            "source": "provider"}]},
             )
-            check("A 结束运行 succeeded", status == 200 and
-                  (data_of(body) or {}).get("status") == "succeeded", f"HTTP {status}")
+            done_a = data_of(body) or {}
+            check("A 结束运行 succeeded",
+                  status == 200 and done_a.get("status") == "succeeded",
+                  f"HTTP {status} status={done_a.get('status')}")
+            usage_rows = int(await conn.fetchval(
+                "SELECT count(*) FROM usage_record WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
+            check("A complete 不写 usage_record", usage_rows == 0, f"rows={usage_rows}")
+            orch_rows = int(await conn.fetchval(
+                "SELECT count(*) FROM usage_record WHERE idem_key LIKE $1", f"orch:{run_a_no}:%") or 0)
+            check("A 无 orch: 幂等流水", orch_rows == 0, f"rows={orch_rows}")
+            used, held = await quota_keys(rds, uid)
+            check("A 结算后 Redis 仍无 used/held", used in (None, 0.0) and held in (None, 0.0),
+                  f"used={used} held={held}")
+            accounts = int(await conn.fetchval(
+                "SELECT count(*) FROM quota_account WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
+            check("A 未创建 quota_account", accounts == 0, f"rows={accounts}")
 
-            usage = await conn.fetchrow(
-                "SELECT amount, resource_type, idem_key, source, tokens_in, tokens_out "
-                "FROM usage_record WHERE owner_type='usr' AND owner_id=$1 ORDER BY id DESC LIMIT 1", uid)
-            check("A 用量流水 amount=150 token",
-                  usage is not None and float(usage["amount"]) == 150.0
-                  and usage["resource_type"] == "token",
-                  f"amount={usage['amount'] if usage else None} type={usage['resource_type'] if usage else None}")
-            check("A 流水幂等键 orch: 前缀且来源 client",
-                  usage is not None and str(usage["idem_key"]).startswith("orch:") and usage["source"] == "client",
-                  f"idem={usage['idem_key'] if usage else None} source={usage['source'] if usage else None}")
-
-            # 结算语义：预占 1500、实际 150 → 先 partial 结算，再由 complete 释放剩余 → released
-            res_a2 = await conn.fetchrow(
-                "SELECT status, settled_at, released_at, used_items FROM quota_reservation WHERE hold_id=$1",
-                hold_a)
-            used_items = res_a2["used_items"] if res_a2 else {}
-            if isinstance(used_items, str):
-                used_items = json.loads(used_items or "{}")
-            check("A 预占行结算后释放（partial→released）",
-                  res_a2 is not None and res_a2["status"] == "released"
-                  and res_a2["released_at"] is not None,
-                  f"status={res_a2['status'] if res_a2 else None} "
-                  f"settled_at={res_a2['settled_at'] if res_a2 else None}"
-                  f"（partial 结算按现有实现不写 settled_at，只写 released_at）")
-            check("A 预占行记账 used_items=150",
-                  float((used_items or {}).get("token") or 0) == 150.0, f"used_items={used_items}")
-
-            # redis 模式下实时计数在 Redis，DB quota_account.used 由对账周期回填
-            acc = await conn.fetchrow(
-                "SELECT used FROM quota_account WHERE owner_type='usr' AND owner_id=$1", uid)
-            check("A 账户行已建立", acc is not None, f"used={acc['used'] if acc else None}")
-            if rds is not None:
-                used_redis = await rds.get(f"quota:usr:{uid}:token:{period}")
-                check("A Redis used 推进到 150", float(used_redis or 0) == 150.0,
-                      f"used={used_redis}")
-
-            held_after = await held_of(rds, uid, period)
-            check("A 结算后 held 归零", held_after is None or held_after == 0, f"held={held_after}")
-
-            # ---- B. 预占 → 取消释放
+            # ---- B. 事件里的 usage：只落 step，不记账
             status, body = await api.post(
                 f"/v1/harness/sessions/{session_no}/runs",
-                {"task_type": "agent", "estimated_input_tokens": RESERVE_B[0],
-                 "max_output_tokens": RESERVE_B[1]},
+                {"estimated_input_tokens": 200, "max_output_tokens": 100,
+                 "model": "deepseek-chat", "provider": "deepseek"},
             )
-            run_b = data_of(body) or {}
-            run_b_no = str(run_b.get("run_no") or "")
-            hold_b = str(run_b.get("hold_id") or "")
-            check("B 第二次预占 2000", status == 200 and int(run_b.get("reserved_tokens") or 0) == 2000,
-                  f"HTTP {status} reserved={run_b.get('reserved_tokens')}")
-            held_b = await held_of(rds, uid, period)
-            check("B Redis held 增至 2000", held_b is None or held_b == 2000, f"held={held_b}")
-
+            run_b_no = str((data_of(body) or {}).get("run_no") or "")
             await api.post(f"/v1/harness/runs/{run_b_no}/start")
-            status, body = await api.post(f"/v1/harness/runs/{run_b_no}/cancel?reason=e2e")
-            check("B 取消运行 cancelled", status == 200 and
-                  (data_of(body) or {}).get("status") == "cancelled", f"HTTP {status}")
+            status, body = await api.post(
+                f"/v1/harness/runs/{run_b_no}/events",
+                {"source": "jsonl", "default_source": "provider",
+                 "events": [{"type": "assistant/message", "seq": 1,
+                             "usage": {"inputTokens": 10, "outputTokens": 5}}]},
+            )
+            counters = data_of(body) or {}
+            check("B 事件采集 200 且 usage_events=1",
+                  status == 200 and int(counters.get("usage_events") or 0) == 1,
+                  f"HTTP {status} counters={counters}")
+            check("B usage_records 计数为 0", int(counters.get("usage_records") or 0) == 0,
+                  f"usage_records={counters.get('usage_records')}")
+            steps = int(await conn.fetchval(
+                "SELECT count(*) FROM harness_step WHERE run_no=$1 AND step_type='llm_call'",
+                run_b_no) or 0)
+            check("B 用量事件落为 llm_call 步骤", steps == 1, f"steps={steps}")
+            usage_rows = int(await conn.fetchval(
+                "SELECT count(*) FROM usage_record WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
+            check("B 仍无 usage_record", usage_rows == 0, f"rows={usage_rows}")
 
-            res_b = await conn.fetchrow("SELECT status, released_at FROM quota_reservation WHERE hold_id=$1", hold_b)
-            check("B 预占行转 released", res_b is not None and res_b["status"] == "released"
-                  and res_b["released_at"] is not None,
-                  f"status={res_b['status'] if res_b else None}")
-            usage_b = int(await conn.fetchval(
-                "SELECT count(*) FROM usage_record WHERE session_ref=$1", session_no) or 0)
-            check("B 取消的运行无用量流水", usage_b == 1, f"会话流水 {usage_b} 行（应为 A 的 1 行）")
-            held_b2 = await held_of(rds, uid, period)
-            check("B 释放后 held 归零", held_b2 is None or held_b2 == 0, f"held={held_b2}")
-
-            # ---- C. 超限
-            runs_before = int(await conn.fetchval(
-                "SELECT count(*) FROM harness_run WHERE client_id=$1", fx["client_id"]) or 0)
+            # ---- C. 取消运行：无预占可释放，仍幂等
             status, body = await api.post(
                 f"/v1/harness/sessions/{session_no}/runs",
-                {"task_type": "agent", "estimated_input_tokens": 10 ** 9, "max_output_tokens": 0},
+                {"estimated_input_tokens": 300, "max_output_tokens": 200},
             )
-            err = data_of(body) or {}
-            check("C 超额申请 → 429 quota_exceeded",
-                  status == 429 and err.get("error_code") == "quota_exceeded",
-                  f"HTTP {status} code={err.get('error_code')} remaining={err.get('remaining')}")
-            runs_after = int(await conn.fetchval(
-                "SELECT count(*) FROM harness_run WHERE client_id=$1", fx["client_id"]) or 0)
-            check("C 超限不落 run", runs_after == runs_before, f"{runs_before} → {runs_after}")
-            holds_total = int(await conn.fetchval(
+            run_c_no = str((data_of(body) or {}).get("run_no") or "")
+            await api.post(f"/v1/harness/runs/{run_c_no}/start")
+            status, body = await api.post(f"/v1/harness/runs/{run_c_no}/cancel")
+            cancelled = data_of(body) or {}
+            check("C 取消运行 cancelled",
+                  status == 200 and cancelled.get("status") == "cancelled",
+                  f"HTTP {status} status={cancelled.get('status')}")
+            used, held = await quota_keys(rds, uid)
+            check("C 取消后 Redis 仍无 used/held", used in (None, 0.0) and held in (None, 0.0),
+                  f"used={used} held={held}")
+            reservations = int(await conn.fetchval(
                 "SELECT count(*) FROM quota_reservation WHERE owner_type='usr' AND owner_id=$1", uid) or 0)
-            check("C 超限不落预占", holds_total == 2, f"reservation 行数={holds_total}")
+            check("C 全程无 quota_reservation", reservations == 0, f"rows={reservations}")
 
     finally:
-        if fx.get("user_id"):
+        try:
             deleted = await cleanup(conn, fx)
-            print("\n清理： " + ", ".join(f"{k}={v}" for k, v in deleted.items()))
+            print("\n清理：", ", ".join(f"{k}={v}" for k, v in deleted.items()))
             left = await residue(conn, fx)
-            check("清理后 DB 无残留", all(v == 0 for v in left.values()), f"{left}")
+            check("清理后 DB 无残留", all(v == 0 for v in left.values()), str(left))
             if rds is not None:
-                keys = []
-                async for k in rds.scan_iter(match=f"*:usr:{fx['user_id']}:*"):
-                    keys.append(k)
-                if keys:
-                    await rds.delete(*keys)
-                rest = [k async for k in rds.scan_iter(match=f"*:usr:{fx['user_id']}:*")]
-                check("清理后 Redis 无残留", not rest, f"{rest}")
-        await conn.close()
-        if rds is not None:
-            await rds.aclose()
+                keys = await rds.keys(f"*:usr:{fx['user_id']}:*")
+                check("清理后 Redis 无残留", not keys, str(keys))
+        finally:
+            if rds is not None:
+                await rds.aclose()
+            await conn.close()
 
-    width = max(len(n) for n, _, _ in results) + 2
-    print("\n" + "-" * (width + 12 + 36))
-    for name, state, detail in results:
-        print(f"{name:<{width}}{state:<6}{detail}")
-    print("-" * (width + 12 + 36))
-    passed = sum(1 for _, s, _ in results if s == "PASS")
+    passed = sum(1 for _, st, _ in results if st == "PASS")
     failed = len(results) - passed
-    print(f"结论 {'PASS' if failed == 0 else 'FAIL'}  PASS={passed} FAIL={failed}  用时 {time.time() - started:.1f}s")
-    return 0 if failed == 0 else 1
+    print("\n" + "-" * 83)
+    for name, st, detail in results:
+        print(f"{name:<34} {st:<5} {detail}")
+    print("-" * 83)
+    print(f"结论 {'PASS' if not failed else 'FAIL'}  PASS={passed} FAIL={failed}  "
+          f"用时 {time.time() - started:.1f}s")
+    return 0 if not failed else 1
 
 
 if __name__ == "__main__":

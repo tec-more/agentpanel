@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -60,7 +61,12 @@ def _reject_gateway_virtual_key(token: str) -> None:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
-    验证密码
+    验证密码。
+
+    历史数据里可能存在非 bcrypt 的旧值（明文、被截断或损坏的哈希）。passlib 的
+    CryptContext.verify 遇到无法识别的哈希会抛 UnknownHashError，若直接冒泡到
+    /v1/auth/login 会变成 500。登录语义上「无法识别的凭据」等价于校验失败，
+    这里统一收敛为 False，让接口返回正常的 401，且日志不记录任何哈希内容。
 
     Args:
         plain_password: 明文密码
@@ -70,7 +76,15 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         bool: 密码是否匹配
     """
     truncated_password = plain_password[:72]
-    return pwd_context.verify(truncated_password, hashed_password)
+    if not hashed_password or not isinstance(hashed_password, str):
+        return False
+    try:
+        return pwd_context.verify(truncated_password, hashed_password)
+    except (UnknownHashError, ValueError, TypeError) as exc:
+        logging.getLogger(__name__).warning(
+            "密码哈希无法识别，按校验失败处理（type=%s）", type(exc).__name__
+        )
+        return False
 
 
 def get_password_hash(password: str) -> str:

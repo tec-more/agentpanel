@@ -148,6 +148,11 @@ class PluginManager:
         self._manifests: Dict[str, dict] = {}  # 插件 manifest 信息缓存
         self._app: Optional[FastAPI] = None
         self._plugins_dir = settings.base_path / "base" / "plugins"
+        # 启动期依赖 DB 的步骤失败时登记，由 startup() 做有界补偿重试。
+        # 这些步骤绝不阻断「纯内存」的路由装配（见 enable_plugin 说明）。
+        self._degraded_hooks: set[str] = set()
+        self._degraded_menus: set[str] = set()
+        self._degraded_permissions: set[str] = set()
         self._initialized = True
 
     @property
@@ -659,16 +664,28 @@ class PluginManager:
                     log.error(f"插件 {name} 依赖的插件 {dep} 未启用")
                     return False
 
-            # 调用启用钩子
-            success = await plugin.on_enable(self._app)
-            if not success:
-                return False
+            # 依赖 DB 的步骤与「纯内存」路由装配解耦。
+            # 事故背景：启动期 DB 连接抖动会让 mail/crm 的 on_enable 抛异常，旧实现
+            # 整段 abort，路由永久缺失，进程存活期间所有 /v1/{plugin}/* 一律 404。
+            # 现在钩子异常只登记降级，路由照常注册，startup() 再做有界补偿重试。
+            try:
+                success = await plugin.on_enable(self._app)
+                if not success:
+                    return False  # 插件显式拒绝启用，保持原语义
+            except Exception as e:
+                # on_enable 抛异常时 PluginInstance.enabled 不会被置位，手工对齐，
+                # 否则后续 disable/依赖判定会认为插件未启用。
+                plugin.enabled = True
+                self._degraded_hooks.add(name)
+                log.warning(
+                    f"插件 {name} 启用钩子失败（不阻断路由装配，startup 补偿）: {e}"
+                )
 
-            # 处理菜单配置
-            await self._process_plugin_menus(name, manifest)
-
-            # 处理权限配置
-            await self._process_plugin_permissions(name, manifest)
+            # 处理菜单/权限配置（方法内部已捕获异常，返回 False 表示降级）
+            if not await self._process_plugin_menus(name, manifest):
+                self._degraded_menus.add(name)
+            if not await self._process_plugin_permissions(name, manifest):
+                self._degraded_permissions.add(name)
 
             # 注册 manifest 声明的业务路由与内部路由（唯一装配入口）。
             # AC-PLR-03-1：注入请求期门控依赖，禁用后 app.routes 虽残留但请求立即 404，
@@ -691,7 +708,13 @@ class PluginManager:
             # 启动期调度器未就绪会静默跳过，由 lifespan 的 start_all 统一装载。
             await self._sync_plugin_jobs(name, active=True)
 
-            log.info(f"插件已启用: {manifest.get('display_name', name)}")
+            degraded = name in (
+                self._degraded_hooks | self._degraded_menus | self._degraded_permissions
+            )
+            log.info(
+                f"插件已启用: {manifest.get('display_name', name)}"
+                + ("（存在降级步骤，startup 将补偿）" if degraded else "")
+            )
             return True
 
         except Exception as e:
@@ -806,6 +829,7 @@ class PluginManager:
             self.update_plugin_status(name, is_enabled=False)
             # 实例已停用但调度器可能仍有残留任务，一并清理
             await self._sync_plugin_jobs(name, active=False)
+            self._clear_degraded(name)
             return True
 
         try:
@@ -833,6 +857,7 @@ class PluginManager:
 
             self.update_plugin_status(name, is_enabled=False)
 
+            self._clear_degraded(name)
             log.info(f"插件已禁用: {manifest.get('display_name', name) if manifest else name}")
             return True
 
@@ -1030,11 +1055,71 @@ class PluginManager:
         
         log.info("插件加载完成")
 
+    def _clear_degraded(self, name: str) -> None:
+        self._degraded_hooks.discard(name)
+        self._degraded_menus.discard(name)
+        self._degraded_permissions.discard(name)
+
+    async def _reconcile_degraded(self) -> None:
+        """启动补偿：把启动期 DB 抖动导致的降级步骤重试补齐。
+
+        DB 依赖步骤（启用钩子 / 菜单 / 权限）在 enable_plugin 中已不再阻断路由装配，
+        但菜单与权限若未写入会影响页面可见性。此处在 lifespan 阶段做有界重试
+        （3 轮、间隔 2s），全部成功则清空降级登记；仍失败仅告警，不影响 API 可用性。
+        """
+        import asyncio
+
+        pending = (
+            self._degraded_hooks | self._degraded_menus | self._degraded_permissions
+        )
+        if not pending:
+            return
+        log.warning(f"插件装配降级补偿开始: {sorted(pending)}")
+
+        for attempt in range(1, 4):
+            for name in sorted(pending):
+                plugin = self._plugins.get(name)
+                manifest = self.get_manifest(name)
+                if not plugin or not plugin.enabled or not manifest:
+                    self._clear_degraded(name)
+                    continue
+                if name in self._degraded_hooks:
+                    try:
+                        if await plugin.on_enable(self._app) is not False:
+                            self._degraded_hooks.discard(name)
+                    except Exception as e:
+                        log.warning(f"补偿 {name} 启用钩子失败(第{attempt}轮): {e}")
+                if name in self._degraded_menus:
+                    try:
+                        if await self._process_plugin_menus(name, manifest):
+                            self._degraded_menus.discard(name)
+                    except Exception as e:
+                        log.warning(f"补偿 {name} 菜单失败(第{attempt}轮): {e}")
+                if name in self._degraded_permissions:
+                    try:
+                        if await self._process_plugin_permissions(name, manifest):
+                            self._degraded_permissions.discard(name)
+                    except Exception as e:
+                        log.warning(f"补偿 {name} 权限失败(第{attempt}轮): {e}")
+
+            pending = (
+                self._degraded_hooks | self._degraded_menus | self._degraded_permissions
+            )
+            if not pending or attempt == 3:
+                break
+            await asyncio.sleep(2)
+
+        if pending:
+            log.error(f"插件装配降级补偿未完全恢复（不影响路由）: {sorted(pending)}")
+        else:
+            log.info("插件装配降级补偿完成")
+
     async def startup(self) -> None:
         """应用启动时调用"""
         for plugin in self._plugins.values():
             if plugin.enabled:
                 await plugin.on_startup()
+        await self._reconcile_degraded()
 
     async def shutdown(self) -> None:
         """应用关闭时调用"""

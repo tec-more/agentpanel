@@ -8,8 +8,10 @@
 #
 # 基础镜像按 digest 固定（本地构建产物，非 registry 拉取）：
 #   tag    : aipanel-app:latest
-#   digest : sha256:aaac04f3cf85eeeef3b52fa1a7ee0c496135a78eb47cf5790bafe4f044b11dc1
-#   Created: 2026-11-05T08:58:16.157428854Z
+#   digest : sha256:6871145edd9003bfbdd6d9e3fa043441d5961e32dc61396488dd9e794ced8ea4
+#   Created: 2026-11-12T14:45:16Z
+#   （2026-11-12 更新：aipanel-app:latest 由 deploy/app/Dockerfile 重建，旧的
+#    sha256:aaac04f3... 已从本地消失，继续按旧 digest 构建会直接报 No such image。）
 #   docker image inspect aipanel-app:latest --format '{{.Id}} {{.Created}} {{json .RepoDigests}}'
 # 该镜像包含 L2 完整运行时依赖（langchain/langgraph/llama-index/qdrant 等，约 10.9GB）。
 # 选型理由：另写 Dockerfile 从 python:3.12-slim 按 lock 重装依赖，成本高且体积/构建时长
@@ -42,7 +44,7 @@ COPY web/ ./
 RUN npm run build
 
 # ===== 阶段2：L2 运行时 =====
-FROM aipanel-app@sha256:aaac04f3cf85eeeef3b52fa1a7ee0c496135a78eb47cf5790bafe4f044b11dc1
+FROM aipanel-app@sha256:6871145edd9003bfbdd6d9e3fa043441d5961e32dc61396488dd9e794ced8ea4
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \

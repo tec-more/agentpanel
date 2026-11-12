@@ -38,10 +38,10 @@ export function createRequestWithTimeout(timeout) {
       }
     },
     (error) => {
-      console.error('[Request Error]', error)
+      if (!error.config?.silent) console.error('[Request Error]', error)
       if (error.response) {
         const { status, data } = error.response
-        if (status === 401) {
+        if (status === 401 && !(error.config?.url || '').includes('/v1/auth/login')) {
           localStorage.removeItem('token')
           localStorage.removeItem('userInfo')
           ElMessage.error('登录已过期，请重新登录')
@@ -106,24 +106,40 @@ request.interceptors.response.use(
     }
   },
   (error) => {
-    console.error('[Request Error]', error)
+    const silent = !!error.config?.silent
+    const status = error.response?.status
+    const isLoginRequest = (error.config?.url || '').includes('/v1/auth/login')
+    if (!silent) console.error('[Request Error]', error)
 
     if (error.response) {
-      const { status, data } = error.response
+      const { data } = error.response
 
       // 打印详细错误信息
-      console.error('[Response Error]', {
-        status,
-        data,
-        message: data?.msg || data?.message || error.message
-      })
+      if (!silent) {
+        console.error('[Response Error]', {
+          status,
+          data,
+          message: data?.msg || data?.message || error.message
+        })
+      }
+
+      // 静默请求（如消息铃铛轮询）由调用方自行处理：不打日志、不弹全局提示，
+      // 但 401 仍要走统一的登录态清理，避免过期 token 一直挂在本地。
+      if (silent && status !== 401) {
+        return Promise.reject(error)
+      }
 
       if (status === 401) {
-        // 清除本地存储并跳转登录页
-        localStorage.removeItem('token')
-        localStorage.removeItem('userInfo')
-        ElMessage.error('登录已过期，请重新登录')
-        router.push('/panel/login')
+        if (isLoginRequest) {
+          // 登录接口 401 = 用户名或密码错误，是登录表单的正常业务结果，
+          // 不能当作「登录已过期」清 token 并跳转登录页。
+          if (!silent) ElMessage.error(data?.msg || data?.message || '用户名或密码错误')
+        } else {
+          localStorage.removeItem('token')
+          localStorage.removeItem('userInfo')
+          if (!silent) ElMessage.error('登录已过期，请重新登录')
+          router.push('/panel/login')
+        }
       } else if (status === 403) {
         ElMessage.error('没有权限访问')
       } else if (status === 503) {

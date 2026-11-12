@@ -2,12 +2,13 @@ import request from '@/utils/request'
 
 // ==================== 通知（收件箱） ====================
 
-export const getInbox = (params) => {
-  return request.get('/v1/mail/notifications/inbox', { params })
+export const getInbox = (params, config = {}) => {
+  return request.get('/v1/mail/notifications/inbox', { params, ...config })
 }
 
-export const getUnreadCount = () => {
-  return request.get('/v1/mail/notifications/unread-count')
+// 铃铛轮询使用静默请求：插件未就绪/接口 404 时由组件自行处理，不污染控制台
+export const getUnreadCount = (config = {}) => {
+  return request.get('/v1/mail/notifications/unread-count', { silent: true, ...config })
 }
 
 export const markRead = (notification_ids) => {

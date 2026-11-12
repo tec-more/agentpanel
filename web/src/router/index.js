@@ -130,12 +130,14 @@ router.beforeEach(async (to, from, next) => {
   }
 
   // ---- 动态路由加载（必须在 public 检查之前，因为 NotFound 也是 public） ----
+  // 未登录时不请求 /v1/menus/user-menus：该接口需要鉴权，登录页/落地页会在
+  // 控制台刷出 401 并误触「登录已过期」跳转。菜单在登录成功后的首次导航再加载。
   const menuStore = useMenuStore()
   const resolved = router.resolve(to)
   // 只有非公开路由才需要加载动态路由，但 NotFound 除外（它需要有机会匹配动态路由）
   const isNotFound = resolved.name === 'NotFound'
 
-  if (isNotFound || !menuStore.routesReady) {
+  if (isLoggedIn && (isNotFound || !menuStore.routesReady)) {
     // 防止动态路由加载失败时的无限重定向循环
     if (menuStore.routeRetryCount >= 3) {
       console.warn('[路由守卫] 已达最大重试次数(3次)，停止重定向，放行到当前路由')

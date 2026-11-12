@@ -60,6 +60,9 @@ const unreadCount = ref(0)
 const recentList = ref([])
 const loading = ref(false)
 const popoverVisible = ref(false)
+// 接口 404 说明插件路由未装配（例如启动期 DB 抖动导致启用中断），
+// 此时停止轮询与 WS 重连，避免每 30s 刷一条 404。
+const mailUnavailable = ref(false)
 
 let ws = null
 let shouldReconnect = false
@@ -95,25 +98,36 @@ const stopPolling = () => {
   }
 }
 
+const markUnavailable = () => {
+  mailUnavailable.value = true
+  stopPolling()
+}
+
 const fetchUnread = async () => {
+  if (mailUnavailable.value) return
   try {
     const res = await getUnreadCount()
     unreadCount.value = res.data?.unread_count || 0
   } catch (e) {
-    // 401 表示登录态已失效，停止轮询与 WS 重连，避免持续打无效请求
-    if (e?.response?.status === 401) {
+    const status = e?.response?.status
+    // 401 表示登录态已失效；404 表示插件路由不可用，两者都停止无效请求
+    if (status === 401) {
       stopPolling()
+    } else if (status === 404) {
+      markUnavailable()
     }
     // 其他错误静默处理
   }
 }
 
 const fetchRecent = async () => {
+  if (mailUnavailable.value) return
   loading.value = true
   try {
-    const res = await getInbox({ page: 1, page_size: 5, is_read: false })
+    const res = await getInbox({ page: 1, page_size: 5, is_read: false }, { silent: true })
     recentList.value = res.data?.items || []
   } catch (e) {
+    if (e?.response?.status === 404) markUnavailable()
     // 静默失败
   } finally {
     loading.value = false
@@ -122,7 +136,7 @@ const fetchRecent = async () => {
 
 const connectWs = () => {
   const token = localStorage.getItem('token')
-  if (!token) return
+  if (!token || mailUnavailable.value) return
 
   const url = `${wsUrl('/v1/mail/ws')}?token=${encodeURIComponent(token)}`
 
@@ -162,7 +176,7 @@ const connectWs = () => {
 
   ws.onclose = () => {
     ws = null
-    if (shouldReconnect) {
+    if (shouldReconnect && !mailUnavailable.value) {
       setTimeout(connectWs, 3000)
     }
   }
@@ -203,6 +217,7 @@ const goInbox = () => {
 }
 
 const onRefreshEvent = () => {
+  if (mailUnavailable.value) return
   fetchUnread()
   fetchRecent()
 }

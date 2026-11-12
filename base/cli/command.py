@@ -67,31 +67,40 @@ def create_plugin(
         "is_enabled": False,
     }
 
+    # 装配契约字段：路径前缀与订阅声明统一放在 manifest，代码不重复声明
+    manifest["events"] = {"subscribe": []}
+    manifest["menus"] = []
+    manifest["permissions"] = []
+
     # 添加可选字段
     if with_api:
         api_dir = plugin_dir / "api" / "v1"
         api_dir.mkdir(parents=True, exist_ok=True)
         (api_dir / "__init__.py").write_text("", encoding="utf-8")
 
-        # 创建示例路由文件
-        example_route = api_dir / f"{name}.py"
+        # 示例路由文件：文件名与导出变量必须满足 {stem}_router 规则；
+        # 前缀只由 manifest.route_prefix 声明，浏览器侧 /api 由包装器剥离。
+        example_route = api_dir / f"{name}_router.py"
         example_route.write_text(
             f'''"""
 {name} API 路由
+
+最终路径 = manifest.route_prefix + 本文件内路径
+浏览器请求 = /api + 上述路径（/api 由 base/app_wrapper.py 统一剥离）
 """
 from fastapi import APIRouter
 from base.common.response import SuccessResponse
 
-router = APIRouter(prefix="/api/v1/{name}", tags=["{display_name}"])
+{name}_router = APIRouter(tags=["{display_name}"])
 
 
-@router.get("/")
+@{name}_router.get("/")
 async def index():
     """{display_name} 首页"""
     return SuccessResponse(data={{"message": "Welcome to {display_name} plugin"}})
 
 
-@router.get("/health")
+@{name}_router.get("/health")
 async def health():
     """健康检查"""
     return SuccessResponse(data={{"status": "ok"}})
@@ -100,7 +109,8 @@ async def health():
         )
         typer.echo(f"  [*] Created {example_route.relative_to(settings.base_path)}")
 
-        manifest["routes"] = [f"api/v1/{name}"]
+        manifest["route_prefix"] = f"/v1/{name}"
+        manifest["routes"] = ["api/v1"]
 
     if with_models:
         models_dir = plugin_dir / "models"

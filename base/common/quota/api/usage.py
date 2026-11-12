@@ -16,6 +16,7 @@ from base.common.permissions import require_any_permission
 from base.common.response import success_response
 from base.common.quota.models.quota import UsageRecord
 from base.common.quota.services.org_scope import resolve_user_org_ids
+from base.common.plugin_symbol import resolve_plugin_symbol
 
 usage_record_router = APIRouter(prefix="/v1/usage-records", tags=["计量流水"])
 
@@ -54,8 +55,8 @@ async def list_usage_records(
             )
         query = query.filter(owner_type="org", owner_id__in=list(scope))
         if member_id is not None:
-            from base.plugins.customer.models.customer_organization import (
-                CustomerOrganizationMember,
+            CustomerOrganizationMember = resolve_plugin_symbol(
+                "base.plugins.customer.models.customer_organization.CustomerOrganizationMember"
             )
 
             member_ok = await CustomerOrganizationMember.filter(

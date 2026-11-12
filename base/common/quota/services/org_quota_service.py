@@ -20,6 +20,7 @@ from loguru import logger
 from base.common.quota.models.binding import QuotaPlanBinding
 from base.common.quota.models.quota import QuotaAccount, QuotaPlan, UsageRecord
 from base.common.quota.models.reservation import QuotaReservation
+from base.common.plugin_symbol import resolve_plugin_symbol
 from packages.common.quota.services.plan_service import PlanService
 from base.common.quota.services.quota_service import QuotaService, month_bounds
 
@@ -37,11 +38,13 @@ class OrgQuotaError(Exception):
 
 
 def _customer_models():
-    """惰性导入 customer 插件模型；插件未启用时返回 (None, None)。"""
+    """惰性解析 customer 插件模型；插件未启用时返回 (None, None)。"""
     try:
-        from base.plugins.customer.models.customer_organization import (
-            CustomerOrganization,
-            CustomerOrganizationMember,
+        CustomerOrganization = resolve_plugin_symbol(
+            "base.plugins.customer.models.customer_organization.CustomerOrganization"
+        )
+        CustomerOrganizationMember = resolve_plugin_symbol(
+            "base.plugins.customer.models.customer_organization.CustomerOrganizationMember"
         )
         return CustomerOrganization, CustomerOrganizationMember
     except Exception as e:  # pragma: no cover - 插件禁用场景

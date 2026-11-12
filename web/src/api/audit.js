@@ -125,10 +125,6 @@ export function getConfigDetail(id) {
 
 // ==================== 菜单同步 ====================
 
-export function syncAuditMenu() {
-  return request.post('/v1/menus/sync-audit-menu')
-}
-
 export function debugGetAllMenus() {
   return request.get('/v1/menus/debug/all-menus')
 }

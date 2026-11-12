@@ -51,6 +51,7 @@ import { ElMessage, ElNotification } from 'element-plus'
 import { Bell, Star } from '@element-plus/icons-vue'
 import { getInbox, getUnreadCount, markRead } from '@/api/mail'
 import { useSystemStore } from '@/stores/system'
+import { wsUrl } from '@/utils/apiBase'
 
 const router = useRouter()
 const system = useSystemStore()
@@ -123,8 +124,7 @@ const connectWs = () => {
   const token = localStorage.getItem('token')
   if (!token) return
 
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  const url = `${protocol}://${location.host}/api/v1/mail/ws?token=${token}`
+  const url = `${wsUrl('/v1/mail/ws')}?token=${encodeURIComponent(token)}`
 
   try {
     ws = new WebSocket(url)

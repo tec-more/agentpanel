@@ -266,7 +266,9 @@ export const useMenuStore = defineStore('menu', {
         if (menu.component) {
           const route = {
             path: routePath,
-            name: menu.name,
+            // 用路径生成稳定标识：中文 menu.name 与静态路由的英文 name 不同，
+            // 旧写法会让 router.hasRoute() 判重失效，导致同一 path 重复注册。
+            name: `menu_${routePath.replace(/\//g, '_') || 'root'}`,
             meta: {
               title: menu.name,
               icon: menu.icon,

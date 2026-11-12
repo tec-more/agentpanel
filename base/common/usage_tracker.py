@@ -3,11 +3,14 @@
 用于记录客户对 AI 服务和 API 的调用情况
 """
 from decimal import Decimal
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 import uuid
 
-from base.plugins.llm.models.usage import LLMUsageRecord
+from base.common.plugin_symbol import resolve_plugin_symbol
+
+if TYPE_CHECKING:  # 仅用于类型标注，运行期不触发插件导入
+    from base.plugins.llm.models.usage import LLMUsageRecord
 
 
 class UsageTracker:
@@ -22,7 +25,7 @@ class UsageTracker:
         details: Dict[str, Any],
         characters_count: int = 0,
         session_id: Optional[str] = None
-    ) -> LLMUsageRecord:
+    ) -> "LLMUsageRecord":
         """
         记录服务使用情况
 
@@ -52,6 +55,7 @@ class UsageTracker:
         record_type = record_type_map.get(service_type, 'conversation')
 
         # 创建使用记录
+        LLMUsageRecord = resolve_plugin_symbol("base.plugins.llm.models.usage.LLMUsageRecord")
         log = await LLMUsageRecord.create(
             record_id=session_id,
             customer_id=customer_id,
@@ -77,7 +81,7 @@ class UsageTracker:
         completion_tokens: int,
         duration_seconds: int,
         details: Optional[Dict[str, Any]] = None
-    ) -> LLMUsageRecord:
+    ) -> "LLMUsageRecord":
         """
         记录 OpenAI API 使用（便捷方法）
 

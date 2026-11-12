@@ -2,7 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
 
-router = APIRouter(prefix="/api/v1/pay/alipay", tags=["Alipay"])
+alipay_router = APIRouter(tags=["Alipay"])
+
+# 路径前缀由 manifest.route_prefix = /v1/pay/alipay 统一声明；
+# 浏览器侧 /api 由 base/app_wrapper.py 剥离，插件内不得重复声明。
 
 # 模拟支付宝支付服务
 class AlipayService:
@@ -50,7 +53,7 @@ class AlipayService:
             }
         }
 
-@router.post("/orders", response_model=Dict[str, Any])
+@alipay_router.post("/orders", response_model=Dict[str, Any])
 async def create_alipay_order(order_data: Dict[str, Any]):
     """创建支付宝支付订单"""
     try:
@@ -60,7 +63,7 @@ async def create_alipay_order(order_data: Dict[str, Any]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/orders/{order_id}", response_model=Dict[str, Any])
+@alipay_router.get("/orders/{order_id}", response_model=Dict[str, Any])
 async def query_alipay_order(order_id: str):
     """查询支付宝支付订单"""
     try:
@@ -70,7 +73,7 @@ async def query_alipay_order(order_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/refunds", response_model=Dict[str, Any])
+@alipay_router.post("/refunds", response_model=Dict[str, Any])
 async def refund_alipay_order(refund_data: Dict[str, Any]):
     """支付宝支付退款"""
     try:
@@ -80,7 +83,7 @@ async def refund_alipay_order(refund_data: Dict[str, Any]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/notify", response_model=Dict[str, Any])
+@alipay_router.post("/notify", response_model=Dict[str, Any])
 async def alipay_notify(notify_data: Dict[str, Any]):
     """支付宝支付回调"""
     try:

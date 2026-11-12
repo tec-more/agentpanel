@@ -99,9 +99,16 @@ async def delete_menu(
     return SuccessResponse(msg="删除成功")
 
 
-@router.post("/sync-audit-menu", summary="同步审计模块菜单")
-async def sync_audit_menu(current_user_id: int = Depends(get_current_user_id)):
-    """手动同步审计模块菜单(管理员功能)"""
+@router.post("/sync-plugin/{plugin_name}", summary="手动同步插件菜单")
+async def sync_plugin_menu(
+    plugin_name: str,
+    current_user_id: int = Depends(get_current_user_id),
+):
+    """手动同步指定插件的菜单(管理员功能)。
+
+    正常流程在插件启用时由 plugin_manager 自动完成菜单注入；此接口用于
+    菜单记录与 manifest 不一致时的恢复，不再为某个插件单独硬编码端点。
+    """
     current_user = await UserService.get_by_id(current_user_id)
     if not current_user or not current_user.is_superuser:
         return ErrorResponse(msg="无权限执行此操作", status_code=status.HTTP_403_FORBIDDEN)
@@ -109,15 +116,15 @@ async def sync_audit_menu(current_user_id: int = Depends(get_current_user_id)):
     try:
         from base.common.plugin_manager import get_plugin_manager
         manager = get_plugin_manager()
-        manifest = manager.get_manifest("audit")
+        manifest = manager.get_manifest(plugin_name)
         if not manifest:
-            return ErrorResponse(msg="审计插件manifest不存在", status_code=status.HTTP_404_NOT_FOUND)
+            return ErrorResponse(msg=f"插件 {plugin_name} manifest 不存在", status_code=status.HTTP_404_NOT_FOUND)
 
-        result = await manager._process_plugin_menus("audit", manifest)
+        result = await manager._process_plugin_menus(plugin_name, manifest)
         if result:
-            return SuccessResponse(msg="审计模块菜单同步成功")
+            return SuccessResponse(msg=f"插件 {plugin_name} 菜单同步成功")
         else:
-            return ErrorResponse(msg="审计模块菜单同步失败", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return ErrorResponse(msg=f"插件 {plugin_name} 菜单同步失败", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
         import traceback
         return ErrorResponse(msg=f"同步失败: {str(e)}\n{traceback.format_exc()}", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)

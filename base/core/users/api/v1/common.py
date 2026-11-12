@@ -6,25 +6,12 @@ router = APIRouter(prefix="/v1/common", tags=["公共配置"])
 
 
 def _get_enabled_plugins() -> list[str]:
-    """读取各插件 manifest 的 is_enabled 状态，返回启用插件名列表"""
-    import json
-    from pathlib import Path
+    """返回「已安装且已启用」插件名列表。
 
-    plugins_dir = settings.base_path / "base" / "plugins"
-    enabled: list[str] = []
-    if not plugins_dir.exists():
-        return enabled
-    for plugin_dir in plugins_dir.iterdir():
-        manifest = plugin_dir / "manifest.json"
-        if not plugin_dir.is_dir() or not manifest.exists():
-            continue
-        try:
-            m = json.loads(manifest.read_text(encoding="utf-8"))
-            if m.get("is_enabled"):
-                enabled.append(plugin_dir.name)
-        except Exception:
-            continue
-    return enabled
+    口径统一到 base/common/plugin_gate.py（双真），不再只判 is_enabled。
+    """
+    from base.common.plugin_gate import active_plugin_names
+    return active_plugin_names()
 
 
 @router.get("/system-config", summary="获取系统公共配置")

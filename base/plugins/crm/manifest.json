@@ -252,5 +252,16 @@
     "config": {
         "auto_recycle_days": 30,
         "stale_warning_days": 14
+    },
+    "events": {
+        "register_ref": "base.plugins.crm:register_crm_event_handlers",
+        "unregister_ref": "base.plugins.crm:unregister_crm_event_handlers",
+        "subscribe": [
+            {
+                "event_name": "sales.paid",
+                "handler_ref": "base.plugins.crm:register_crm_event_handlers",
+                "description": "CRM：订单支付触发跟进任务"
+            }
+        ]
     }
 }

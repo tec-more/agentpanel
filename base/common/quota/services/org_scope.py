@@ -13,6 +13,7 @@ from fastapi import HTTPException, status
 from loguru import logger
 
 from base.core.users.services.user_service import UserService
+from base.common.plugin_symbol import resolve_plugin_symbol
 
 
 def _forbidden(message: str) -> HTTPException:
@@ -20,11 +21,12 @@ def _forbidden(message: str) -> HTTPException:
 
 
 def _customer_models():
-    from base.plugins.customer.models.customer_organization import (
-        CustomerOrganization,
-        CustomerOrganizationMember,
+    CustomerOrganization = resolve_plugin_symbol(
+        "base.plugins.customer.models.customer_organization.CustomerOrganization"
     )
-
+    CustomerOrganizationMember = resolve_plugin_symbol(
+        "base.plugins.customer.models.customer_organization.CustomerOrganizationMember"
+    )
     return CustomerOrganization, CustomerOrganizationMember
 
 
@@ -35,7 +37,9 @@ async def resolve_user_org_ids(user_id: int) -> Optional[Set[int]]:
         return None
 
     try:
-        from base.plugins.customer.models.identity_link import IdentityLink
+        IdentityLink = resolve_plugin_symbol(
+            "base.plugins.customer.models.identity_link.IdentityLink"
+        )
 
         CustomerOrganization, CustomerOrganizationMember = _customer_models()
     except Exception as exc:  # pragma: no cover - customer 插件未启用

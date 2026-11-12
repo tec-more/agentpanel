@@ -514,5 +514,51 @@
                 }
             ]
         }
-    ]
+    ],
+    "events": {
+        "register_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+        "unregister_ref": "base.plugins.finance.services.finance_event_handler:unregister_finance_event_handlers",
+        "subscribe": [
+            {
+                "event_name": "purchase.confirmed",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "purchase.received",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "purchase.payment",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "sales.paid",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "sales.receipt",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "work_order.completed",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "material.picked",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            },
+            {
+                "event_name": "production.receipt",
+                "handler_ref": "base.plugins.finance.services.finance_event_handler:register_finance_event_handlers",
+                "description": "财务：业务单据事件生成凭证"
+            }
+        ]
+    }
 }

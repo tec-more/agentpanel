@@ -12,19 +12,13 @@ from base.common.log import log
 
 
 def _is_plugin_enabled(plugin_name: str) -> bool:
-    """检查插件是否已安装且激活"""
-    plugins_dir = Path(__file__).parent.parent / "plugins"
-    manifest_file = plugins_dir / plugin_name / "manifest.json"
+    """兼容入口：委托 base/common/plugin_gate.py 的唯一门控判定。
 
-    if not manifest_file.exists():
-        return False
-
-    try:
-        with open(manifest_file, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-            return manifest.get("is_installed", False) and manifest.get("is_enabled", False)
-    except Exception:
-        return False
+    注意：auto_discover_routers 只扫 base.core，插件路由由 plugin_manager
+    在启动时按 manifest 装配；此处保留函数仅为兼容旧调用，不再是第二套判定。
+    """
+    from base.common.plugin_gate import is_plugin_active
+    return is_plugin_active(plugin_name)
 
 
 def auto_discover_routers(
@@ -154,9 +148,33 @@ def _discover_in_subpackage(app: FastAPI, package_name: str, router_var: str, ro
     except ImportError:
         return
 
+def _register_common_layer_routers(app: FastAPI) -> None:
+    """注册 base/common 公共层路由（事件中心 + M9 配额）。
+
+    W2-1 整改：原先散落在 base/start.py::init_app 的手动注册 + try/except ImportError
+    兜底集中到这里。base/common 是平台底座（非插件实现），import 直接失败即暴露问题，
+    不做静默降级。
+    """
+    from base.common.events.api import events_api_router
+    from base.common.quota.api.admin import quota_plan_admin_router
+    from base.common.quota.api.usage import usage_record_router
+    from base.common.quota.api.board import quota_board_router
+    from base.common.quota.api.organization import org_quota_admin_router
+
+    app.include_router(events_api_router)
+    app.include_router(quota_plan_admin_router)
+    app.include_router(usage_record_router)
+    app.include_router(quota_board_router)
+    app.include_router(org_quota_admin_router)
+    print("[公共层路由] 事件系统 + 配额路由已注册: /v1/events/, /v1/quota-plans, /v1/usage-records, /v1/quota, /v1/quota/organizations")
+
+
 def register_routers(app: FastAPI):
     # 自动注册 core 目录下的所有路由
     auto_discover_routers(app, base_package="base.core")
+
+    # 注册 base/common 公共层路由（事件中心 / M9 配额，非插件实现）
+    _register_common_layer_routers(app)
 
     # 插件路由由 plugin_manager 在 startup 时注册，不需要在这里注册
     # 这样避免了重复注册导致的 Duplicate Operation ID 警告

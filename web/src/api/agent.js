@@ -1,4 +1,5 @@
 import request, { createRequestWithTimeout } from '@/utils/request'
+import { apiUrl } from '@/utils/apiBase'
 
 const requestWithLongTimeout = createRequestWithTimeout(300000)
 
@@ -244,7 +245,7 @@ export function executeDialogFlowAuto(id, params, callbacks = {}) {
   queueMicrotask(async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/v1/agent/dialog-flows/${id}/execute`, {
+      const response = await fetch(apiUrl(`/v1/agent/dialog-flows/${id}/execute`), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

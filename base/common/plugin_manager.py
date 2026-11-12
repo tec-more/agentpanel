@@ -11,27 +11,30 @@
 - schemas/          可选，Pydantic Schema（在 manifest.json 的 schemas 中声明，用于文档）
 - services/         可选，业务逻辑
 
-manifest.json 示例：
+manifest.json 示例（路径契约见 base/common/plugin_contract.py）：
 {
     "name": "hello_world",
     "display_name": "Hello World",
     "version": "1.0.0",
-    "route_prefix": "/api/v1/customer",    // 可选，所有路由的统一前缀
-    "routes": ["api/v1"],                  // 路由目录路径（递归加载该目录下的所有路由文件）
-    "models": ["greeting"],                // 模型模块名
-    "schemas": ["greeting"],               // Schema模块名（仅用于文档，不自动加载）
+    "route_prefix": "/v1/hello_world",     // 必填，应用内部前缀，必须以 /v1/ 开头
+    "routes": ["api/v1"],                  // 路由目录（递归加载该目录下所有 .py 文件）
+    "menus": [],
+    "permissions": [],
+    "models": ["greeting"],
+    "schemas": ["greeting"],
     "is_installed": false,
     "is_enabled": false
 }
 
 路由加载规则：
-- routes 指定路由目录（如 "api/v1"）
-- route_prefix（可选）指定所有路由的统一前缀（如 "/api/v1/customer"）
-- 插件管理器会递归遍历该目录下的所有 .py 文件（排除 __init__.py）
-- 每个路由文件使用 {文件名}_router 的命名方式导出路由
-- 例如: auth.py 导出 auth_router, customer.py 导出 customer_router
-- 最终路径 = route_prefix + 路由文件中的路径
-  例如: "/api/v1/customer" + "/auth" + "/send-code" = "/api/v1/customer/auth/send-code"
+- 浏览器侧统一前缀 /api 由 base/app_wrapper.py 剥离；插件内**禁止**再声明 /api
+- routes 指定路由目录（如 "api/v1"），不能指向单个 .py 文件
+- route_prefix 必须以 /v1/ 开头；内部接口另用 internal_routes 声明，不带插件业务前缀
+- 路由文件导出 {文件名}_router（文件名以 _router 结尾时直接导出同名变量），或 router
+- 最终路径 = route_prefix + 路由文件内的路径
+  例如: "/v1/hello_world" + "/auth" + "/send-code" = "/v1/hello_world/auth/send-code"
+  浏览器请求: /api/v1/hello_world/auth/send-code
+- 每个路由文件必须有标准导出；目录不存在、零路由、前缀非法均拒绝装配
 
 注意：
 - routes 和 models 会自动加载到应用中
@@ -56,12 +59,20 @@ from fastapi import FastAPI, APIRouter
 
 from base.common.log import log
 from base.common.setting import settings
+from base.common import plugin_contract, plugin_gate
 
 
 class PluginInstance:
     """插件实例包装器"""
 
-    def __init__(self, name: str, module: Any, manifest: dict, router: Optional[APIRouter] = None):
+    def __init__(
+        self,
+        name: str,
+        module: Any,
+        manifest: dict,
+        router: Optional[APIRouter] = None,
+        internal_router: Optional[APIRouter] = None,
+    ):
         self.name = name
         self.module = module
         self.display_name = manifest.get("display_name", name)
@@ -71,23 +82,31 @@ class PluginInstance:
         self.website = manifest.get("website", "")
         self.dependencies = manifest.get("dependencies", [])
         self.enabled = False
-        # 优先使用模块导出的 router，否则使用传入的 router
+        # 优先使用模块导出的 router，否则使用 manifest 声明装配出的 router
         self.router: Optional[APIRouter] = getattr(module, 'router', None) or router
+        # internal_routes 声明的内部接口，不带插件业务前缀
+        self.internal_router: Optional[APIRouter] = internal_router
+        # manifest.events.subscribe 声明的订阅（由事件中心统一装卸）
+        self.declared_subscriptions: list = (manifest.get("events") or {}).get("subscribe") or []
 
     async def on_enable(self, app: FastAPI) -> bool:
-        """调用插件的 on_enable 钩子"""
+        """调用插件的 on_enable 钩子（仅显式 False 视为失败）。
+
+        历史问题：部分插件钩子省略 return（如 agent / crm），
+        旧的 `if not result` 会把 None 当成失败，导致启用/禁用被误拒。
+        """
         if hasattr(self.module, 'on_enable'):
             result = await self.module.on_enable(app)
-            if not result:
+            if result is False:
                 return False
         self.enabled = True
         return True
 
     async def on_disable(self) -> bool:
-        """调用插件的 on_disable 钩子"""
+        """调用插件的 on_disable 钩子（仅显式 False 视为失败）。"""
         if hasattr(self.module, 'on_disable'):
             result = await self.module.on_disable()
-            if not result:
+            if result is False:
                 return False
         self.enabled = False
         return True
@@ -139,6 +158,13 @@ class PluginManager:
 
     def get_plugin(self, name: str) -> Optional[PluginInstance]:
         return self._plugins.get(name)
+
+    def get_active_plugin(self, name: str) -> Optional[PluginInstance]:
+        """返回「已加载 且 已启用 且 manifest 双真」的插件，供后台作业门控使用。"""
+        plugin = self._plugins.get(name)
+        if plugin and plugin.enabled and plugin_gate.is_plugin_active(name):
+            return plugin
+        return None
 
     def get_all_plugins(self) -> Dict[str, PluginInstance]:
         return self._plugins.copy()
@@ -193,16 +219,13 @@ class PluginManager:
         if is_enabled is not None:
             manifest["is_enabled"] = is_enabled
 
-        return self._write_manifest(name, manifest)
+        written = self._write_manifest(name, manifest)
+        plugin_gate.invalidate(name)
+        return written
 
     def get_enabled_plugins_from_manifests(self) -> List[str]:
-        """获取已安装且激活的插件列表"""
-        enabled = []
-        for name in self.discover_plugins():
-            manifest = self.get_manifest(name)
-            if manifest and manifest.get("is_installed") and manifest.get("is_enabled"):
-                enabled.append(name)
-        return enabled
+        """获取已安装且激活的插件列表（统一走 plugin_gate 判定）。"""
+        return [name for name in self.discover_plugins() if plugin_gate.is_plugin_active(name)]
 
     def discover_plugins(self) -> List[str]:
         """发现插件目录中的所有插件（通过 manifest.json）"""
@@ -260,8 +283,11 @@ class PluginManager:
             return None
 
         try:
-            # 读取 manifest 获取路由配置
+            # 声明契约校验：缺字段/前缀非法/目录不存在一律拒绝装配
             manifest = self.get_manifest(name)
+            problems = plugin_contract.validate_manifest(name, manifest or {}, plugin_dir)
+            if problems:
+                raise plugin_contract.ContractViolation(name, problems)
 
             # 动态加载插件模块
             spec = importlib.util.spec_from_file_location(
@@ -273,41 +299,46 @@ class PluginManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-            # 从 manifest routes 加载路由（如果模块没有导出 router）
-            router = None
-            if not hasattr(module, 'router') and manifest:
-                router = self._load_routes_from_manifest(name, manifest)
+            # manifest 是装配唯一输入：始终按声明加载，零路由直接拒绝
+            router = self._load_routes_from_manifest(name, manifest)
+            internal_router = self._load_internal_routes_from_manifest(name, manifest)
+
+            # 插件入口自行导出 router 属声明外注册，记录一致性偏差
+            if hasattr(module, 'router'):
+                log.warning(
+                    f"插件 {name} 在 __init__.py 导出了 router，覆盖 manifest 声明；"
+                    f"请在 manifest.routes 中统一声明（AC-PLR-01-2）"
+                )
+                router = getattr(module, 'router') or router
 
             # 注意: schemas 不需要自动加载，由开发者在使用时按需 import
 
-            # 创建插件实例包装器
-            plugin_instance = PluginInstance(name, module, manifest, router)
+            plugin_instance = PluginInstance(name, module, manifest, router, internal_router)
             self._plugins[name] = plugin_instance
             log.info(f"插件加载成功: {name}")
             return plugin_instance
 
+        except plugin_contract.ContractViolation as e:
+            log.error(str(e))
+            return None
         except Exception as e:
             log.error(f"加载插件 {name} 失败: {e}")
             return None
 
     def _load_routes_from_manifest(self, name: str, manifest: dict) -> Optional[APIRouter]:
-        """从 manifest.json 的 routes 字段加载路由
+        """按 manifest.routes 装配路由（声明为唯一输入）。
 
-        读取 manifest.json 中的 routes 配置（如 "api/v1"），
-        递归遍历该目录下的所有文件，每个文件使用 {文件名}_router 的命名方式加载路由
-
-        可选配置：
-        - route_prefix: 所有路由的统一前缀（如 "/api/v1/customer"）
+        - route_prefix 必须以 /v1/ 开头，且不得再写浏览器侧 /api
+        - 目录不存在、内部前缀含 /api、零路由均拒绝装配（AC-PLR-01-1/01-2）
         """
         plugin_dir = self._plugins_dir / name
 
-        # 从 manifest 获取 routes 配置
         routes_config = manifest.get("routes", [])
         if not routes_config:
             return None
 
-        # 获取 route_prefix（可选）
         route_prefix = manifest.get("route_prefix", "")
+        problems = plugin_contract.validate_route_prefix(route_prefix)
         combined_router = APIRouter(prefix=route_prefix) if route_prefix else APIRouter()
         loaded_count = 0
 
@@ -315,9 +346,9 @@ class PluginManager:
         for route_path in routes_config:
             route_dir = plugin_dir / route_path
 
-            # 检查目录是否存在
-            if not route_dir.exists() or not route_dir.is_dir():
-                log.warning(f"插件 {name} 的路由目录不存在: {route_dir}")
+            # 检查目录是否存在：声明的目录缺失属于契约违约，不再静默跳过
+            if not route_dir.is_dir():
+                problems.append(f"routes 声明的目录不存在: {route_path}")
                 continue
 
             # 递归遍历该目录下的所有 .py 文件（排除 __init__.py）
@@ -338,12 +369,7 @@ class PluginManager:
                     relative_path = route_file.relative_to(plugin_dir)
                     module_path = f"base.plugins.{name}.{relative_path.as_posix().replace('/', '.')[:-3]}"  # 去掉.py
 
-                    # 根据 {文件名}_router 的规则构建路由属性名
-                    # 如果文件名已以 _router 结尾，则直接使用文件名作为属性名
-                    if route_file.stem.endswith("_router"):
-                        router_attr = route_file.stem
-                    else:
-                        router_attr = f"{route_file.stem}_router"
+                    candidates = plugin_contract.router_attr_candidates(route_file)
 
                     # 动态加载模块
                     spec = importlib.util.spec_from_file_location(module_path, route_file)
@@ -351,23 +377,93 @@ class PluginManager:
                         route_module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(route_module)
 
-                        # 检查是否存在对应的路由属性
-                        if hasattr(route_module, router_attr):
-                            router_obj = getattr(route_module, router_attr)
-                            combined_router.include_router(router_obj)
-                            loaded_count += 1
-                            log.debug(f"已加载路由文件: {relative_path} -> {router_attr}")
-                        else:
-                            log.warning(f"路由文件 {relative_path} 中未找到 {router_attr} 属性")
+                        router_attr = next(
+                            (attr for attr in candidates if hasattr(route_module, attr)), None
+                        )
+                        if not router_attr:
+                            log.warning(
+                                f"插件 {name} 路由文件 {relative_path} 未导出标准变量 "
+                                f"{candidates[0]}（或 router），已跳过"
+                            )
+                            continue
+                        router_obj = getattr(route_module, router_attr)
+                        if not isinstance(router_obj, APIRouter):
+                            log.warning(f"插件 {name} 的 {relative_path}:{router_attr} 不是 APIRouter")
+                            continue
+                        inner_problems = plugin_contract.validate_no_browser_prefix(
+                            getattr(router_obj, "prefix", "") or ""
+                        )
+                        if inner_problems:
+                            problems.extend(f"{relative_path}: {p}" for p in inner_problems)
+                            continue
+                        combined_router.include_router(router_obj)
+                        loaded_count += 1
+                        log.debug(f"已加载路由文件: {relative_path} -> {router_attr}")
                 except Exception as e:
+                    # 单个文件导入失败属于一致性偏差，记录但不阻断整个插件装配
                     log.error(f"加载路由文件 {route_file} 失败: {e}")
 
-        # 返回 combined_router 如果成功加载了至少一个路由模块
-        if loaded_count > 0:
-            prefix_info = f" (prefix: {route_prefix})" if route_prefix else ""
-            log.info(f"插件 {name} 共加载了 {loaded_count} 个路由文件{prefix_info}")
-            return combined_router
-        return None
+        if loaded_count == 0:
+            problems.append("routes 声明的目录未加载出任何 APIRouter（零路由，启用必失败）")
+        if problems:
+            raise plugin_contract.ContractViolation(name, problems)
+        prefix_info = f" (prefix: {route_prefix})" if route_prefix else ""
+        log.info(f"插件 {name} 共加载了 {loaded_count} 个路由文件{prefix_info}")
+        return combined_router
+
+    def _load_internal_routes_from_manifest(self, name: str, manifest: dict) -> Optional[APIRouter]:
+        """装配 internal_routes 声明的内部接口。
+
+        这类接口自带 /internal/... 前缀，不套插件业务前缀，
+        也不在浏览器侧 /api 命名空间内（由 app_wrapper 白名单放行）。
+        """
+        configs = manifest.get("internal_routes") or []
+        if not configs:
+            return None
+
+        plugin_dir = self._plugins_dir / name
+        combined = APIRouter()
+        loaded_count = 0
+        problems: list[str] = []
+
+        for route_path in configs:
+            route_dir = plugin_dir / route_path
+            if not route_dir.is_dir():
+                problems.append(f"internal_routes 声明的目录不存在: {route_path}")
+                continue
+            for route_file in sorted(route_dir.rglob("*.py")):
+                if route_file.name == "__init__.py":
+                    continue
+                relative_path = route_file.relative_to(plugin_dir)
+                module_path = (
+                    f"base.plugins.{name}."
+                    f"{relative_path.as_posix().replace('/', '.')[:-3]}"
+                )
+                try:
+                    spec = importlib.util.spec_from_file_location(module_path, route_file)
+                    if not (spec and spec.loader):
+                        continue
+                    route_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(route_module)
+                    candidates = plugin_contract.router_attr_candidates(route_file)
+                    router_attr = next(
+                        (attr for attr in candidates if hasattr(route_module, attr)), None
+                    )
+                    if not router_attr:
+                        continue
+                    router_obj = getattr(route_module, router_attr)
+                    if isinstance(router_obj, APIRouter):
+                        combined.include_router(router_obj)
+                        loaded_count += 1
+                except Exception as e:
+                    log.error(f"加载内部路由 {route_file} 失败: {e}")
+
+        if loaded_count == 0:
+            problems.append("internal_routes 未加载出任何 APIRouter")
+        if problems:
+            raise plugin_contract.ContractViolation(name, problems)
+        log.info(f"插件 {name} 共加载了 {loaded_count} 个内部路由文件")
+        return combined
 
     async def _process_plugin_menus(self, name: str, manifest: dict) -> bool:
         """处理插件的菜单配置"""
@@ -573,12 +669,18 @@ class PluginManager:
             # 处理权限配置
             await self._process_plugin_permissions(name, manifest)
 
-            # 注册路由
+            # 注册 manifest 声明的业务路由与内部路由（唯一装配入口）
             if plugin.router:
                 self._app.include_router(plugin.router)
                 log.info(f"已注册插件路由: {name}")
+            if plugin.internal_router:
+                self._app.include_router(plugin.internal_router)
+                log.info(f"已注册插件内部路由: {name}")
 
-            # 更新 manifest 状态
+            # 声明订阅统一由事件中心激活：运行时启用即时生效，不再依赖 on_startup
+            await self._sync_plugin_subscriptions(name, manifest, active=True)
+
+            # 更新 manifest 状态（同时使门控缓存失效）
             self.update_plugin_status(name, is_installed=True, is_enabled=True)
 
             log.info(f"插件已启用: {manifest.get('display_name', name)}")
@@ -626,6 +728,50 @@ class PluginManager:
             log.error(f"清理插件 {name} 的菜单配置失败: {e}")
             return False
 
+    async def _cleanup_plugin_permissions(self, name: str, manifest: dict) -> bool:
+        """禁用时清理插件声明的权限，避免孤儿记录（AC-PLR-03-2）。"""
+        try:
+            from base.core.users.models.rbac import Permission
+
+            codes: list[str] = []
+
+            def collect(items):
+                for item in items or []:
+                    if not isinstance(item, dict):
+                        continue
+                    code = item.get("code") or item.get("permission_code")
+                    if code:
+                        codes.append(code)
+                    collect(item.get("children"))
+
+            collect(manifest.get("permissions", []))
+            if not codes:
+                return True
+            try:
+                await Permission.filter(code__in=codes).delete()
+            except Exception:
+                # 已被角色引用时退化为停用，避免破坏既有授权
+                await Permission.filter(code__in=codes).update(is_active=False)
+            log.info(f"插件 {name} 的权限配置已清理: {len(codes)} 条")
+            return True
+        except Exception as e:
+            log.error(f"清理插件 {name} 的权限配置失败: {e}")
+            return False
+
+    async def _sync_plugin_subscriptions(self, name: str, manifest: dict, active: bool) -> None:
+        """把 manifest.events.subscribe 交给事件中心统一装卸。
+
+        事件中心尚未初始化时静默跳过（模块通过延迟导入，保证装配器可独立运行）。
+        """
+        try:
+            from base.core.events.registry import event_center
+        except ImportError:
+            return
+        try:
+            await event_center.sync_plugin(name, manifest, active=active)
+        except Exception as e:
+            log.error(f"插件 {name} 订阅同步失败(active={active}): {e}")
+
     async def disable_plugin(self, name: str) -> bool:
         """禁用插件"""
         plugin = self._plugins.get(name)
@@ -646,10 +792,12 @@ class PluginManager:
             if not success:
                 return False
 
-            # 清理菜单配置
+            # 与启用对称：清理菜单 + 权限，注销声明订阅
             manifest = self.get_manifest(name)
             if manifest:
                 await self._cleanup_plugin_menus(name, manifest)
+                await self._cleanup_plugin_permissions(name, manifest)
+            await self._sync_plugin_subscriptions(name, manifest or {}, active=False)
 
             self.update_plugin_status(name, is_enabled=False)
 

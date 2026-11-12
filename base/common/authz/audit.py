@@ -17,6 +17,7 @@ from loguru import logger
 
 from base.common.cache import RedisCache
 from base.common.context import get_current_trace_id
+from base.common.plugin_symbol import resolve_plugin_symbol
 from .constants import (
     RL_SCENE_AUTHZ_404,
     RL_WINDOW_SECONDS,
@@ -90,7 +91,7 @@ async def _write_audit(
 ) -> None:
     """审计落库（复用 audit 插件通道；失败仅记日志，不阻断请求）"""
     try:
-        from base.plugins.audit.models.audit_log import AuditLog
+        AuditLog = resolve_plugin_symbol("base.plugins.audit.models.audit_log.AuditLog")
 
         owner_type, owner_id = None, None
         if owner_identity and ":" in owner_identity:

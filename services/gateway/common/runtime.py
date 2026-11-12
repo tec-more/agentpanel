@@ -3,7 +3,7 @@
 网关模块不直接读取 app manifest / `config.conf`；配置源由入口注入：
 - 独立服务新入口：`app/config.py` 的 `gateway_config` / `gateway_upstream_config`
 - app 启动期：`base/plugins/harness/services/gateway_config.py` 的 `configure_shared_runtime()`
-  在 `base.start` 导入时显式调用一次。
+  在 `base.start.lifespan` 启动期显式调用一次（惰性导入，不再在模块顶层 import 具体插件实现）。
 """
 from typing import Any, Callable, Dict, Optional
 

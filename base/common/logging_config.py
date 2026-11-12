@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
+from base.common.plugin_symbol import resolve_plugin_symbol
+
 
 async def log_exception(exc: Exception, request: Request = None):
     """记录异常详细信息到控制台"""
@@ -156,7 +158,9 @@ def register_exceptions_with_logging(app):
 
     # 审批门禁异常（需注册在通用 Exception 处理器之前以获得更具体的匹配）
     try:
-        from base.plugins.approval.services.approval_gate import NeedApprovalError
+        NeedApprovalError = resolve_plugin_symbol(
+            "base.plugins.approval.services.approval_gate.NeedApprovalError"
+        )
         app.add_exception_handler(NeedApprovalError, NeedApprovalHandle)
     except Exception as e:
         print(f"[WARN] 审批门禁异常处理器注册失败: {e}")

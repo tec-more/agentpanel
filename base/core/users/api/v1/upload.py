@@ -130,6 +130,57 @@ async def get_uploaded_image(year: str, month: str, day: str, filename: str):
 AUDIO_UPLOAD_DIR = Path(settings.base_path) / "uploads" / "audio"
 AUDIO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+ALLOWED_AUDIO_TYPES = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/mp4": ".m4a",
+}
+
+
+@router.post("/audio", summary="上传音频")
+async def upload_audio(
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id)
+):
+    """上传音频（与前端 /v1/upload/audio 调用对齐，补齐此前缺失的 POST 路由）。"""
+    try:
+        if file.content_type not in ALLOWED_AUDIO_TYPES:
+            return ErrorResponse(
+                msg=f"不支持的音频类型: {file.content_type}",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        file_content = await file.read()
+        if len(file_content) > MAX_FILE_SIZE:
+            return ErrorResponse(
+                msg="文件大小超过限制 (最大 10MB)",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        file_ext = ALLOWED_AUDIO_TYPES[file.content_type]
+        file_name = f"{uuid.uuid4()}{file_ext}"
+        date_dir = datetime.now().strftime("%Y/%m/%d")
+        save_dir = AUDIO_UPLOAD_DIR / date_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
+        with open(save_dir / file_name, "wb") as f:
+            f.write(file_content)
+        return SuccessResponse(
+            data={
+                "url": f"/uploads/audio/{date_dir}/{file_name}",
+                "filename": file_name,
+                "size": len(file_content),
+                "content_type": file.content_type
+            },
+            msg="上传成功"
+        )
+    except Exception as e:
+        return ErrorResponse(
+            msg=f"上传失败: {str(e)}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
 
 @router.get("/audio/{year}/{month}/{day}/{filename}", summary="访问上传的音频")
 async def get_uploaded_audio(year: str, month: str, day: str, filename: str):

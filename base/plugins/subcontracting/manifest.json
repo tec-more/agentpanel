@@ -67,5 +67,26 @@
                 }
             ]
         }
-    ]
+    ],
+    "events": {
+        "register_ref": "base.plugins.subcontracting:register_event_handlers",
+        "unregister_ref": "base.plugins.subcontracting:unregister_event_handlers",
+        "subscribe": [
+            {
+                "event_name": "mrp2.planned_order_confirmed",
+                "handler_ref": "base.plugins.subcontracting:register_event_handlers",
+                "description": "委外：计划订单与库存事件"
+            },
+            {
+                "event_name": "inventory.picking_done",
+                "handler_ref": "base.plugins.subcontracting:register_event_handlers",
+                "description": "委外：计划订单与库存事件"
+            },
+            {
+                "event_name": "inventory.receipt_done",
+                "handler_ref": "base.plugins.subcontracting:register_event_handlers",
+                "description": "委外：计划订单与库存事件"
+            }
+        ]
+    }
 }

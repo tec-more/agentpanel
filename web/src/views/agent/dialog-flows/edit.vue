@@ -547,6 +547,7 @@ import { getAgents } from '@/api/agent'
 import { getModelList, getProviderList } from '@/api/llm'
 import { getEdgePathByType, getDefaultEdgeType } from '@/utils/edge-renderer'
 import { ZoomIn, ZoomOut, Refresh } from '@element-plus/icons-vue'
+import { apiUrl } from '@/utils/apiBase'
 
 const route = useRoute()
 const router = useRouter()
@@ -860,7 +861,7 @@ const handleImageNodeUpload = async (file) => {
   const formData = new FormData()
   formData.append('file', file)
   try {
-    const response = await fetch('/api/v1/upload/image', {
+    const response = await fetch(apiUrl('/v1/upload/image'), {
       method: 'POST',
       body: formData
     })
@@ -873,7 +874,7 @@ const handleImageNodeUpload = async (file) => {
       } else if (rawUrl.startsWith('/uploads/images/')) {
         const parts = rawUrl.replace('/uploads/images/', '').split('/')
         if (parts.length >= 4) {
-          imageUrl = `/api/v1/upload/images/${parts[0]}/${parts[1]}/${parts[2]}/${parts.slice(3).join('/')}`
+          imageUrl = `${apiUrl('/v1/upload/images')}/${parts[0]}/${parts[1]}/${parts[2]}/${parts.slice(3).join('/')}`
         } else {
           imageUrl = window.location.origin + rawUrl
         }
@@ -895,7 +896,7 @@ const handleAudioUpload = async (file) => {
   const formData = new FormData()
   formData.append('file', file)
   try {
-    const response = await fetch('/api/v1/upload/audio', {
+    const response = await fetch(apiUrl('/v1/upload/audio'), {
       method: 'POST',
       body: formData
     })
@@ -1225,7 +1226,7 @@ const beforeImageUpload = async (file) => {
       headers['Authorization'] = `Bearer ${token}`
     }
     
-    const response = await fetch('/api/v1/upload/image', {
+    const response = await fetch(apiUrl('/v1/upload/image'), {
       method: 'POST',
       headers: headers,
       body: formData
@@ -1246,7 +1247,7 @@ const beforeImageUpload = async (file) => {
       } else if (rawUrl.startsWith('/uploads/images/')) {
         const parts = rawUrl.replace('/uploads/images/', '').split('/')
         if (parts.length >= 4) {
-          imageUrl = `/api/v1/upload/images/${parts[0]}/${parts[1]}/${parts[2]}/${parts.slice(3).join('/')}`
+          imageUrl = `${apiUrl('/v1/upload/images')}/${parts[0]}/${parts[1]}/${parts[2]}/${parts.slice(3).join('/')}`
         } else {
           imageUrl = window.location.origin + rawUrl
         }
@@ -1309,7 +1310,7 @@ const startRecording = async () => {
           headers['Authorization'] = `Bearer ${token}`
         }
         
-        const response = await fetch('/api/v1/upload/audio', {
+        const response = await fetch(apiUrl('/v1/upload/audio'), {
           method: 'POST',
           headers: headers,
           body: formData

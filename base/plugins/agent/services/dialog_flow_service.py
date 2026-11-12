@@ -807,7 +807,8 @@ class DialogFlowService:
             import uuid
             from datetime import datetime
             
-            audio_dir = os.path.join(os.path.dirname(__file__), "../../../", "uploads", "audio")
+            # 与 base/core/users/api/v1/upload.py 的 AUDIO_UPLOAD_DIR 指向同一目录
+            audio_dir = os.path.join(os.path.dirname(__file__), "../../../../", "uploads", "audio")
             os.makedirs(audio_dir, exist_ok=True)
             
             date_dir = datetime.now().strftime("%Y/%m/%d")
@@ -820,7 +821,7 @@ class DialogFlowService:
             with open(file_path, "wb") as f:
                 f.write(audio_bytes)
             
-            audio_url = f"/api/v1/upload/audio/{date_dir}/{file_name}"
+            audio_url = f"/uploads/audio/{date_dir}/{file_name}"
             
             if sse_yield_func:
                 await sse_yield_func({

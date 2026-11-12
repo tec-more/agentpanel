@@ -167,5 +167,36 @@
         "on_disable": "on_disable",
         "on_startup": "on_startup",
         "on_shutdown": "on_shutdown"
+    },
+    "events": {
+        "register_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+        "unregister_ref": "base.plugins.audit.services.audit_subscriptions:unregister_audit_subscriptions",
+        "subscribe": [
+            {
+                "event_name": "model.created",
+                "handler_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+                "description": "审计：ORM 数据变更与登录事件落库"
+            },
+            {
+                "event_name": "model.updated",
+                "handler_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+                "description": "审计：ORM 数据变更与登录事件落库"
+            },
+            {
+                "event_name": "model.deleted",
+                "handler_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+                "description": "审计：ORM 数据变更与登录事件落库"
+            },
+            {
+                "event_name": "user.login",
+                "handler_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+                "description": "审计：ORM 数据变更与登录事件落库"
+            },
+            {
+                "event_name": "user.logout",
+                "handler_ref": "base.plugins.audit.services.audit_subscriptions:register_audit_subscriptions",
+                "description": "审计：ORM 数据变更与登录事件落库"
+            }
+        ]
     }
 }

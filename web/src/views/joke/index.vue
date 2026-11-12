@@ -147,7 +147,7 @@ const examples = ref([])
 
 const loadLanguages = async () => {
   try {
-    const res = await request.get('/api/v1/agent/joke/languages')
+    const res = await request.get('/v1/agent/joke/languages')
     if (res.data) {
       languages.value = res.data
     }
@@ -158,7 +158,7 @@ const loadLanguages = async () => {
 
 const loadExamples = async () => {
   try {
-    const res = await request.get('/api/v1/agent/joke/examples')
+    const res = await request.get('/v1/agent/joke/examples')
     if (res.data) {
       examples.value = res.data
     }
@@ -177,7 +177,7 @@ const handleTranslate = async () => {
   result.value = null
   
   try {
-    const res = await request.post('/api/v1/agent/joke/translate', translateForm.value)
+    const res = await request.post('/v1/agent/joke/translate', translateForm.value)
     if (res.success) {
       result.value = res
       ElMessage.success('翻译成功')

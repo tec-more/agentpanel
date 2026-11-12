@@ -10,11 +10,10 @@
     "routes": [
         "api/v1"
     ],
-    "models": [
-        "harness",
-        "model_price",
-        "service_credential"
+    "internal_routes": [
+        "api/app_internal"
     ],
+    "models": [],
     "schemas": [
         "harness"
     ],

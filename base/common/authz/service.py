@@ -14,6 +14,7 @@ from typing import List, Optional, Sequence, Set, Tuple, Union
 
 from .context import OwnerContext
 from .models.resource_grant import ResourceGrant
+from base.common.plugin_symbol import resolve_plugin_symbol
 
 # check_resource_access 接受 OwnerContext 或 (owner_type, owner_id) 二元组
 OwnerLike = Union[OwnerContext, Tuple[str, int]]
@@ -49,7 +50,7 @@ async def is_subject_active(owner_type: str, owner_id: int) -> bool:
     （同 agent 插件 u_resource_router._load_metadata）函数内延迟 import，避免模块级反向依赖。
     """
     if owner_type == "cus":
-        from base.plugins.customer.models.customer import Customer
+        Customer = resolve_plugin_symbol("base.plugins.customer.models.customer.Customer")
         customer = await Customer.get_or_none(id=owner_id)
         return bool(customer and customer.is_active)
     if owner_type == "usr":
@@ -57,7 +58,9 @@ async def is_subject_active(owner_type: str, owner_id: int) -> bool:
         user = await User.get_or_none(id=owner_id)
         return bool(user and getattr(user, "is_active", True))
     if owner_type == "org":
-        from base.plugins.customer.models.customer_organization import CustomerOrganization
+        CustomerOrganization = resolve_plugin_symbol(
+            "base.plugins.customer.models.customer_organization.CustomerOrganization"
+        )
         org = await CustomerOrganization.get_or_none(id=owner_id)
         return bool(org and org.status == "active")
     return False
@@ -81,9 +84,9 @@ async def _customer_org_ids(customer_id: int) -> List[int]:
     except Exception:
         pass  # 缓存不可用降级为直查库，不阻断判定
 
-    from base.plugins.customer.models.customer_organization import (
-        CustomerOrganization,
-        CustomerOrganizationMember,
+    CustomerOrganization, CustomerOrganizationMember = (
+        resolve_plugin_symbol("base.plugins.customer.models.customer_organization.CustomerOrganization"),
+        resolve_plugin_symbol("base.plugins.customer.models.customer_organization.CustomerOrganizationMember"),
     )
     memberships = await CustomerOrganizationMember.filter(
         customer_id=customer_id, status="active"

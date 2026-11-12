@@ -217,7 +217,7 @@ const loadAgentInfo = async () => {
   }
   
   try {
-    const res = await request.get(`/api/v1/agent/joke-agent/debug/${configForm.value.agent_id}`)
+    const res = await request.get(`/v1/agent/joke-agent/debug/${configForm.value.agent_id}`)
     if (res.data) {
       agentInfo.value = res.data
     }
@@ -246,7 +246,7 @@ const handleSend = async () => {
   
   
   try {
-    const res = await request.post('/api/v1/agent/joke-agent/chat', {
+    const res = await request.post('/v1/agent/joke-agent/chat', {
       text: userMessage,
       agent_id: configForm.value.agent_id,
       enable_rag: configForm.value.enable_rag,

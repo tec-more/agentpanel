@@ -84,13 +84,36 @@ async def on_production_receipt(event_name: str, **kwargs):
         logger.error(f"财务集成-生产入库处理失败: {e}", exc_info=True)
 
 
+_FINANCE_HANDLERS = {
+    "purchase.confirmed": on_purchase_confirmed,
+    "purchase.received": on_purchase_received,
+    "purchase.payment": on_purchase_payment,
+    "sales.paid": on_sales_paid,
+    "sales.receipt": on_sales_receipt,
+    "work_order.completed": on_work_order_completed,
+    "material.picked": on_material_picked,
+    "production.receipt": on_production_receipt,
+}
+_registered = False
+
+
 def register_finance_event_handlers():
-    event_bus.subscribe("purchase.confirmed", on_purchase_confirmed)
-    event_bus.subscribe("purchase.received", on_purchase_received)
-    event_bus.subscribe("purchase.payment", on_purchase_payment)
-    event_bus.subscribe("sales.paid", on_sales_paid)
-    event_bus.subscribe("sales.receipt", on_sales_receipt)
-    event_bus.subscribe("work_order.completed", on_work_order_completed)
-    event_bus.subscribe("material.picked", on_material_picked)
-    event_bus.subscribe("production.receipt", on_production_receipt)
+    """注册财务集成订阅（幂等，由 manifest.events.register_ref 驱动）。"""
+    global _registered
+    if _registered:
+        return
+    for event_name, handler in _FINANCE_HANDLERS.items():
+        event_bus.subscribe(event_name, handler)
+    _registered = True
     logger.info("财务集成事件处理器注册完成")
+
+
+def unregister_finance_event_handlers():
+    """注销财务集成订阅，与插件停用对称。"""
+    global _registered
+    if not _registered:
+        return
+    for event_name, handler in _FINANCE_HANDLERS.items():
+        event_bus.unsubscribe(event_name, handler)
+    _registered = False
+    logger.info("财务集成事件处理器已注销")

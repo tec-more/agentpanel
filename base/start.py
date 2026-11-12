@@ -15,17 +15,14 @@ from base.common.logging_config import register_exceptions_with_logging
 from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
 
-# 网关共享运行时显式装配（P4 B：原 base/common/gateway 兼容层已删除）：
-# 1) 共享缓存绑定 app Redis 配置；2) 共享套餐服务注入唯一 SQL 解析器；
-# 3) 共享网关运行时注入 app 的配置/上游/租约缓存 TTL provider。
+# 共享套餐服务注入唯一 SQL 解析器（P4 B：原 base/common/gateway 兼容层已删除）。
+# 共享网关运行时注入 app 的配置/上游/租约缓存 TTL provider 改由 lifespan 启动期惰性装配
+# （见下方 lifespan），以移除启动入口对具体插件实现的顶层导入（AC-PLR-13-1 / W2-1 整改）。
 import base.common.cache  # noqa: F401,E402
 from packages.common.quota.services import plan_service as _shared_plan_service  # noqa: E402
 from packages.common.quota.services.plan_resolver import SqlPlanResolver  # noqa: E402
 
 _shared_plan_service.configure(SqlPlanResolver())
-from base.plugins.harness.services.gateway_config import configure_shared_runtime  # noqa: E402
-
-configure_shared_runtime()
 
 # 插件管理器显式注册（T4.10）：不再依赖 base.common.plugin_manager 的导入副作用。
 init_plugin_manager()
@@ -38,41 +35,19 @@ setup_logging()
 logging.getLogger('websockets.client').setLevel(logging.WARNING)
 
 
-def register_audit_handlers():
-    """注册审计事件处理器（在应用创建时调用，确保每个进程都注册）"""
+async def initialize_event_center():
+    """按 manifest.events 声明初始化事件订阅。
+
+    替代此前在启动入口硬编码的 5 条审计订阅：处理器由事件中心按声明动态解析，
+    核心层不再静态导入插件实现（PLR-13），订阅随插件启停装卸（PLR-14）。
+    必须在 init_data() 之后调用，插件 handler 依赖 Tortoise 已初始化。
+    """
     try:
-        import base.plugins.audit.services.orm_event_service
-        from base.plugins.audit.services.orm_event_service import register_orm_audit_handlers
-        from base.plugins.audit.handlers.data_change_handler import DataChangeHandler
-        from base.plugins.audit.handlers.login_event_handler import LoginEventHandler
-        from base.common.events.event_bus import event_bus
-        from base.common.setting import settings
-
-        print(f"[审计] 事件总线实例ID: {id(event_bus)}")
-        print(f"[审计] AUDIT_ENABLED: {getattr(settings, 'AUDIT_ENABLED', False)}")
-        print(f"[审计] AUDIT_LOG_LOGIN: {getattr(settings, 'AUDIT_LOG_LOGIN', False)}")
-        print(f"[审计] AUDIT_LOG_DATA_CHANGES: {getattr(settings, 'AUDIT_LOG_DATA_CHANGES', False)}")
-
-        register_orm_audit_handlers()
-        
-        data_change_handler = DataChangeHandler()
-        event_bus.subscribe("model.created", data_change_handler.handle)
-        event_bus.subscribe("model.updated", data_change_handler.handle)
-        event_bus.subscribe("model.deleted", data_change_handler.handle)
-        print(f"[审计] 数据变更处理器已订阅, is_enabled: {data_change_handler.is_enabled()}")
-        handlers_list = event_bus._handlers.get('model.created', []) if hasattr(event_bus, '_handlers') else event_bus.get_handlers('model.created')
-        print(f"[审计] model.created 订阅者数量: {len(handlers_list)}")
-
-        login_event_handler = LoginEventHandler()
-        event_bus.subscribe("user.login", login_event_handler.handle)
-        event_bus.subscribe("user.logout", login_event_handler.handle)
-        print(f"[审计] 登录事件处理器已订阅, is_enabled: {login_event_handler.is_enabled()}")
-        login_handlers = event_bus._handlers.get('user.login', []) if hasattr(event_bus, '_handlers') else event_bus.get_handlers('user.login')
-        print(f"[审计] user.login 订阅者数量: {len(login_handlers)}")
-
-        print("[审计] 事件处理器注册完成")
+        from base.core.events.registry import event_center
+        await event_center.initialize()
+        print("[事件中心] 声明订阅同步完成")
     except Exception as e:
-        print(f"[审计] 注册事件处理器失败: {e}")
+        print(f"[事件中心] 初始化失败: {e}")
         import traceback
         traceback.print_exc()
 
@@ -92,6 +67,9 @@ async def lifespan(app: FastAPI):
     # 存储后台任务引用，便于清理
     background_tasks = []
 
+    # 共享网关运行时注入已迁至 harness 插件 on_startup 钩子
+    # （W2-1 整改：base/start.py 不再 import 具体插件实现，AC-PLR-13-1）。
+
     try:
         await init_data()
 
@@ -100,9 +78,9 @@ async def lifespan(app: FastAPI):
         from base.common.cache import RedisCache
         await RedisCache.get_instance()
 
-        # 审计事件处理器必须在 Tortoise.init 之后注册
-        # （否则 model 的 default_connection 为 None，写日志时会报错）
-        register_audit_handlers()
+        # 事件中心必须在 Tortoise.init 之后初始化
+        # （否则插件 handler 中的 model 的 default_connection 为 None）
+        await initialize_event_center()
 
         # 初始化EventBusAdapter（RabbitMQ事件总线）
         try:
@@ -130,7 +108,8 @@ async def lifespan(app: FastAPI):
             print(f"ConsumerWorker启动失败: {e}")
             app.state.consumer_worker = None
 
-        # 审计事件处理器已在 init_app 中注册
+        # 事件订阅已在 init_data() 之后由事件中心按 manifest 声明初始化；
+        # 插件启用/禁用时由 plugin_manager 调用事件中心做装卸，不再依赖 on_startup。
 
         # 初始化插件系统
         manager = get_plugin_manager()
@@ -140,7 +119,7 @@ async def lifespan(app: FastAPI):
         print("插件系统初始化完成")
 
         # 启动订单过期检查定时任务（仅当 sales 插件启用时）
-        if manager.get_plugin("sales"):
+        if manager.get_active_plugin("sales"):
             task1 = asyncio.create_task(cancel_expired_orders_task())
             background_tasks.append(task1)
             print("订单过期检查定时任务已启动")
@@ -148,7 +127,7 @@ async def lifespan(app: FastAPI):
             print("订单过期检查定时任务跳过（sales 插件未启用）")
 
         # 启动会员数据更新定时任务（仅当 customer 和 llm 插件启用时）
-        if manager.get_plugin("customer") and manager.get_plugin("llm"):
+        if manager.get_active_plugin("customer") and manager.get_active_plugin("llm"):
             task2 = asyncio.create_task(update_membership_data_task())
             background_tasks.append(task2)
             print("会员数据更新定时任务已启动（每10分钟）")
@@ -169,7 +148,7 @@ async def lifespan(app: FastAPI):
         try:
             from base.plugins.harness.services.gateway_config import gateway_enabled, reconciliation_config
             if (
-                manager.get_plugin("harness")
+                manager.get_active_plugin("harness")
                 and gateway_enabled()
                 and reconciliation_config().get("enabled")
             ):
@@ -185,7 +164,7 @@ async def lifespan(app: FastAPI):
             print(f"网关对账定时任务启动失败: {e}")
 
         # 启动审计数据变更日志清理定时任务（仅当 audit 插件启用时；每日一次）
-        if manager.get_plugin("audit"):
+        if manager.get_active_plugin("audit"):
             task_a1 = asyncio.create_task(audit_cleanup_task())
             background_tasks.append(task_a1)
             print(
@@ -195,15 +174,12 @@ async def lifespan(app: FastAPI):
         else:
             print("审计数据变更日志清理定时任务跳过（audit 插件未启用）")
 
-        # 启动 Prometheus 推送工作器
+        # 启动 Prometheus 推送工作器（W2-1 整改：删除 ImportError 兜底，base/common 模块始终存在）
         if getattr(settings, 'PROMETHEUS_PUSH_ENABLED', False):
-            try:
-                from base.common.prometheus import start_push_worker
-                task3 = asyncio.create_task(start_push_worker())
-                background_tasks.append(task3)
-                print("Prometheus 推送工作器已启动")
-            except ImportError as e:
-                print(f"无法启动 Prometheus 推送工作器: {e}")
+            from base.common.prometheus import start_push_worker
+            task3 = asyncio.create_task(start_push_worker())
+            background_tasks.append(task3)
+            print("Prometheus 推送工作器已启动")
         else:
             print("Prometheus 推送工作器已禁用（PROMETHEUS_PUSH_ENABLED=false）")
 
@@ -637,110 +613,74 @@ def init_app() -> FastAPI:
     # 使用自动路由注册机制
     register_routers(app)
 
-    # 手动注册WebSocket路由（绕过plugin_manager的缓存问题）
+    # 上传文件静态目录：与 /api/v1/upload/* 读取同一批文件。
+    # 修复裸 /uploads/... 被 SPA fallback 吞成 index.html 的问题。
     try:
-        from base.plugins.llm.api.v1 import voice_websocket
-        app.include_router(voice_websocket.voice_websocket_router, prefix="/v1/llm")
-        print("[手动注册] WebSocket路由已注册: /v1/llm/voice/translation/streaming")
-    except ImportError as e:
-        print(f"[警告] 无法导入voice_websocket: {e}")
+        from pathlib import Path
+        from fastapi.staticfiles import StaticFiles
 
-    # 手动注册 mail WebSocket 路由（消息实时推送）
-    try:
-        from base.plugins.mail.api.v1.ws_router import ws_router
-        app.include_router(ws_router, prefix="/v1/mail")
-        print("[手动注册] WebSocket路由已注册: /v1/mail/ws")
-    except ImportError as e:
-        print(f"[警告] 无法导入 mail ws_router: {e}")
+        upload_root = Path(settings.base_path) / "uploads"
+        upload_root.mkdir(parents=True, exist_ok=True)
+        app.mount("/uploads", StaticFiles(directory=str(upload_root)), name="uploads")
+        print("[静态资源] /uploads 已挂载")
+    except Exception as e:
+        print(f"[警告] 挂载 /uploads 失败: {e}")
 
-    # 注册事件系统API路由
-    try:
-        from base.common.events.api import events_api_router
-        app.include_router(events_api_router)
-        print("[手动注册] 事件系统API路由已注册: /v1/events/")
-    except ImportError as e:
-        print(f"[警告] 无法导入事件系统API路由: {e}")
+    # WebSocket 路由（llm voice / mail ws）位于各自插件 manifest.routes 声明的
+    # api/v1 目录内，由 plugin_manager 在启动时按声明装配；此处不再手动注册，
+    # 避免同一路由被注册两次且脱离插件启用门控（AC-PLR-01-2 / AC-PLR-03-1）。
 
-    # 注册 M9 配额管理侧路由（base/common 非插件，手动注册）
-    try:
-        from base.common.quota.api.admin import quota_plan_admin_router
-        from base.common.quota.api.usage import usage_record_router
-        from base.common.quota.api.board import quota_board_router
-        from base.common.quota.api.organization import org_quota_admin_router
-        app.include_router(quota_plan_admin_router)
-        app.include_router(usage_record_router)
-        app.include_router(quota_board_router)
-        app.include_router(org_quota_admin_router)
-        print("[手动注册] 配额路由已注册: /v1/quota-plans, /v1/usage-records, /v1/quota, /v1/quota/organizations")
-    except ImportError as e:
-        print(f"[警告] 无法导入配额路由: {e}")
+    # 事件系统 / M9 配额路由已集中到 base/common/router.py::register_routers
+    # （W2-1 整改：删除 init_app 手动注册 + try/except ImportError 兜底）。
 
-    # Harness 内部接口：编排上报客户端活跃时间（harness_client 只由 app 写）。
-    # 不放在 api/v1，避免被插件路由前缀 /v1/harness 包裹；仅在插件启用时挂载。
-    try:
-        from base.common.plugin_manager import get_plugin_manager
-        harness_manifest = get_plugin_manager().get_manifest("harness") or {}
-        if harness_manifest.get("is_installed") and harness_manifest.get("is_enabled"):
-            from base.plugins.harness.api.app_internal.quota_router import app_quota_router
-            from base.plugins.harness.api.app_internal.touch_router import app_touch_router
-            app.include_router(app_touch_router)
-            app.include_router(app_quota_router)
-            print("[手动注册] Harness 内部路由已注册: touch / quota")
-    except ImportError as e:
-        print(f"[警告] 无法注册 Harness 内部路由: {e}")
+    # Harness 内部接口由 manifest.internal_routes 声明，随插件启用一并装配，
+    # 门控统一走 plugin_gate；不再为单个插件写专用判定（AC-PLR-01-2 / PLR-03）。
 
-    # 内部网关数据面：deployment 配置决定部署形态，切换不改代码。
+    # 内部网关数据面（W2-1 整改）：deployment 配置决定部署形态，切换不改代码。
     # - standalone（默认）：由 `services/gateway/run.py` 作为独立进程服务，
     #   业务 API 不挂载 /v1/gateway；
     # - embedded：以独立子应用挂载到 /v1/gateway（自带独立 OpenAPI，不继承业务鉴权中间件），
     #   作为可选退回方式。
-    try:
-        from base.plugins.harness.services.gateway_config import issuance_config, gateway_enabled
-        gw_cfg = issuance_config()
-        if gateway_enabled():
-            if str(gw_cfg.get("deployment")) == "embedded":
-                from packages.common.gateway_constants import GATEWAY_DEPLOY_PREFIX
-                from services.gateway.common.app import gateway_app
-                app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
-                print(
-                    f"[手动注册] 内部网关数据面子应用已挂载: {GATEWAY_DEPLOY_PREFIX}/chat/completions"
-                    f"（独立文档: {GATEWAY_DEPLOY_PREFIX}/docs）"
-                )
-            else:
-                print("[跳过] 网关配置为 standalone，业务 API 不挂载 /v1/gateway")
-    except ImportError as e:
-        print(f"[警告] 无法注册内部网关数据面路由: {e}")
+    # 部署形态读取 harness manifest（经 plugin_manager 读 JSON，不 import 具体插件实现，
+    # AC-PLR-13-1）；enabled 缺省 True、deployment 缺省 standalone，与
+    # gateway_config.DEFAULTS 语义一致。
+    from base.common.plugin_manager import get_plugin_manager
+    _harness_cfg = ((get_plugin_manager().get_manifest("harness") or {}).get("config") or {}).get("gateway_issuance") or {}
+    _gw_enabled = _harness_cfg.get("enabled")
+    _gw_enabled = True if _gw_enabled is None else bool(_gw_enabled)
+    _gw_deployment = str(_harness_cfg.get("deployment") or "standalone")
+    if _gw_enabled and _gw_deployment == "embedded":
+        from packages.common.gateway_constants import GATEWAY_DEPLOY_PREFIX
+        from services.gateway.common.app import gateway_app
+        app.mount(GATEWAY_DEPLOY_PREFIX, gateway_app)
+        print(
+            f"[手动注册] 内部网关数据面子应用已挂载: {GATEWAY_DEPLOY_PREFIX}/chat/completions"
+            f"（独立文档: {GATEWAY_DEPLOY_PREFIX}/docs）"
+        )
+    else:
+        print("[跳过] 网关配置为 standalone 或未启用，业务 API 不挂载 /v1/gateway")
 
     return app
 
 
 def setup_monitoring(app: FastAPI):
     """设置监控功能"""
-    
-    # 注册健康检查端点
-    try:
-        from base.common.health import router as health_router
-        app.include_router(health_router, prefix="/health")
-        print("[监控] 健康检查端点已注册: /health")
-    except ImportError as e:
-        print(f"[警告] 无法导入健康检查模块: {e}")
-    
+
+    # 注册健康检查端点（base/common 模块始终存在，W2-1 整改：删除 ImportError 兜底）
+    from base.common.health import router as health_router
+    app.include_router(health_router, prefix="/health")
+    print("[监控] 健康检查端点已注册: /health")
+
     # 注册Prometheus中间件和指标端点
     if getattr(settings, 'PROMETHEUS_ENABLED', False):
-        try:
-            from base.common.prometheus import PrometheusMiddleware, metrics_endpoint
-            app.add_middleware(PrometheusMiddleware)
-            app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
-            print("[监控] Prometheus监控已启用: /metrics")
-        except ImportError as e:
-            print(f"[警告] 无法导入Prometheus模块: {e}")
-    
+        from base.common.prometheus import PrometheusMiddleware, metrics_endpoint
+        app.add_middleware(PrometheusMiddleware)
+        app.add_api_route("/metrics", metrics_endpoint, methods=["GET"])
+        print("[监控] Prometheus监控已启用: /metrics")
+
     # 初始化Jaeger分布式追踪
     if getattr(settings, 'JAEGER_ENABLED', False):
-        try:
-            from base.common.tracing import setup_jaeger, instrument_app
-            setup_jaeger()
-            instrument_app(app)
-            print(f"[监控] Jaeger追踪已启用: {settings.JAEGER_HOST}:{settings.JAEGER_PORT}")
-        except ImportError as e:
-            print(f"[警告] 无法导入Jaeger模块: {e}")
+        from base.common.tracing import setup_jaeger, instrument_app
+        setup_jaeger()
+        instrument_app(app)
+        print(f"[监控] Jaeger追踪已启用: {settings.JAEGER_HOST}:{settings.JAEGER_PORT}")

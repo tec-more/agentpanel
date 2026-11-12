@@ -8,6 +8,35 @@ from base.start import init_app
 # 创建实际应用
 real_app = init_app()
 
+# 路径契约（与 base/common/plugin_contract.py 配套，唯一来源）：
+# - 浏览器侧 /api 由本包装器剥离，插件内不得重复声明
+# - 应用内 API 路径以 /v1/ 开头；/internal/ 为服务间接口
+# - 静态资源与已知 SPA 页面走白名单，其余路径返回 404 JSON，
+#   不再把所有未知路径伪装成 200 index.html
+API_PATH_PREFIXES = ("/v1/", "/internal/")
+PASSTHROUGH_PREFIXES = (
+    "/docs", "/openapi", "/redoc", "/static", "/metrics", "/health",
+    "/uploads/", "/files/",
+)
+SPA_EXACT_PATHS = {"/", "/index.html", "/favicon.ico"}
+SPA_PREFIXES = ("/panel", "/install", "/login", "/assets/")
+
+
+def apply_api_prefix(scope: dict, original_path: str, prefix: str) -> dict:
+    """统一的 /api 剥离规则，HTTP 与 WebSocket 共用。"""
+    if original_path.startswith(prefix):
+        new_scope = dict(scope)
+        new_scope["path"] = original_path[len(prefix):] or "/"
+        new_scope["root_path"] = prefix
+        return new_scope
+    return scope
+
+
+def is_spa_path(path: str) -> bool:
+    """是否属于前端 SPA 页面或构建产物路径。"""
+    return path in SPA_EXACT_PATHS or any(path.startswith(p) for p in SPA_PREFIXES)
+
+
 class ASGIAppWithPrefix:
     """ASGI 应用包装器，自动添加路径前缀"""
 
@@ -30,15 +59,8 @@ class ASGIAppWithPrefix:
             client = scope.get("client", ["", ""])[0] if scope.get("client") else ""
             original_path = scope.get("path", "")
 
-            # 处理 /api 前缀（与HTTP请求保持一致）
-            path = original_path
-            if path.startswith(self.prefix):
-                # 移除 /api 前缀
-                new_path = path[len(self.prefix):] or "/"
-                scope = dict(scope)  # 创建副本
-                scope["path"] = new_path
-                scope["root_path"] = self.prefix
-
+            # 与 HTTP 请求共用同一条 /api 剥离规则
+            scope = apply_api_prefix(scope, original_path, self.prefix)
             await self.app(scope, receive, send)
             return
 
@@ -63,13 +85,8 @@ class ASGIAppWithPrefix:
                 await self.app(scope, receive, send)
                 return
 
-            # 静态资源路径直接透传
-            if (original_path.startswith("/docs") or
-                original_path.startswith("/openapi") or
-                original_path.startswith("/redoc") or
-                original_path.startswith("/static") or
-                original_path.startswith("/metrics") or
-                original_path.startswith("/health")):
+            # 静态资源/监控/上传文件路径直接透传（/uploads 由 start.py 挂载）
+            if original_path.startswith(PASSTHROUGH_PREFIXES):
                 await self.app(scope, receive, send)
                 return
 
@@ -81,21 +98,13 @@ class ASGIAppWithPrefix:
             # 安装相关 API 路径始终可访问
             if original_path.startswith("/api/v1/install") or original_path.startswith("/v1/install"):
                 # 如果路径以 /api 开头，移除前缀
-                if original_path.startswith(self.prefix):
-                    new_path = original_path[len(self.prefix):] or "/"
-                    scope = dict(scope)
-                    scope["path"] = new_path
-                    scope["root_path"] = self.prefix
+                scope = apply_api_prefix(scope, original_path, self.prefix)
                 await self.app(scope, receive, send)
                 return
 
             # 公共配置 API 路径始终可访问（用于前端检查安装状态）
             if original_path.startswith("/api/v1/common") or original_path.startswith("/v1/common"):
-                if original_path.startswith(self.prefix):
-                    new_path = original_path[len(self.prefix):] or "/"
-                    scope = dict(scope)
-                    scope["path"] = new_path
-                    scope["root_path"] = self.prefix
+                scope = apply_api_prefix(scope, original_path, self.prefix)
                 await self.app(scope, receive, send)
                 return
 
@@ -113,22 +122,32 @@ class ASGIAppWithPrefix:
                     await response(scope, receive, send)
                     return
 
-            # 如果路径以 prefix 开头，移除它（API 路径）
+            # API 路径：统一剥离 /api 后交给 FastAPI
             if original_path.startswith(self.prefix):
-                new_path = original_path[len(self.prefix):] or "/"
+                scope = apply_api_prefix(scope, original_path, self.prefix)
+                await self.app(scope, receive, send)
+                return
+
+            # 应用内直连路径（/v1/...）：路径不变，仅标注 root_path
+            if original_path.startswith(API_PATH_PREFIXES):
                 scope = dict(scope)
-                scope["path"] = new_path
+                scope["path"] = original_path
                 scope["root_path"] = self.prefix
                 await self.app(scope, receive, send)
                 return
 
-            # 如果路径不以 prefix 开头，但是是API路径（/v1/开头），自动添加前缀
-            if original_path.startswith("/v1/"):
-                new_path = original_path
-                scope = dict(scope)
-                scope["path"] = new_path
-                scope["root_path"] = self.prefix
-                await self.app(scope, receive, send)
+            # 未知路径不再一律返回 index.html：接口写错前缀时必须给出 404 JSON，
+            # 否则前端拿到 200 HTML 却解析失败，表现为「接口 404 / 页面白屏」。
+            if not is_spa_path(original_path):
+                from starlette.responses import JSONResponse
+                await JSONResponse(
+                    status_code=404,
+                    content={
+                        "detail": "Not Found",
+                        "code": 404,
+                        "hint": "API 路径需以 /api/v1/ 或 /v1/ 开头；页面路径需属于 SPA 白名单",
+                    },
+                )(scope, receive, send)
                 return
 
             # 非 API 路径 - 返回前端页面

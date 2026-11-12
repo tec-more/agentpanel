@@ -28,29 +28,9 @@ def get_discovered_plugins() -> List[str]:
 
 
 def get_enabled_plugins() -> List[str]:
-	"""
-	从各插件的 manifest.json 读取已安装且激活的插件列表
-	（供路由/功能门控使用；ORM 模型加载请用 get_model_list）
-	"""
-	import json
-	plugins_dir = Path(__file__).parent.parent / "plugins"
-	exclude_dirs = {"__pycache__", ".git"}
-
-	enabled_plugins = []
-	if plugins_dir.exists() and plugins_dir.is_dir():
-		for plugin in plugins_dir.iterdir():
-			if plugin.is_dir() and not plugin.name.startswith("_") and plugin.name not in exclude_dirs:
-				manifest_file = plugin / "manifest.json"
-				if manifest_file.exists():
-					try:
-						with open(manifest_file, "r", encoding="utf-8") as f:
-							manifest = json.load(f)
-							if manifest.get("is_installed") and manifest.get("is_enabled"):
-								enabled_plugins.append(plugin.name)
-					except Exception:
-						pass
-
-	return enabled_plugins
+	"""委托 base/common/plugin_gate.py：全平台唯一启停判定入口。"""
+	from base.common import plugin_gate
+	return plugin_gate.active_plugin_names()
 
 
 def get_plugin_models_from_manifest(plugin_name: str) -> List[str]:
@@ -103,9 +83,6 @@ def get_model_list() -> List[str]:
 	# 加载所有已发现插件的模型（不论安装/激活状态）
 	discovered_plugins = get_discovered_plugins()
 	for plugin_name in discovered_plugins:
-		# P1：harness 的 quota/reservation/凭据等模型已迁入共享包（唯一来源）
-		if plugin_name == "harness":
-			continue
 		models = get_plugin_models_from_manifest(plugin_name)
 		plugin_models.extend(models)
 

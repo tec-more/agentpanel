@@ -116,5 +116,26 @@
         "on_startup": "on_startup",
         "on_shutdown": "on_shutdown"
     },
-    "config": {}
+    "config": {},
+    "events": {
+        "register_ref": "base.plugins.mail.services.event_handler:register_mail_event_handlers",
+        "unregister_ref": "base.plugins.mail.services.event_handler:unregister_mail_event_handlers",
+        "subscribe": [
+            {
+                "event_name": "model.created",
+                "handler_ref": "base.plugins.mail.services.event_handler:register_mail_event_handlers",
+                "description": "消息：模型变更产生系统消息"
+            },
+            {
+                "event_name": "model.updated",
+                "handler_ref": "base.plugins.mail.services.event_handler:register_mail_event_handlers",
+                "description": "消息：模型变更产生系统消息"
+            },
+            {
+                "event_name": "model.deleted",
+                "handler_ref": "base.plugins.mail.services.event_handler:register_mail_event_handlers",
+                "description": "消息：模型变更产生系统消息"
+            }
+        ]
+    }
 }

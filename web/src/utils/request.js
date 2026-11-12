@@ -1,15 +1,16 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
+import { API_BASE } from '@/utils/apiBase'
 
 const request = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 15000
 })
 
 export function createRequestWithTimeout(timeout) {
   const instance = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE,
     timeout
   })
 

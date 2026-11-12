@@ -6,7 +6,7 @@
     "author": "hepan",
     "is_installed": false,
     "is_enabled": false,
-    "route_prefix": "/v1/alipay",
+    "route_prefix": "/v1/pay/alipay",
     "routes": [
         "api/v1"
     ],

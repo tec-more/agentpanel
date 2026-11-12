@@ -38,9 +38,6 @@ services:
 
   nginx:
     # 纯反代镜像（deploy/nginx/Dockerfile）：配置由卷挂载下发，静态资源由 app_wrapper 提供
-    build:
-      context: ../..
-      dockerfile: deploy/nginx/Dockerfile
     image: aipanel-nginx:latest
     container_name: aipanel-nginx
     restart: always

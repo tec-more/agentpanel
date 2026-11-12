@@ -37,7 +37,7 @@ services:
       - "9998"                 # 仅编排内网暴露，外部统一走 nginx
 
   nginx:
-    # 多阶段构建（deploy/nginx/Dockerfile）：node 编译 web-user → 镜像内自带 dist，无需本地产物
+    # 纯反代镜像（deploy/nginx/Dockerfile）：配置由卷挂载下发，静态资源由 app_wrapper 提供
     build:
       context: ../..
       dockerfile: deploy/nginx/Dockerfile
@@ -46,7 +46,6 @@ services:
     restart: always
     depends_on:
       - app
-      - dsh
     volumes:
       - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../nginx/conf.d:/etc/nginx/conf.d:ro

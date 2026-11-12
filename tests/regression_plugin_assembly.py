@@ -177,8 +177,9 @@ async def main():
             check("禁用后菜单清理(无孤儿)", dis_m == 0, f"menus={dis_m}")
             check("禁用后权限清理(无孤儿)", dis_p == 0, f"perms={dis_p}")
             rem = route_present(app, am["route_prefix"])
-            note(f"禁用后 approval 路由仍残留于 app.routes（残留={rem}）"
-                 f" —— AC-PLR-03-1「停用即不可达」未做请求期门控，属已知缺口")
+            note(f"禁用后 approval 路由对象仍残留于 app.routes（残留={rem}）"
+                 f" —— 已由 AC-PLR-03-1 请求期门控拦截为 404（见 regression_pending.py C13），"
+                 f" 路由表不做卸载以避免破坏 OpenAPI/依赖树")
 
             # 4) 启停压测 x3（幂等、无重复/孤儿）
             for i in range(3):
@@ -213,7 +214,8 @@ async def main():
             check("启用后 alipay 路由已注册", route_present(app, al["route_prefix"]))
             await mgr.disable_plugin("alipay")
             rem_a = route_present(app, al["route_prefix"])
-            note(f"禁用后 alipay 路由仍残留于 app.routes（残留={rem_a}）—— 同上已知缺口")
+            note(f"禁用后 alipay 路由对象仍残留于 app.routes（残留={rem_a}）—— 同上，"
+                 f" 请求期门控已覆盖，不再属于 AC-PLR-03-1 缺口")
             # 确认无副作用：alipay 无声明菜单/权限，应仍为空
             al_menus = await Menu.filter(path__startswith=al["route_prefix"]).count()
             check("alipay 启用/禁用未产生孤儿菜单", al_menus == 0, f"menus={al_menus}")

@@ -2,8 +2,9 @@
 
 三组用例：
   A. 部署建表：event_subscriptions 在 RUN_DB_MIGRATIONS=false 容器侧的可达性
-  B. 作业关闭（W2-3 / AC-PLR-15-1·13-1）：作业门控依赖 enabled 态 + 平台层无插件实现顶层导入
-  C. 端到端冒烟（W3-3 / AC-PLR-03-1·03-2·23-1·23-3）：smoke_sample 示例插件全生命周期
+  B. 作业调度器（W2-3 / AC-PLR-15-1·13-1）：全文零插件导入 + 6 作业装配 + 运行期禁用即取消
+  C. 端到端冒烟（W3-3 / AC-PLR-03-1·03-2·23-1·23-3）：smoke_sample 全生命周期 + 请求期门控 404/200
+  D. OPEN 项闭环：门控装配链 / agent 路由自挂载清理 / 关闭期消息排空（动态）
 
 运行（激活 venv，项目根目录）：
     .venv/Scripts/python tests/regression_pending.py
@@ -189,83 +190,134 @@ async def group_a_deploy_table():
             break
     check("A2 event_subscriptions 模型已纳入 Tortoise 注册(generate_schemas 可建)", registered)
 
-    # aerich 迁移是否覆盖该表
-    mig_root = WORKDIR / "migrations"
-    covered = False
-    if mig_root.exists():
-        for f in mig_root.rglob("*.py"):
-            try:
-                if "event_subscriptions" in f.read_text(encoding="utf-8", errors="ignore"):
-                    covered = True
-                    break
-            except Exception:
-                pass
+    # 平台 SQL 迁移是否覆盖该表（项目实际用 migrations/*.sql，不是 aerich python 迁移）
+    from base.common.database import _db_migrations_enabled, parse_migration_filename
 
-    from base.common.database import _db_migrations_enabled
+    mig_root = WORKDIR / "migrations"
+    mig_files = []
+    if mig_root.exists():
+        for pattern in ("*.sql", "*.py"):
+            for f in mig_root.rglob(pattern):
+                try:
+                    if "event_subscriptions" in f.read_text(encoding="utf-8", errors="ignore"):
+                        mig_files.append(f)
+                except Exception:
+                    pass
+    covered = bool(mig_files)
+    # core 前缀 => MigrationMeta.plugin_name=None => 不依赖插件启用态，恒执行
+    core_migs = [
+        f for f in mig_files
+        if f.suffix == ".sql"
+        and (meta := parse_migration_filename(f.name)) is not None
+        and meta.plugin_name is None
+        and meta.table == "event_subscriptions"
+    ]
 
     a3 = covered or _db_migrations_enabled()
     check(
-        "A3 部署建表保障存在(aerich 覆盖 或 本环境 RUN_DB_MIGRATIONS=true)",
+        "A3 部署建表保障存在(SQL 迁移覆盖 或 本环境 RUN_DB_MIGRATIONS=true)",
         a3,
-        f"aerich覆盖={covered} RUN_DB_MIGRATIONS_true={_db_migrations_enabled()}",
+        f"SQL迁移覆盖={covered} RUN_DB_MIGRATIONS_true={_db_migrations_enabled()}",
     )
-    if not covered:
-        note(
-            "A-部署缺口（已确认，非本测试引入）：event_subscriptions 无 aerich 迁移；且 "
-            "init_data() 在 RUN_DB_MIGRATIONS=false 时跳过 aerich 与 generate_schemas"
-            "（database.py:329/338）。故 RUN_DB_MIGRATIONS=false 容器若未单独跑 aerich，"
-            "该表将缺失 → 事件中心/订阅不可用。建议：补一条 aerich 迁移，或在容器启动脚本"
-            "显式 ensure schema（dev 下 generate_schemas(safe=True) 已自动建，已验证）。"
-        )
+    check(
+        "A3a event_subscriptions 有 core 前缀幂等建表迁移(部署流程执行即恒生效)",
+        len(core_migs) >= 1,
+        f"files={[f.name for f in core_migs]}",
+    )
+    note(
+        "A-部署约束（非缺陷）：RUN_DB_MIGRATIONS=false 时 init_data() 会跳过全部启动期"
+        "迁移与 generate_schemas，部署流程须单独执行 migrations/*.sql（runbook 已约定）；"
+        "本轮已补 core_create_table_event_subscriptions_*.sql，dev 下 generate_schemas "
+        "仍会自动建表，两者幂等共存。"
+    )
 
 
 async def group_b_jobs(mgr):
-    """B. 作业关闭（W2-3 / AC-PLR-15-1·13-1）。"""
-    print("\n--- B. 作业关闭门控（W2-3） ---")
-    # B1 静态：base/start.py 顶层不得导入「具体插件实现」（AC-PLR-13-1 目标 = 0）
+    """B. 作业关闭（W2-3 / AC-PLR-15-1·13-1）：统一调度器装配与运行期取消。"""
+    from base.common.jobs import PLATFORM_KEY, job_scheduler
+
+    print("")
+    print("--- B. 作业调度器装配与运行期取消（W2-3） ---")
+    # B1 静态：base/start.py **全文（含函数体）** 不得导入具体插件实现
     start_src = (WORKDIR / "base" / "start.py").read_text(encoding="utf-8")
     violations = []
     for line in start_src.splitlines():
-        if line.startswith(" ") or line.startswith("\t"):
-            continue  # 仅查顶层（无缩进）
-        if line.startswith("from base.plugins.") or line.startswith("import base.plugins."):
-            # base.plugins 包自身的框架导入（manager）放行；具体插件子包视为违例
-            if line.startswith("from base.plugins import") or line.startswith("import base.plugins "):
-                continue
-            violations.append(line.strip())
+        stripped = line.strip()
+        if not (stripped.startswith("from base.plugins.") or stripped.startswith("import base.plugins.")):
+            continue
+        # base.plugins 包自身的框架导入（manager）放行
+        if stripped.startswith("from base.plugins import") or stripped.startswith("import base.plugins "):
+            continue
+        violations.append(stripped)
     check(
-        "B1 启动入口无「具体插件实现」顶层导入(AC-PLR-13-1)",
+        "B1 启动入口全文无具体插件实现导入(含函数体,AC-PLR-13-1 完全达标)",
         not violations,
-        f"违例={violations}" if violations else "无具体插件顶层导入",
+        f"违例={violations}" if violations else "0 处",
     )
-    if violations:
-        note(
-            "B-已知缺口（W2-1 待整改）：base/start.py 顶层直接 import 具体插件实现"
-            f"（如 {violations[0]}），违反 AC-PLR-13-1「启动入口插件实现导入数=0」。"
-            "W2-1 计划将其纳入 internal_routes/声明驱动；当前作业门控（B2/B3）仍正确。"
-        )
 
-    # B2 门控：启用态返回实例，禁用态返回 None
+    # B2 插件启用态门控仍有效
     check("B2 get_active_plugin('audit') 启用态非 None", mgr.get_active_plugin("audit") is not None)
     check("B2 get_active_plugin('approval') 禁用态为 None", mgr.get_active_plugin("approval") is None)
 
-    # B3 模拟「关闭非底层插件」：把 audit 翻转成禁用，门控应排除其作业（AC-PLR-15-1）
+    # B3 start_all 装配计数：平台 2 + 启用插件声明的 4 个作业（audit/customer/harness/sales）
+    owners = job_scheduler.task_owners()
+    check("B3 start_all 装配 6 个作业(平台2+插件4)", job_scheduler.task_count() == 6, f"owners={owners}")
+    check(
+        "B3 平台作业恒启(quota 对账/悬挂预占清理)",
+        job_scheduler.task_count(PLATFORM_KEY) == 2,
+        f"platform={job_scheduler.task_count(PLATFORM_KEY)}",
+    )
+
+    # B4 真实运行期集成：走 plugin_manager.disable/enable，验证作业被 cancel 与恢复
+    # （audit 未被任何启用插件依赖、入口无钩子，是安全的启停样本；crm 依赖 sales，故不用 sales）
     audit_manifest = PLUGINS / "audit" / "manifest.json"
     audit_orig = audit_manifest.read_text(encoding="utf-8") if audit_manifest.exists() else None
     try:
-        if audit_orig is not None:
-            mgr.update_plugin_status("audit", is_enabled=False)
+        before = job_scheduler.task_count("audit")
+        ok_dis = await mgr.disable_plugin("audit")
+        after_dis = job_scheduler.task_count("audit")
         check(
-            "B3 关闭 audit 后 get_active_plugin('audit')=None(作业门控生效,AC-PLR-15-1)",
-            mgr.get_active_plugin("audit") is None,
+            "B4 运行期禁用 audit 后其作业任务被 cancel(AC-PLR-15-1 真实闭环)",
+            ok_dis and before == 1 and after_dis == 0,
+            f"ok={ok_dis} before={before} after={after_dis}",
+        )
+        ok_en = await mgr.enable_plugin("audit")
+        after_en = job_scheduler.task_count("audit")
+        check(
+            "B4 重新启用 audit 后作业任务恢复",
+            ok_en and after_en == 1,
+            f"ok={ok_en} after={after_en}",
         )
     finally:
         if audit_orig is not None:
+            # 恢复 manifest 原文、门控缓存与作业，保证共享库/进程状态回到基线
+            mgr.update_plugin_status("audit", is_installed=True, is_enabled=True)
             audit_manifest.write_text(audit_orig, encoding="utf-8")
-            mgr.update_plugin_status("audit", is_enabled=True)
+            await job_scheduler.start_plugin("audit")
 
-    # B4 作业启动期未抛异常（能执行到此处说明 lifespan 已完成全部作业 setup）
-    check("B4 作业启动期未抛异常(lifespan 已完成全部作业 setup)", True)
+    # B5 sales：调度器启停对称（绕开 manager 的依赖门控，单测调度器本身）
+    n_stop = await job_scheduler.stop_plugin("sales")
+    check(
+        "B5 禁用 sales 后其作业任务取消",
+        n_stop == 1 and job_scheduler.task_count("sales") == 0,
+        f"stopped={n_stop} now={job_scheduler.task_count('sales')}",
+    )
+    n_start = await job_scheduler.start_plugin("sales")
+    check(
+        "B5 重新启用 sales 后作业任务恢复(enable→disable→enable 循环)",
+        n_start == 1 and job_scheduler.task_count("sales") == 1,
+        f"started={n_start} now={job_scheduler.task_count('sales')}",
+    )
+
+    # B6 集成链：装配器两条启停路径都挂了作业同步钩子
+    pm_src = (WORKDIR / "base" / "common" / "plugin_manager.py").read_text(encoding="utf-8")
+    check(
+        "B6 enable/disable 均声明作业同步钩子(_sync_plugin_jobs)",
+        pm_src.count("_sync_plugin_jobs(") >= 3,
+        f"调用点={pm_src.count('_sync_plugin_jobs(')}",
+    )
+
+    check("B7 作业启动期未抛异常(lifespan 已完成全部作业 setup)", True)
 
 
 async def group_c_e2e(app, mgr):
@@ -276,6 +328,10 @@ async def group_c_e2e(app, mgr):
     ok = await mgr.enable_plugin(SMOKE_NAME)
     check("C1 enable_plugin('smoke_sample') 返回 True", ok)
     check("C2 启用后 is_plugin_active('smoke_sample')=True", is_plugin_active(SMOKE_NAME))
+    # W2-3：smoke_sample 未声明 jobs，启用不应产生作业任务（方案 §6 断言③）
+    from base.common.jobs import job_scheduler
+    jobs_baseline = job_scheduler.task_count()
+    check("C2a 无 jobs 声明的插件启用后不产生作业任务", job_scheduler.task_count(SMOKE_NAME) == 0)
 
     # 菜单可见
     mq = Q(name=MENU_NAME, path=MENU_PATH)
@@ -310,6 +366,11 @@ async def group_c_e2e(app, mgr):
     ok2 = await mgr.disable_plugin(SMOKE_NAME)
     check("C8 disable_plugin('smoke_sample') 返回 True", ok2)
     check("C9 禁用后 is_plugin_active('smoke_sample')=False", not is_plugin_active(SMOKE_NAME))
+    check(
+        "C9a 无 jobs 声明的插件启停不影响全局作业数(装卸对称)",
+        job_scheduler.task_count() == jobs_baseline and job_scheduler.task_count(SMOKE_NAME) == 0,
+        f"before={jobs_baseline} after={job_scheduler.task_count()}",
+    )
     dis_m = await Menu.filter(mq).count()
     check("C10 禁用后菜单清理(无孤儿)", dis_m == 0, f"menus={dis_m}")
     dis_p = await Permission.filter(code=PERM_CODE, is_active=True).count()
@@ -321,10 +382,135 @@ async def group_c_e2e(app, mgr):
         sub_off == 0 and sub_rows == 1,
         f"on={sub_off} rows={sub_rows}",
     )
+    # C13 请求期门控（AC-PLR-03-1）：路由对象残留可以接受，但请求必须 404 且不执行 handler
     rem = route_present(app, ROUTE_PREFIX)
+    try:
+        transport_off = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport_off, base_url="http://testserver") as client:
+            resp_off = await client.get(ROUTE_PREFIX + "/ping")
+        check(
+            "C13 禁用后 GET /v1/_smoke/ping 返回 404(请求期门控生效)",
+            resp_off.status_code == 404,
+            f"status={resp_off.status_code} body={resp_off.text[:100]}",
+        )
+        check(
+            "C13a 404 响应不含业务数据(handler 未执行)",
+            '"ok"' not in resp_off.text,
+            resp_off.text[:100],
+        )
+    except Exception as e:
+        check("C13 禁用后 GET /v1/_smoke/ping 返回 404(请求期门控生效)", False, f"请求异常: {e}")
     note(
-        f"C-已知缺口：禁用后 smoke_sample 路由仍残留于 app.routes（残留={rem}）"
-        " —— AC-PLR-03-1「停用即不可达」请求期门控未做，属已知缺口（与 assembly 回归一致）。"
+        f"C-路由对象残留={rem}（预期：FastAPI 不支持安全卸载已注册路由）；"
+        "请求期已由 plugin_gate.plugin_route_guard 拦截为 404，AC-PLR-03-1 已闭环。"
+    )
+
+    # C14 门控对称：重新启用后同一条残留路由立即恢复 200，无需重建 app
+    ok3 = await mgr.enable_plugin(SMOKE_NAME)
+    try:
+        transport_on = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport_on, base_url="http://testserver") as client:
+            resp_on = await client.get(ROUTE_PREFIX + "/ping")
+        check(
+            "C14 重新启用后同一路由恢复 200(门控按 manifest 实时判定)",
+            ok3 and resp_on.status_code == 200 and resp_on.json().get("ok") is True,
+            f"ok={ok3} status={resp_on.status_code} body={resp_on.text[:100]}",
+        )
+    except Exception as e:
+        check("C14 重新启用后同一路由恢复 200(门控按 manifest 实时判定)", False, f"请求异常: {e}")
+    finally:
+        await mgr.disable_plugin(SMOKE_NAME)
+
+
+async def group_d_open_items():
+    """D. 本轮 OPEN 项闭环：门控装配链 / agent 清理 / 关闭期消息排空。"""
+    print("")
+    print("--- D. OPEN 项闭环 ---")
+
+    pm_src = (WORKDIR / "base" / "common" / "plugin_manager.py").read_text(encoding="utf-8")
+    gate_src = (WORKDIR / "base" / "common" / "plugin_gate.py").read_text(encoding="utf-8")
+    check(
+        "D1 业务/内部路由装配均注入请求期 guard",
+        pm_src.count("dependencies=route_guard") == 2,
+        f"注入点={pm_src.count('dependencies=route_guard')}",
+    )
+    check(
+        "D1a guard 判定复用唯一门控 is_plugin_active",
+        "plugin_route_guard" in gate_src and "is_plugin_active(name)" in gate_src,
+    )
+
+    agent_src = (PLUGINS / "agent" / "__init__.py").read_text(encoding="utf-8")
+    agent_manifest = json.loads((PLUGINS / "agent" / "manifest.json").read_text(encoding="utf-8"))
+    check("D2 agent/__init__.py 不再自导出 router", "router = APIRouter" not in agent_src)
+    check("D2a agent on_enable 不再自行 include_router", "app.include_router" not in agent_src)
+    check(
+        "D2b agent manifest.routes 指向聚合目录",
+        agent_manifest.get("routes") == ["api/aggregate"],
+        f"routes={agent_manifest.get('routes')}",
+    )
+    check(
+        "D2c 聚合路由文件存在",
+        (PLUGINS / "agent" / "api" / "aggregate" / "agent_all_router.py").exists(),
+    )
+
+    start_src = (WORKDIR / "base" / "start.py").read_text(encoding="utf-8")
+    cw_src = (WORKDIR / "base" / "common" / "events" / "consumer_worker.py").read_text(encoding="utf-8")
+    check(
+        "D3 消息回调外壳隔离 CancelledError 与通道失效异常",
+        "except asyncio.CancelledError" in cw_src and "_process_message" in cw_src,
+    )
+    i_stop = start_src.index("consumer_worker.stop()")
+    i_bus = start_src.index("event_bus.shutdown()")
+    i_db = start_src.index("Tortoise.close_connections()")
+    check("D3a 关闭顺序: 排空 consumer -> 关 event_bus -> 关 DB", i_stop < i_bus < i_db)
+
+    # D4 动态验证 stop() 确实排空在途任务（不依赖真实 RabbitMQ）
+    from base.common.events.consumer_worker import ConsumerWorker
+
+    class _StubCM:
+        def get_queue(self):
+            return None
+
+    class _StubBus:
+        def get_connection_manager(self):
+            return _StubCM()
+
+    cw = ConsumerWorker(_StubBus())
+    finished = []
+
+    async def _slow():
+        try:
+            await asyncio.sleep(0.05)
+            finished.append(True)
+        finally:
+            # 与 _on_message 的 finally 一致，避免 stub 在日志里留下假的「剩余」
+            cw._inflight.discard(asyncio.current_task())
+
+    t = asyncio.create_task(_slow())
+    cw._inflight.add(t)
+    await cw.stop(drain_timeout=1.0)
+    check(
+        "D4 stop() 等在途消息收尾后才返回",
+        finished == [True] and t.done() and not t.cancelled(),
+        f"finished={finished} done={t.done()}",
+    )
+
+    cw2 = ConsumerWorker(_StubBus())
+    blocker = asyncio.Event()
+
+    async def _blocked():
+        try:
+            await blocker.wait()
+        finally:
+            cw2._inflight.discard(asyncio.current_task())
+
+    t2 = asyncio.create_task(_blocked())
+    cw2._inflight.add(t2)
+    await cw2.stop(drain_timeout=0.05)
+    check(
+        "D4a 超时在途任务被主动取消(关闭流程不被拖死)",
+        t2.done() and t2.cancelled(),
+        f"done={t2.done()} cancelled={t2.cancelled()}",
     )
 
 
@@ -338,6 +524,7 @@ async def main():
             await group_a_deploy_table()
             await group_b_jobs(mgr)
             await group_c_e2e(app, mgr)
+            await group_d_open_items()
     finally:
         # 清理：删除示例插件目录 + 其遗留的菜单/权限/订阅行，保证共享库基线
         try:

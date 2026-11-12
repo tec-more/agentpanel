@@ -4,6 +4,15 @@
     "version": "0.1.0",
     "description": "DeepSeek Harness 业务接入：客户端凭据、身份映射、会话/运行生命周期、步骤与用量回传、安全审计、动作策略、模型价格",
     "author": "agentpanel",
+    "jobs": [
+        {
+            "name": "gateway_reconcile",
+            "description": "网关记账 vs 客户端上报对账（间隔每轮重读，业务开关自查）",
+            "handler_ref": "base.plugins.harness.jobs.reconcile:run",
+            "interval_ref": "base.plugins.harness.jobs.reconcile:resolve_interval",
+            "interval_seconds": 600
+        }
+    ],
     "is_installed": true,
     "is_enabled": true,
     "route_prefix": "/v1/harness",

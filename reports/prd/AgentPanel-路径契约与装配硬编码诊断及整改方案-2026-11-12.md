@@ -2,12 +2,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 文档类型 | 诊断 + 整改方案 + **主体已实施 + 动态回归已通过（24/24，2026-11-12）** |
-| 日期 / 版本 | 2026-11-12 / v1.1 |
+| 文档类型 | 诊断 + 整改方案 + **全部遗留 OPEN 项已闭环 + 动态回归全通过（24/24 + 42/42，2026-11-12）** |
+| 日期 / 版本 | 2026-11-12 / v1.2 |
 | 判据 | `AgentPanel-平台级需求规格-v3.0-2026-11-12.md`：PLR-01/02/03/04/09/13/14/15/16/20/21/23 及各条 AC；配套 v3.0 评审报告 |
 | 前置材料 | ① `reports/prd/AgentPanel-平台级基线-路由与事件订阅符合性检查-2026-11-12.md`（后端路由、事件订阅、前端页面硬编码实证）；② 2026-11-12 路径契约诊断（`/api` 包装器与安装新插件 404，此前仅对话结论，本文首次落文档） |
 | 范围 | `base/app_wrapper.py`、`base/start.py`、`base/common/{router,plugin_manager,setting,events}/*`、`base/cli/command.py`、`base/plugins/*/manifest.json` 与插件入口、`base/core/{extension,users}/*`、`web/src/{router,stores,api,utils,layouts}/*`、`web/vite.config.js`、`deploy/nginx/conf.d/agentpanel.conf` |
-| 方法 | 静态代码核查 + 只读统计脚本；**另有动态回归 `tests/regression_plugin_assembly.py` 启动真实 app 实测，24/24 通过（2026-11-12）**；整改代码已落盘 |
+| 方法 | 静态代码核查 + 只读统计脚本；**动态回归 `tests/regression_plugin_assembly.py` 24/24、`tests/regression_pending.py` 42/42 启动真实 app 实测通过（2026-11-12）**；整改代码已落盘 |
 | 状态前提 | v3.0 严格平台级定义（J1/J2/J3）仍是评审报告 PB-01「待书面签字」。若最终改按方案 A（平台 = 产品整体），需重评的是「判定层级」，本文事实与整改动作不变 |
 | 排期约束 | 原「观察期内不实施运行时改造」的约束由产品负责人于 2026-11-12 18:04 明确授权解除（选择「允许完整改造」）；灰度观察期计时、T7.5 准入、旧编排代码与 `mode` 开关仍按原约定保留，不重置、不提前勾选 |
 
@@ -52,9 +52,9 @@
 
 **未完成 / 待回归**：
 - 幂等键目前是事件中心内存 300 秒去重，RabbitMQ 消费端的业务幂等与 `EventRecord` 按业务键去重仍待 W3-1；
-- 未启动服务，四状态路由可达性、逐个关闭插件、启停压测等动态用例（AC-PLR-23-1/23-3）未跑；`RUN_DB_MIGRATIONS=false` 部署下需先建 `event_subscriptions` 表；
+- 四状态路由可达性、逐个关闭插件、启停压测、请求期门控、端到端冒烟等动态用例（AC-PLR-03-1/23-1/23-3）已由 `tests/regression_plugin_assembly.py`（24/24）与 `tests/regression_pending.py`（42/42）实测覆盖；`event_subscriptions` 已补 core 前缀幂等建表 SQL 迁移（§0.5），`RUN_DB_MIGRATIONS=false` 部署流程单独执行 `migrations/*.sql` 即可建表；
 - 工作区外 `aipanel.conf` 第二层 `/api` rewrite 已于 2026-11-12 核实：**无**（透明 `location /` 反代），本条划除；
-- `agent` 插件 `__init__.py` 仍自行导出 `router` 并在 `on_enable` 里 `include_router`（当前禁用，装配器会记录一致性偏差警告），属后续清理项。前端纯动态路由、base/common 插件模型解耦、audit 专用端点、harness 模型特例均已落地（见 §0.4）。
+- `agent` 插件自导出 `router` / `on_enable` 自挂载已清理（见 §0.5），一致性偏差警告消除。前端纯动态路由、base/common 插件模型解耦、audit 专用端点、harness 模型特例均已落地（见 §0.4）。
 
 ### 0.4 后续清理项落地（2026-11-12 晚，用户追加指令）
 
@@ -68,6 +68,19 @@
 | harness 模型特例 | harness manifest `models` 置空（其模型由共享包 `packages.common.models.*` 注册，插件目录为再导出），删除 `setting.py` 中 `if plugin_name=="harness": continue` 硬编码 | `base/plugins/harness/manifest.json`、`base/common/setting.py` |
 
 注：`base/common` 内残留的 `from base.core.users...` 为底座自引用（core 属平台而非插件），不在「插件模型零侵入」范围内，未动。
+
+### 0.5 遗留 OPEN 项闭环（2026-11-12 晚，用户指令「仍 OPEN 的继续修复」）
+
+| 原 OPEN 项 | 本轮复核的根因 | 修复 | 文件 |
+|---|---|---|---|
+| AC-PLR-03-1 禁用后 `app.routes` 残留 | FastAPI 不支持安全卸载已注册路由（OpenAPI / 依赖树在启动期固化），`disable_plugin` 只清菜单、权限、订阅与作业 | **不卸路由**，改为装配时给每条插件路由注入请求期依赖：按 manifest 双真判定，停用即 404 且业务 handler 不执行；重新启用同一路由立即恢复 200，无需重建 app。判定复用唯一门控 `is_plugin_active`，无第二套逻辑 | `base/common/plugin_gate.py::plugin_route_guard`；`plugin_manager.enable_plugin` 业务/内部路由两处 `dependencies=route_guard` |
+| `event_subscriptions` 缺迁移 | 项目实际用 `migrations/*.sql`（非 aerich python 迁移）；`RUN_DB_MIGRATIONS=false` 时启动期既不跑迁移也不 `generate_schemas` | 补 `core_` 前缀幂等建表 SQL（字段/索引按 dev 库 `information_schema` + `pg_indexes` 实测对齐）；`core` → `MigrationMeta.plugin_name=None` → 恒执行、不依赖插件启用态；已在 dev 库幂等执行验证（8 语句 / 14 字段） | `migrations/core_create_table_event_subscriptions_1794491161.sql` |
+| `agent` 插件自导出 `router` | `__init__.py` 顶层 `router` 覆盖 manifest 声明的 combined_router，`on_enable` 又自行 `include_router`，造成重复注册且绕过统一门控 | 删除自导出与自挂载；新建 `api/aggregate/agent_all_router.py` 集中聚合（含 `execution_router` / `workflow_execution_router` 两个第二 router 与 `/test`），`manifest.routes` 改指 `api/aggregate`；聚合前后 **102 条路径逐一比对完全一致**（补齐 `route_prefix` 后集合相等） | `agent/__init__.py`、`agent/manifest.json`、`agent/api/aggregate/agent_all_router.py` |
+| mail `MessageModelMapping` Traceback（上轮误判为 dev 库 schema 问题） | 实为**关闭期竞态**：`queue.cancel` 只阻止新消息投递，已投递 Task 仍在跑；随后关闭 RabbitMQ channel / DB 连接池 → `asyncpg.pool.release` 抛 `CancelledError`、`message.process.__aexit__` 访问 `message.channel` 抛 `ChannelInvalidStateError`，aio_pika `_task_done` 把异常抛到事件循环 | `ConsumerWorker` 登记在途 Task，`stop()` 先 cancel consumer 再**排空**（8s，超时主动 cancel），调用方外层超时 5s→12s；`_on_message` 拆出回调外壳，统一收口关闭期 `CancelledError` / 通道异常并记日志，不再冒泡到事件循环 | `base/common/events/consumer_worker.py`、`base/start.py` |
+
+**验收**：`regression_plugin_assembly.py` **24/24**、`regression_pending.py` **42/42**（由 28 项扩充：A3a 迁移恒执行、C13/C13a 禁用即 404、C14 重新启用恢复 200、D1~D4a 门控装配链 / agent 清理 / 关闭顺序 / 排空动态用例）全绿，退出码 0；回归日志 **Traceback 由基线 12 处降为 0**；真实关闭日志确认 `ConsumerWorker已停止(在途任务已排空，剩余=0)` 之后才关 event_bus 与 DB。
+
+**部署约束（保留，非缺陷）**：`RUN_DB_MIGRATIONS=false` 仍要求部署流程单独执行 `migrations/*.sql`（runbook 已约定）；本轮补的是迁移文件本身，不改变「容器启动期不跑迁移」的设计。
 
 ---
 
@@ -201,9 +214,9 @@
 
 | 动作 | 目标文件 | 对应 AC |
 |---|---|---|
-| W2-1 启动入口去插件实现 | `base/start.py:15,26-31,41-77,640-690` | **已完成（2026-11-12 晚，AC-PLR-13-1 达标）**：① events/quota 公共层路由集中到 `register_routers::_register_common_layer_routers`（删除 init_app 手动注册）；② 全部 `try/except ImportError` 兜底删除（events/quota/health/prometheus/jaeger/网关块，base/common 模块直接导入）；③ 嵌入式网关挂载改经 `get_plugin_manager().get_manifest("harness")` 读 config（不 import 插件实现，enabled 缺省 True / deployment 缺省 standalone 与 DEFAULTS 语义一致）；④ `configure_shared_runtime()` 迁入 harness `on_startup` 钩子。`base/start.py` 顶层与 `init_app`/lifespan 装配层 `base.plugins.<插件>` 导入数=0；剩余 8 处惰性导入均在 5 个定时任务函数体内（属 W2-3 作业注册表范围）。验证：py_compile 通过、events=10/quota=17/health=3 路由确认注册、`regression_pending.py` 20/20（B1 PASS）、`regression_plugin_assembly.py` 24/24（路由总数 481 与改前一致，零回归）。WS 路由（随 manifest.routes 装配）与 harness 内部路由（internal_routes）此前已声明驱动。 |
+| W2-1 启动入口去插件实现 | `base/start.py:15,26-31,41-77,640-690` | **已完成（2026-11-12 晚，AC-PLR-13-1 达标）**：① events/quota 公共层路由集中到 `register_routers::_register_common_layer_routers`（删除 init_app 手动注册）；② 全部 `try/except ImportError` 兜底删除（events/quota/health/prometheus/jaeger/网关块，base/common 模块直接导入）；③ 嵌入式网关挂载改经 `get_plugin_manager().get_manifest("harness")` 读 config（不 import 插件实现，enabled 缺省 True / deployment 缺省 standalone 与 DEFAULTS 语义一致）；④ `configure_shared_runtime()` 迁入 harness `on_startup` 钩子。`base/start.py` 顶层与 `init_app`/lifespan 装配层 `base.plugins.<插件>` 导入数=0；剩余 8 处惰性导入已由 W2-3 清除（2026-11-12 晚，见下条）。验证：py_compile 通过、events=10/quota=17/health=3 路由确认注册、`regression_pending.py` 20/20（B1 PASS）、`regression_plugin_assembly.py` 24/24（路由总数 481 与改前一致，零回归）。WS 路由（随 manifest.routes 装配）与 harness 内部路由（internal_routes）此前已声明驱动。 |
 | W2-2 订阅注册表 | 新增 `base/common/events/registry.py` + `plugin_manager.py` 钩子驱动 | manifest `events.subscribe` → enable 注册 / disable 注销，复用 mail 的幂等模式；`start.py:41-77` 审计订阅改为 audit 插件自身声明；清理 `mes/services/event_handlers.py:87-94` 死代码 |
-| W2-3 定时任务注册表 | `base/start.py:271-589` | 6 个作业改为插件 `jobs` 声明 + 平台统一调度，平台层不 import 插件模型；门控查 `enabled`（AC-PLR-15-1/15-2） |
+| W2-3 定时任务注册表 | `base/start.py`（旧 271-589 已删）、`base/common/jobs/`、4 个插件 `jobs/` | **已完成（2026-11-12 晚）**：manifest `jobs` 声明 + 平台统一调度器（6 作业：平台 quota×2 + audit/customer/harness/sales×4）；`enable/disable` 钩子运行期装卸，禁用即 cancel（AC-PLR-15-1 闭环）；`start.py` 插件导入=0（含函数体，AC-PLR-13-1 完全达标）；验证 24/24 + 28/28 全绿。详见 `AgentPanel-W2-3-定时任务注册表设计方案-2026-11-12.md` §9 |
 | W2-4 前端路由单一来源 | `web/src/router/index.js:6-324,381-422`、`stores/menu.js:266-286`、`MainLayout.vue:113,123` | 静态表只保留框架路由（`/`、`/panel/login`、`/install`、404）；其余全部动态注入；`route.name` 改用稳定标识（path/id）而非中文名；全局订阅组件按启用态挂载（AC-PLR-09、AC-PLR-23-2） |
 | W2-5 包装器分支收窄 | `base/app_wrapper.py:58-101,117-169,29-43` | 抽出单一路径判定函数供 HTTP/WS 共用；SPA fallback 改为已知页面前缀白名单，其余返回 404 JSON；补 `/uploads/`、`/files/` 静态特例；特例清单配置化 |
 | W2-6 插件名特例通用化 | `core/users/api/v1/menu.py:102-123`、`common/setting.py:107-108`、各 `PLUGIN_NAME` 常量 | 专用端点改为「按插件名同步菜单」的通用接口（AC-PLR-13-2） |
@@ -225,9 +238,9 @@
 |---|---|---|---|---|
 | AC-PLR-01-1 | 声明必填字段缺失即拒绝且可定位 | 无 schema 校验；零路由也返回启用成功 | 拒绝 + 字段位置/插件名 | W1 |
 | AC-PLR-01-2 | 实装注册项与声明完全一致 | WS 重复注册、harness `app_internal` 越界、agent 代码覆盖、前端静态表并行 | 启用后比对通过，多/少均失败 | W1/W2 |
-| AC-PLR-03-1 | 安装×启用四状态仅双真可达 | 禁用不卸路由；2 条 WS 无门控 | 请求期统一门控，停用即不可达 | W1/W2 |
+| AC-PLR-03-1 | 安装×启用四状态仅双真可达 | 原：禁用不卸路由；2 条 WS 无门控。**已闭环（§0.5）**：路由对象保留但请求期依 manifest 双真判定，停用 404、复用 200 | 请求期统一门控，停用即不可达 | W1/W2 |
 | AC-PLR-03-2 | 启停后菜单与权限回基线、无孤儿 | 只清菜单、权限残留 | 菜单+权限+订阅+路由对称清理 | W1 |
-| AC-PLR-13-1 | 核心层/启动入口插件实现导入数 = 0 | `start.py` 19 行、`base/common` 约 10 处 | **start.py 已达标（2026-11-12 晚 W2-1 整改）**：顶层与 init_app/lifespan 装配层=0，剩余 8 处惰性导入在定时任务函数体内（W2-3 范围）；`base/common` 经 plugin_symbol 解析器（前轮已完成） | W2 |
+| AC-PLR-13-1 | 核心层/启动入口插件实现导入数 = 0 | `start.py` 19 行、`base/common` 约 10 处 | **start.py 完全达标（2026-11-12 晚 W2-3 整改）**：全文（含所有函数体）具体插件实现导入数=0；`base/common` 经 plugin_symbol 解析器（前轮已完成） | W2 |
 | AC-PLR-13-2 / 23-2 | 新增模块平台层改动 0 文件 | 需改 `start.py` + 前端路由表 | 仅新增插件目录与 manifest | W2 |
 | AC-PLR-14-1 | 重复投递同一幂等键无重复副作用 | 每次 `uuid4()`、消费端不去重 | 按幂等键去重，重放不重复执行 | W3 |
 | AC-PLR-14-2 | 停用全部订阅方后发布仍成功 | 字面满足（逐 handler 吞异常），但订阅残留 | 订阅干净摘除且发布成功 | W1/W2 |
@@ -244,7 +257,7 @@
 - **范围真空 PB-02**：整改涉及插件级 schema（events/subscribes/jobs/component），需同步启动插件级需求，避免又形成「平台文档不承接业务口径」。
 - **凭据**：`config.conf` 含明文真实凭据，本文仅引用行号，不记录取值；任何整改输出不得携带。
 - **部署层未完全核实**：`deploy/nginx/conf.d/agentpanel.conf:5-11` 自述为 legacy 单体栈，P7 正式入口由工作区外的 `aipanel.conf` 挂载；外部 nginx 是否有第二层 `/api` rewrite 无法在本工作区只读确认，W2-5 落地前需核实。
-- **静态核查局限（已部分消除）**：四状态路由可达性、启停对称、3 轮启停压测、订阅装卸已由 `tests/regression_plugin_assembly.py` 实测（24/24，2026-11-12）；作业关闭门控（W2-3 核心）与端到端冒烟（W3-3）已由 `tests/regression_pending.py` 实测（2026-11-12：A 部署建表 3/3、B 作业门控 3/3、C 端到端 12/12 全 PASS）；**W2-1 已完全整改（2026-11-12 晚）**：events/quota 路由集中到 `register_routers`、全部 `try/except ImportError` 兜底删除、嵌入式网关挂载经 manager 读 manifest（不 import 插件实现）、`configure_shared_runtime` 迁入 harness `on_startup`——`base/start.py` 装配层插件实现导入数=0，两份回归重跑 20/20 + 24/24 零回归。**仍 OPEN**：① W2-3 作业注册表（5 个定时任务函数体内 8 处惰性插件导入 + 网关对账 gating，待 jobs 声明驱动）；② `event_subscriptions` 无 aerich 迁移，`RUN_DB_MIGRATIONS=false` 容器侧若未单独跑 aerich 该表将缺失（部署清单项）。AC-PLR-23-1/23-3 已实测通过。
+- **静态核查局限（已部分消除）**：四状态路由可达性、启停对称、3 轮启停压测、订阅装卸已由 `tests/regression_plugin_assembly.py` 实测（24/24，2026-11-12）；作业关闭门控（W2-3 核心）与端到端冒烟（W3-3）已由 `tests/regression_pending.py` 实测（2026-11-12：A 部署建表 3/3、B 作业门控 3/3、C 端到端 12/12 全 PASS）；**W2-1 已完全整改（2026-11-12 晚）**：events/quota 路由集中到 `register_routers`、全部 `try/except ImportError` 兜底删除、嵌入式网关挂载经 manager 读 manifest（不 import 插件实现）、`configure_shared_runtime` 迁入 harness `on_startup`——`base/start.py` 装配层插件实现导入数=0，两份回归重跑 20/20 + 24/24 零回归。**W2-3 已闭环（2026-11-12 晚）**：5 个定时任务函数体内 8 处惰性插件导入与网关对账 gating 已全部改为 manifest `jobs` 声明驱动 + 平台统一调度器，运行期禁用即取消；重跑 `regression_pending.py` 28/28 + `regression_plugin_assembly.py` 24/24 全绿。**遗留 OPEN 项已全部闭环（2026-11-12 晚，见 §0.5）**：AC-PLR-03-1 请求期门控（禁用即 404、重新启用 200）、`event_subscriptions` core 幂等建表 SQL 迁移、`agent` 插件路由自挂载清理、关闭期 RabbitMQ 在途消息竞态（回归日志 Traceback 12 → 0）。最终回归 **24/24 + 42/42** 全绿。AC-PLR-23-1/23-3 保持实测通过。
 - **计数口径**：23 份 `manifest.json`（历史记录写 24 个插件，可能有一目录无声明文件）；25 处 `.subscribe(` 含 1 处总线内部转发；73 条前端静态 `path` 中 41 条属禁用/无 manifest 插件页面；151 条菜单 path 中 6 条带 `/panel`、2 条 `component` 指向不存在的 `.vue`、14 条无 `component`。
 
 ---

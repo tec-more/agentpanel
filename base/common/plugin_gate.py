@@ -84,3 +84,27 @@ def browser_api_path(internal_path: str) -> str:
     if internal_path.startswith(BROWSER_API_PREFIX):
         return internal_path
     return BROWSER_API_PREFIX + internal_path
+
+
+def plugin_route_guard(name: str):
+    """生成插件路由的**请求期**门控依赖（AC-PLR-03-1）。
+
+    FastAPI 不支持安全卸载已注册的路由（OpenAPI、路由表、依赖树在启动期已生成），
+    因此插件禁用后 ``app.routes`` 中的对象会残留。这里不改路由表，而是在装配时
+    给每条插件路由注入一个依赖：请求到达时按 manifest 双真判定，停用即返回 404，
+    业务 handler 根本不会执行；重新启用后同一路由立即恢复，无需重建 app。
+
+    判定仍只经过 :func:`is_plugin_active`，全平台不产生第二套门控逻辑。
+    """
+    from fastapi import HTTPException
+
+    async def _guard() -> bool:
+        if not is_plugin_active(name):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": f"插件 {name} 未启用或已停用"},
+            )
+        return True
+
+    _guard.__name__ = f"plugin_route_guard_{name}"
+    return _guard

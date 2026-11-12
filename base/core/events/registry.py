@@ -7,38 +7,21 @@
 """
 from __future__ import annotations
 
-import importlib
 import inspect
 import time
 from typing import Any, Callable
 
 from loguru import logger
 
+# W2-3：解析器下沉到 base/common，供事件中心与作业调度器共用。
+# 这里保留同名再导出，既有 `from base.core.events.registry import resolve_callable`
+# 的调用方不受影响。
+from base.common.dynamic_ref import resolve_callable  # noqa: F401
 from base.common.events.event_bus import event_bus
 from base.core.events import contract
 from base.core.events.models import EventSubscription
 
 IDEMPOTENCY_TTL = 300
-
-
-def resolve_callable(ref: str) -> Callable:
-    """解析 ``module:callable`` 或 ``module:Class.method``。
-
-    动态导入而非静态 import，核心层不产生对插件实现的编译期依赖（PLR-13）。
-    """
-    module_name, _, attr_path = (ref or "").partition(":")
-    if not module_name or not attr_path:
-        raise ValueError(f"非法 handler_ref: {ref!r}，应为 module:callable")
-    module = importlib.import_module(module_name)
-    parts = attr_path.split(".")
-    first = getattr(module, parts[0])
-    if inspect.isclass(first):
-        instance = first()
-        return getattr(instance, parts[1]) if len(parts) > 1 else instance
-    target = first
-    for part in parts[1:]:
-        target = getattr(target, part)
-    return target
 
 
 class EventCenter:

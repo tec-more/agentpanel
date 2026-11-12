@@ -4,6 +4,14 @@
     "version": "2.0.0",
     "description": "提供完整的全链路审计功能，包括输入层、决策层、执行层、输出层、系统层审计，支持全链路追踪、决策可解释、合规留痕、风险审计",
     "author": "hepan",
+    "jobs": [
+        {
+            "name": "audit_cleanup",
+            "description": "每24小时清理过期数据变更日志（保留天数每轮解析，排除授权类表）",
+            "handler_ref": "base.plugins.audit.jobs.cleanup:run",
+            "interval_seconds": 86400
+        }
+    ],
     "is_installed": true,
     "is_enabled": true,
     "route_prefix": "/v1/audit",

@@ -20,6 +20,14 @@
         "customer",
         "product"
     ],
+    "jobs": [
+        {
+            "name": "cancel_expired_orders",
+            "description": "每5分钟检查并取消过期订单",
+            "handler_ref": "base.plugins.sales.jobs.orders:run",
+            "interval_seconds": 300
+        }
+    ],
     "is_installed": true,
     "is_enabled": true,
     "menus": [

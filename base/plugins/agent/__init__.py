@@ -1,47 +1,13 @@
 """
 Agent Development Base Plugin
+
+路由装配约定（AC-PLR-01-2 / AC-PLR-03-1）：
+- 本模块**不再导出 router**，也不在 on_enable 里自行 include_router；
+- 路由统一由 manifest.routes 声明的 ``api/aggregate`` 目录聚合，
+  经装配器套 route_prefix 并注入插件启用态依赖（停用即 404）。
 """
-
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/v1/agent")
-
-
-def _setup_routes():
-    """延迟设置路由，避免提前导入模型"""
-    from .api.v1 import dialog_flow, workflow, agent, skill, skill_category, tool, tool_tag, memory, joke, rag, checkpoint
-    from .api.v1 import u_workflow_router, u_execution_router, u_resource_router, admin_grant_router
-    
-    @router.get("/test")
-    async def test_endpoint():
-        """测试端点"""
-        print("=== 测试端点被调用 ===")
-        from base.common.response import success_response
-        return success_response(data={"message": "测试成功"}, msg="测试端点响应成功")
-
-    router.include_router(agent.agent_router)
-    router.include_router(agent.execution_router)
-    router.include_router(skill.skill_router)
-    router.include_router(skill_category.skill_category_router)
-    router.include_router(tool.tool_router)
-    router.include_router(tool_tag.tool_tag_router)
-    router.include_router(memory.memory_router)
-    router.include_router(u_workflow_router.router)
-    router.include_router(u_execution_router.router)
-    router.include_router(u_resource_router.router)   # T11 用户侧资源授权清单
-    router.include_router(admin_grant_router.router)  # T11 管理侧授权管理
-    router.include_router(workflow.workflow_router)
-    router.include_router(workflow.workflow_execution_router)
-    router.include_router(dialog_flow.dialog_flow_router)
-    router.include_router(joke.joke_router)
-    router.include_router(rag.rag_router)
-    router.include_router(checkpoint.router)
-
-
 async def on_enable(app):
-    """Enable plugin"""
-    _setup_routes()
-    app.include_router(router)
+    """Enable plugin（路由由装配器注册，钩子不再重复挂载）。"""
     return True
 
 async def on_disable():

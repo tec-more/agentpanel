@@ -9,6 +9,7 @@
 - api/              可选，API 路由（在 manifest.json 的 routes 中声明目录）
 - models/           可选，数据模型（在 manifest.json 的 models 中声明）
 - schemas/          可选，Pydantic Schema（在 manifest.json 的 schemas 中声明，用于文档）
+- jobs/             可选，定时任务单轮 handler（由 manifest.json 的 jobs 声明，W2-3）
 - services/         可选，业务逻辑
 
 manifest.json 示例（路径契约见 base/common/plugin_contract.py）：
@@ -55,7 +56,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Depends
 
 from base.common.log import log
 from base.common.setting import settings
@@ -669,12 +670,15 @@ class PluginManager:
             # 处理权限配置
             await self._process_plugin_permissions(name, manifest)
 
-            # 注册 manifest 声明的业务路由与内部路由（唯一装配入口）
+            # 注册 manifest 声明的业务路由与内部路由（唯一装配入口）。
+            # AC-PLR-03-1：注入请求期门控依赖，禁用后 app.routes 虽残留但请求立即 404，
+            # 重新启用后无需重建 app 即恢复可达；判定统一走 plugin_gate.is_plugin_active。
+            route_guard = [Depends(plugin_gate.plugin_route_guard(name))]
             if plugin.router:
-                self._app.include_router(plugin.router)
+                self._app.include_router(plugin.router, dependencies=route_guard)
                 log.info(f"已注册插件路由: {name}")
             if plugin.internal_router:
-                self._app.include_router(plugin.internal_router)
+                self._app.include_router(plugin.internal_router, dependencies=route_guard)
                 log.info(f"已注册插件内部路由: {name}")
 
             # 声明订阅统一由事件中心激活：运行时启用即时生效，不再依赖 on_startup
@@ -682,6 +686,10 @@ class PluginManager:
 
             # 更新 manifest 状态（同时使门控缓存失效）
             self.update_plugin_status(name, is_installed=True, is_enabled=True)
+
+            # W2-3：状态双真后装载 manifest.jobs 声明的作业；
+            # 启动期调度器未就绪会静默跳过，由 lifespan 的 start_all 统一装载。
+            await self._sync_plugin_jobs(name, active=True)
 
             log.info(f"插件已启用: {manifest.get('display_name', name)}")
             return True
@@ -772,11 +780,32 @@ class PluginManager:
         except Exception as e:
             log.error(f"插件 {name} 订阅同步失败(active={active}): {e}")
 
+    async def _sync_plugin_jobs(self, name: str, active: bool) -> None:
+        """把插件作业交给平台调度器统一装卸（W2-3 / AC-PLR-15-1）。
+
+        调度器未就绪（启动期 load_enabled_plugins 阶段）时静默跳过，
+        由 lifespan 的 ``job_scheduler.start_all()`` 统一装载，避免重复启动。
+        """
+        try:
+            from base.common.jobs import job_scheduler
+        except ImportError:
+            return
+        try:
+            if active:
+                await job_scheduler.start_plugin(name)
+            else:
+                await job_scheduler.stop_plugin(name)
+        except Exception as e:
+            log.error(f"插件 {name} 作业同步失败(active={active}): {e}")
+
+
     async def disable_plugin(self, name: str) -> bool:
         """禁用插件"""
         plugin = self._plugins.get(name)
         if not plugin or not plugin.enabled:
             self.update_plugin_status(name, is_enabled=False)
+            # 实例已停用但调度器可能仍有残留任务，一并清理
+            await self._sync_plugin_jobs(name, active=False)
             return True
 
         try:
@@ -798,6 +827,9 @@ class PluginManager:
                 await self._cleanup_plugin_menus(name, manifest)
                 await self._cleanup_plugin_permissions(name, manifest)
             await self._sync_plugin_subscriptions(name, manifest or {}, active=False)
+
+            # W2-3：运行期禁用立刻 cancel 该插件全部作业任务，不再空转
+            await self._sync_plugin_jobs(name, active=False)
 
             self.update_plugin_status(name, is_enabled=False)
 

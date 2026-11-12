@@ -11,6 +11,7 @@ from base.common.middleware import register_middlewares
 from base.common.exceptions import register_exceptions
 from base.common.router import register_routers
 from base.common.json_encoder import DateTimeEncoder
+from base.common.jobs import job_scheduler
 from base.common.logging_config import register_exceptions_with_logging
 from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
@@ -118,61 +119,10 @@ async def lifespan(app: FastAPI):
         await manager.startup()
         print("插件系统初始化完成")
 
-        # 启动订单过期检查定时任务（仅当 sales 插件启用时）
-        if manager.get_active_plugin("sales"):
-            task1 = asyncio.create_task(cancel_expired_orders_task())
-            background_tasks.append(task1)
-            print("订单过期检查定时任务已启动")
-        else:
-            print("订单过期检查定时任务跳过（sales 插件未启用）")
-
-        # 启动会员数据更新定时任务（仅当 customer 和 llm 插件启用时）
-        if manager.get_active_plugin("customer") and manager.get_active_plugin("llm"):
-            task2 = asyncio.create_task(update_membership_data_task())
-            background_tasks.append(task2)
-            print("会员数据更新定时任务已启动（每10分钟）")
-        else:
-            print("会员数据更新定时任务跳过（customer 或 llm 插件未启用）")
-
-        # 启动 M9 配额定时任务（公共层能力，不依赖插件启用态；注册在 Tortoise.init 之后）
-        try:
-            task_q1 = asyncio.create_task(quota_reconcile_task())
-            background_tasks.append(task_q1)
-            task_q2 = asyncio.create_task(quota_hold_cleanup_task())
-            background_tasks.append(task_q2)
-            print("配额对账/悬挂预占清理定时任务已启动（每分钟）")
-        except Exception as e:
-            print(f"配额定时任务启动失败: {e}")
-
-        # 启动网关记账对账定时任务（harness 插件 + 网关 + reconciliation.enabled）
-        try:
-            from base.plugins.harness.services.gateway_config import gateway_enabled, reconciliation_config
-            if (
-                manager.get_active_plugin("harness")
-                and gateway_enabled()
-                and reconciliation_config().get("enabled")
-            ):
-                task_g1 = asyncio.create_task(gateway_reconcile_task())
-                background_tasks.append(task_g1)
-                print(
-                    "网关对账定时任务已启动（间隔 "
-                    f"{reconciliation_config().get('interval_seconds')} 秒）"
-                )
-            else:
-                print("网关对账定时任务跳过（harness/网关/对账未启用）")
-        except Exception as e:
-            print(f"网关对账定时任务启动失败: {e}")
-
-        # 启动审计数据变更日志清理定时任务（仅当 audit 插件启用时；每日一次）
-        if manager.get_active_plugin("audit"):
-            task_a1 = asyncio.create_task(audit_cleanup_task())
-            background_tasks.append(task_a1)
-            print(
-                "审计数据变更日志清理定时任务已启动（每24小时，"
-                "保留天数每轮按 audit_config > settings.AUDIT_RETAIN_DAYS > 90 解析，排除授权类表）"
-            )
-        else:
-            print("审计数据变更日志清理定时任务跳过（audit 插件未启用）")
+        # W2-3：定时任务统一装配（平台 quota 作业 + 已启用插件的 manifest.jobs 声明）。
+        # 作业随插件运行期启停由 plugin_manager 钩子同步装卸，启动入口不再感知具体插件。
+        await job_scheduler.start_all()
+        print("定时任务装配完成")
 
         # 启动 Prometheus 推送工作器（W2-1 整改：删除 ImportError 兜底，base/common 模块始终存在）
         if getattr(settings, 'PROMETHEUS_PUSH_ENABLED', False):
@@ -189,6 +139,12 @@ async def lifespan(app: FastAPI):
         # 清理逻辑
         print("Application shutting down...")
 
+        # 0. W2-3：先取消平台/插件作业（先于插件 shutdown 与 DB 关闭）
+        try:
+            await job_scheduler.shutdown()
+        except Exception as e:
+            print(f"关闭作业调度器时出错: {e}")
+
         # 1. 取消所有后台任务
         print("正在取消后台任务...")
         for task in background_tasks:
@@ -202,7 +158,9 @@ async def lifespan(app: FastAPI):
         # 1.5 停止ConsumerWorker和EventBusAdapter
         try:
             if hasattr(app.state, 'consumer_worker') and app.state.consumer_worker:
-                await asyncio.wait_for(app.state.consumer_worker.stop(), timeout=5.0)
+                # W3-3：stop() 内部要排空在途消息（drain_timeout=8s），
+                # 外层超时须留足余量，否则取消 stop() 会让 drain 半途而废。
+                await asyncio.wait_for(app.state.consumer_worker.stop(), timeout=12.0)
                 print("ConsumerWorker已停止")
         except Exception as e:
             print(f"停止ConsumerWorker时出错: {e}")
@@ -243,326 +201,6 @@ async def lifespan(app: FastAPI):
 
         print("所有资源已清理完成，端口9998已释放")
 
-
-async def quota_reconcile_task():
-    """
-    定时任务：每分钟活跃账户配额对账落盘（Redis → PG used）+ 周期滚动
-    溯源：docs/arch/03 §3.6 事实源/对账；§5 usage 对账落盘（每分钟）
-    """
-    while True:
-        try:
-            await asyncio.sleep(60)
-            from base.common.quota.services.quota_service import QuotaService
-            result = await QuotaService.reconcile_active_accounts()
-            processed = int(result.get("processed") or 0)
-            skipped = int(result.get("skipped") or 0)
-            if processed > 0 or skipped > 0:
-                print(
-                    "[定时任务] 配额对账落盘完成 "
-                    f"batch={result.get('batch_no')} 处理 {processed} 条 / 跳过 {skipped} 条"
-                )
-        except asyncio.CancelledError:
-            print("[定时任务] 配额对账任务已取消")
-            break
-        except Exception as e:
-            print(f"[定时任务] 配额对账失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-async def quota_hold_cleanup_task():
-    """
-    定时任务：每分钟清理悬挂预占（超 TTL 未结算的 hold 释放）
-    溯源：docs/arch/06 AR-08 quota_hold TTL + 对账任务释放悬挂预占
-    """
-    while True:
-        try:
-            await asyncio.sleep(60)
-            from base.common.quota.services.quota_service import QuotaService
-            released = await QuotaService.cleanup_stale_holds()
-            if released > 0:
-                print(f"[定时任务] 释放悬挂预占 {released} 个")
-        except asyncio.CancelledError:
-            print("[定时任务] 悬挂预占清理任务已取消")
-            break
-        except Exception as e:
-            print(f"[定时任务] 悬挂预占清理失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-async def gateway_reconcile_task():
-    """
-    定时任务：网关记账 vs 客户端上报对账
-    - 与手动接口复用同一幂等服务，重复执行不会重复插入差异；
-    - 间隔读取 gateway.reconciliation.interval_seconds。
-    """
-    while True:
-        try:
-            from base.plugins.harness.services.gateway_config import reconciliation_config
-            interval = max(int(reconciliation_config().get("interval_seconds") or 600), 30)
-            await asyncio.sleep(interval)
-            from base.plugins.harness.services.reconcile_service import HarnessReconcileService
-            result = await HarnessReconcileService.execute(trigger="scheduled")
-            stats = result.get("stats") or {}
-            print(
-                "[定时任务] 网关对账完成 "
-                f"batch={result.get('batch_no')} diffs={stats.get('diffs', 0)} "
-                f"created={stats.get('created', 0)} updated={stats.get('updated', 0)}"
-            )
-        except asyncio.CancelledError:
-            print("[定时任务] 网关对账任务已取消")
-            break
-        except Exception as e:
-            print(f"[定时任务] 网关对账失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-async def audit_cleanup_task():
-    """
-    定时任务：每日清理一次过期的数据变更日志
-    - 首次执行前先 sleep，避免启动瞬间批量删除
-    - 默认排除授权类表（resource_grant / customer_organization*），保证授权变更可追溯
-    - 保留天数每轮解析：audit_config.retention_days > settings.AUDIT_RETAIN_DAYS > 90
-    """
-    while True:
-        try:
-            await asyncio.sleep(86400)  # 24小时
-            from base.plugins.audit.services.data_change_service import (
-                AUTHZ_AUDIT_TABLES,
-                DataChangeService,
-                resolve_retention_days,
-            )
-            # 每轮重新解析，后台改 audit_config 无需重启即生效
-            retain_days = await resolve_retention_days()
-            deleted = await DataChangeService.delete_old_logs(
-                days=retain_days,
-                exclude_tables=AUTHZ_AUDIT_TABLES,
-            )
-            if deleted > 0:
-                print(
-                    f"[定时任务] 清理过期数据变更日志 {deleted} 条"
-                    f"（保留 {retain_days} 天，已排除授权类表）"
-                )
-        except asyncio.CancelledError:
-            print("[定时任务] 审计日志清理任务已取消")
-            break
-        except Exception as e:
-            print(f"[定时任务] 审计日志清理失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-async def cancel_expired_orders_task():
-    """
-    定时任务：每5分钟检查并取消过期订单
-    """
-    while True:
-        try:
-            await asyncio.sleep(300)  # 5分钟 = 300秒
-
-            # # 检查数据库连接状态
-            # try:
-            #     from tortoise import Tortoise
-            #     # 尝试获取默认连接，检查数据库是否连接
-            #     await Tortoise.get_connection("postgres")
-            # except Exception as conn_error:
-            #     print(f"[定时任务] 数据库连接未初始化，跳过订单过期检查: {conn_error}")
-            #     continue
-
-            from base.plugins.sales.services.order_service import OrderService
-            cancelled_count = await OrderService.cancel_expired_orders()
-
-            if cancelled_count > 0:
-                print(f"[定时任务] 已取消 {cancelled_count} 个过期订单")
-        except asyncio.CancelledError:
-            print("[定时任务] 订单过期检查任务已取消")
-            break
-        except Exception as e:
-            print(f"[定时任务] 订单过期检查失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-async def update_membership_data_task():
-    """
-    定时任务：每10分钟更新会员数据
-    - 重新计算已用时长（从使用记录汇总）
-    - 更新剩余时长
-    - 检查并更新过期状态
-    - 停用剩余时长为0的会员
-    """
-    while True:
-        try:
-            await asyncio.sleep(600)  # 10分钟 = 600秒
-
-            # 检查数据库连接状态
-            # try:
-            #     from tortoise import Tortoise
-            #     # 尝试获取默认连接，检查数据库是否连接
-            #     await Tortoise.get_connection("postgres")
-            # except Exception as conn_error:
-            #     print(f"[定时任务] 数据库连接未初始化，跳过会员数据更新: {conn_error}")
-            #     continue
-
-            from base.plugins.customer.models.customer_membership import CustomerMembership
-            from base.plugins.llm.models.usage import LLMUsageRecord
-            from datetime import datetime
-
-            print("\n" + "="*70)
-            print(f"[定时任务] 🔔 开始更新会员数据 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("="*70)
-
-            # 获取所有激活的会员（预加载membership_level关联）
-            memberships = await CustomerMembership.filter(is_active=True).select_related('membership_level')
-            print(f"[信息] 找到 {len(memberships)} 个激活的会员\n")
-
-            if not memberships:
-                print("[信息] 没有激活的会员，跳过更新")
-                continue
-
-            updated_count = 0
-            deactivated_count = 0
-            skipped_count = 0
-            error_count = 0
-
-            for idx, membership in enumerate(memberships, 1):
-                try:
-                    print(f"{'─'*70}")
-                    print(f"[{idx}/{len(memberships)}] 💎 客户 {membership.customer_id} - 会员数据更新")
-                    print(f"{'─'*70}")
-
-                    # ===== 关键指标展示 =====
-                    print(f"📊 【当前会员数据】")
-                    print(f"  💰 充值总时长: {membership.total_hours} 小时")
-                    print(f"  ⏱️  已用时长: {float(membership.used_hours):.2f} 小时")
-                    print(f"  ⏳ 剩余时长: {float(membership.remaining_hours):.2f} 小时")
-                    print(f"  🏆 Fibonacci等级: Lv{membership.level}")
-                    print(f"  📅 过期时间: {membership.expire_time}")
-                    print(f"  ✅ 激活状态: {'是' if membership.is_active else '否'}")
-                    print()
-
-                    # 从使用记录计算实际已用时长
-                    usage_logs = await LLMUsageRecord.filter(customer_id=membership.customer_id)
-                    
-                    # 计算总时长（秒）
-                    total_seconds = 0
-                    for log in usage_logs:
-                        # 对于音频相关记录，使用audio_duration
-                        if log.audio_duration:
-                            total_seconds += log.audio_duration
-                        # 对于对话记录，使用start_time和end_time的差值
-                        elif log.start_time and log.end_time:
-                            duration = (log.end_time - log.start_time).total_seconds()
-                            total_seconds += duration
-                        # 如果都没有，使用tokens估算（作为备用方案）
-                        elif log.tokens:
-                            # 假设100 tokens ≈ 1秒（粗略估算）
-                            total_seconds += log.tokens / 100
-                    
-                    used_hours = total_seconds / 3600.0
-
-                    print(f"📋 【使用记录汇总】")
-                    print(f"  记录数量: {len(usage_logs)} 条")
-                    print(f"  总时长: {total_seconds} 秒")
-                    print(f"  💵 实际已用时长: {used_hours:.2f} 小时")
-
-                    if usage_logs:
-                        print(f"  📝 最近3条记录:")
-                        for log in usage_logs[:3]:
-                            duration_str = ""
-                            if log.audio_duration:
-                                duration_str = f"{log.audio_duration}秒"
-                            elif log.start_time and log.end_time:
-                                duration = (log.end_time - log.start_time).total_seconds()
-                                duration_str = f"{duration:.1f}秒"
-                            else:
-                                duration_str = f"{log.tokens} tokens"
-                            print(f"    - {log.created_at.strftime('%Y-%m-%d %H:%M:%S')}: {log.record_type}, {duration_str}, ${float(log.cost):.4f}")
-                    print()
-
-                    # 计算剩余时长
-                    total_hours = membership.total_hours
-                    old_remaining = float(membership.remaining_hours)
-                    new_remaining = total_hours - used_hours
-                    if new_remaining < 0:
-                        new_remaining = 0
-
-                    print(f"🧮 【时长计算】")
-                    print(f"  📐 公式: 剩余时长 = 充值总时长 - 已用时长")
-                    print(f"  📊 充值总时长: {total_hours} 小时")
-                    print(f"  💵 已用时长: {used_hours:.2f} 小时")
-                    print(f"  📈 新剩余时长: {new_remaining:.2f} 小时")
-                    print(f"  📉 原剩余时长: {old_remaining:.2f} 小时")
-                    print(f"  🔄 变化幅度: {new_remaining - old_remaining:+.2f} 小时")
-                    print()
-
-                    # 检查是否需要更新
-                    if abs(new_remaining - old_remaining) > 0.01:
-                        membership.used_hours = used_hours
-                        membership.remaining_hours = new_remaining
-                        await membership.save()
-                        print(f"  ✅ [已更新] 会员数据已更新到数据库")
-                        updated_count += 1
-                    else:
-                        print(f"  ⏭️  [跳过] 无需更新（差异 < 0.01小时）")
-                        skipped_count += 1
-
-                    # 检查是否需要停用（剩余时长为0）
-                    if new_remaining <= 0:
-                        membership.is_active = False
-                        await membership.save()
-                        print(f"  ⛔ [已停用] 剩余时长已用完，会员已停用")
-                        deactivated_count += 1
-
-                    # 检查是否过期
-                    if membership.is_expired:
-                        print(f"  ⚠️  [已过期] 会员已过期")
-                    else:
-                        print(f"  ✅ [有效期] 会员在有效期内")
-
-                    # 混合系统信息
-                    membership_level = membership.membership_level.level_type if membership.membership_level else "unknown"
-                    print(f"  ✅ [会员类别] {membership_level}")
-                    print(f"  ✅ [VIP状态] {'是' if membership.is_vip else '否'}")
-                    print(f"  ✅ [SVIP状态] {'是' if membership.is_svip else '否'}")
-                    print(f"  ✅ [Fibonacci动态等级] Lv{membership.level}")
-
-                    # Fibonacci等级验证
-                    from base.plugins.customer.services.membership_service import fibonacci_service
-                    expected_level = fibonacci_service.get_level_from_hours(total_hours)
-                    if membership.level == expected_level:
-                        print(f"  ✅ [等级正确] Lv{membership.level}")
-                    else:
-                        print(f"  ⚠️  [等级异常] 当前Lv{membership.level}, 应该Lv{expected_level}")
-                    #     print(f"  ⚠️  [等级异常] 当前Lv{membership.level}, 应该Lv{expected_level}")
-
-                except Exception as e:
-                    print(f"  ❌ [错误] 处理失败: {e}")
-                    error_count += 1
-                    import traceback
-                    traceback.print_exc()
-
-                print()  # 空行分隔
-
-            # 输出统计信息
-            print("="*70)
-            print(f"[定时任务] ✅ 执行完成")
-            print(f"  处理会员总数: {len(memberships)}")
-            print(f"  更新会员数: {updated_count}")
-            print(f"  跳过会员数: {skipped_count}")
-            print(f"  停用会员数: {deactivated_count}")
-            print(f"  错误数量: {error_count}")
-            print("="*70 + "\n")
-
-        except asyncio.CancelledError:
-            print("[定时任务] 会员数据更新任务已取消")
-            break
-        except Exception as e:
-            print(f"\n[定时任务] ❌ 执行失败: {e}")
-            import traceback
-            traceback.print_exc()
 
 def init_app() -> FastAPI:
     app = FastAPI(

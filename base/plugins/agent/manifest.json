@@ -7,7 +7,7 @@
     "website": "",
     "route_prefix": "/v1/agent",
     "routes": [
-        "api/v1"
+        "api/aggregate"
     ],
     "models": [
         "agent",

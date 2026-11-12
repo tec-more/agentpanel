@@ -25,6 +25,13 @@ INTERNAL_ROUTE_ALLOWED = ("/internal/",)
 REQUIRED_FIELDS: tuple[str, ...] = ("name", "route_prefix", "routes")
 RECOMMENDED_FIELDS: tuple[str, ...] = ("version", "display_name", "menus", "permissions")
 EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
+# W2-3 定时任务声明：作业名插件内唯一，handler_ref 为 module:callable
+JOB_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+HANDLER_REF_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
+    r":[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
+)
+MIN_JOB_INTERVAL = 30
 
 
 class ContractViolation(Exception):
@@ -40,6 +47,57 @@ class ContractViolation(Exception):
 def is_valid_event_name(event_name: str) -> bool:
     """事件名规则：小写点分多段，如 ``sales.paid`` / ``model.created``。"""
     return bool(EVENT_NAME_RE.match(event_name or ""))
+
+
+def validate_jobs(jobs: Any) -> list[str]:
+    """校验 manifest.jobs 声明（W2-3）。
+
+    契约校验期**只验格式，不 import handler 模块**：避免校验动作本身执行插件代码。
+    ``interval_ref`` 为可选字段，指向 ``module:callable``，调度器每轮 sleep 前调用，
+    用于保持「间隔每轮重读、后台改配置热生效」的既有语义（如网关对账）。
+    """
+    problems: list[str] = []
+    if jobs is None:
+        return problems
+    if not isinstance(jobs, list):
+        return ["jobs 必须是数组"]
+    seen: set[str] = set()
+    for idx, job in enumerate(jobs):
+        tag = f"jobs[{idx}]"
+        if not isinstance(job, dict):
+            problems.append(f"{tag} 必须是对象")
+            continue
+
+        name = job.get("name")
+        if not isinstance(name, str) or not JOB_NAME_RE.match(name):
+            problems.append(f"{tag}.name 非法（应为 ^[a-z][a-z0-9_]*$）: {name!r}")
+        elif name in seen:
+            problems.append(f"{tag}.name 在插件内重复: {name!r}")
+        else:
+            seen.add(name)
+
+        for ref_field in ("handler_ref", "interval_ref"):
+            ref = job.get(ref_field)
+            if ref is None and ref_field == "interval_ref":
+                continue  # 可选
+            if not isinstance(ref, str) or not HANDLER_REF_RE.match(ref):
+                problems.append(
+                    f"{tag}.{ref_field} 非法（应为 module:callable）: {ref!r}"
+                )
+
+        interval = job.get("interval_seconds")
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval < MIN_JOB_INTERVAL:
+            problems.append(
+                f"{tag}.interval_seconds 必须是 ≥{MIN_JOB_INTERVAL} 的整数: {interval!r}"
+            )
+
+        requires = job.get("requires_plugins")
+        if requires is not None:
+            if not isinstance(requires, list) or any(
+                not isinstance(dep, str) or not dep for dep in requires
+            ):
+                problems.append(f"{tag}.requires_plugins 必须是非空字符串数组")
+    return problems
 
 
 def validate_no_browser_prefix(prefix: str) -> list[str]:
@@ -112,6 +170,9 @@ def validate_manifest(name: str, manifest: dict[str, Any], plugin_dir: Path) -> 
                 event_name = str(item)
             if not is_valid_event_name(event_name):
                 problems.append(f"非法事件名: {event_name!r}（应为小写点分格式）")
+
+    # W2-3：定时任务声明与路由/事件同级硬校验，声明非法一律拒绝装配
+    problems.extend(validate_jobs(manifest.get("jobs")))
 
     if manifest.get("name") and manifest["name"] != name:
         problems.append(

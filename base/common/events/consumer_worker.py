@@ -17,6 +17,8 @@ class ConsumerWorker:
         self._consumer_tag = None
         self._processed_count = 0
         self._connection_manager: RabbitMQConnectionManager = event_bus_adapter.get_connection_manager()
+        # 在途消息处理任务：关闭时须先排空，再关闭 channel / DB 连接（见 stop()）
+        self._inflight: set[asyncio.Task] = set()
 
     async def start(self):
         if not settings.RABBITMQ_ENABLED:
@@ -41,6 +43,30 @@ class ConsumerWorker:
             self._running = False
 
     async def _on_message(self, message):
+        """aio_pika 消息回调外壳：登记在途任务 + 关闭期异常隔离。
+
+        aio_pika 为每条消息创建 Task 并挂 ``_task_done`` 回调，Task 一旦以异常
+        结束，该回调会把异常抛到事件循环，产生成片 Traceback。关闭期尤其容易触发：
+        DB 连接先关 -> ``asyncpg.pool.release`` 抛 CancelledError；channel 先关 ->
+        ``message.process`` 的 ``__aexit__`` 访问 ``message.channel`` 抛
+        ChannelInvalidStateError。此处统一收口，并由 :meth:`stop` 排空在途任务。
+        """
+        task = asyncio.current_task()
+        if task is not None:
+            self._inflight.add(task)
+        try:
+            await self._process_message(message)
+        except asyncio.CancelledError:
+            # 关闭期被取消属预期；吞掉以免 aio_pika 的 _task_done 把异常抛到事件循环
+            logger.debug("消息处理在关闭期被取消，已忽略")
+        except Exception as e:
+            logger.error(f"消息处理异常(关闭期通道可能已失效): {e}")
+        finally:
+            if task is not None:
+                self._inflight.discard(task)
+
+    async def _process_message(self, message):
+        """单条消息的业务处理（原 _on_message 主体，行为不变）。"""
         async with message.process(requeue=False):
             try:
                 body = json.loads(message.body.decode("utf-8"))
@@ -117,7 +143,15 @@ class ConsumerWorker:
             except Exception as e:
                 logger.error(f"消息处理异常: {e}", exc_info=True)
 
-    async def stop(self):
+    async def stop(self, drain_timeout: float = 8.0):
+        """停止消费并**排空在途消息**后再返回。
+
+        ``queue.cancel`` 只阻止新消息投递，已投递消息的 Task 仍在跑；若此时
+        lifespan 继续关闭 RabbitMQ channel 或 DB 连接池，这些 Task 会抛
+        CancelledError / ChannelInvalidStateError（历史事件处理 Traceback 的根因）。
+        排空顺序必须是：cancel consumer -> 等在途 Task 收尾 -> 调用方再关闭
+        event_bus / DB。超时后主动取消在途任务，避免关闭流程被无限拖住。
+        """
         self._running = False
         try:
             queue = self._connection_manager.get_queue()
@@ -126,7 +160,24 @@ class ConsumerWorker:
                 self._consumer_tag = None
         except Exception as e:
             logger.warning(f"停止消费者时出错: {e}")
-        logger.info("ConsumerWorker已停止")
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + drain_timeout
+        current = asyncio.current_task()
+        while True:
+            # 循环重取而非取一次快照：cancel 与 cancel-ok 之间可能仍有消息抵达
+            pending = {t for t in self._inflight if t is not current and not t.done()}
+            if not pending:
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                logger.warning(f"关闭期 {len(pending)} 个消息处理任务超时，已主动取消")
+                break
+            await asyncio.wait(pending, timeout=min(remaining, 1.0))
+        logger.info(f"ConsumerWorker已停止(在途任务已排空，剩余={len(self._inflight)})")
 
     def get_status(self) -> Dict[str, Any]:
         return {

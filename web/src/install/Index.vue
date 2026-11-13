@@ -5,9 +5,9 @@
       <div class="install-header">
         <h1 class="install-title">
           <el-icon class="title-icon"><Setting /></el-icon>
-          {{ systemStore.backend_name || '系统' }} 安装向导
+          {{ backendName || '系统' }} 安装向导
         </h1>
-        <p class="install-desc">欢迎使用 {{ systemStore.backend_name || '本系统' }}，请按照以下步骤完成系统安装</p>
+        <p class="install-desc">欢迎使用 {{ backendName || '本系统' }}，请按照以下步骤完成系统安装</p>
       </div>
 
       <!-- 步骤指示器 -->
@@ -380,18 +380,20 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Setting, Monitor, Coin, User, CircleCheck, CircleClose,
   Warning, WarningFilled, ArrowRight, ArrowLeft, Connection, Download,
   Loading, QuestionFilled, Refresh
 } from '@element-plus/icons-vue'
-import { getInstallStatus, testDatabaseConnection, executeInstallation, envCheck } from '@/api/install'
-import { useSystemStore } from '@/stores/system'
+import {
+  getInstallStatus, testDatabaseConnection, executeInstallation,
+  envCheck, fetchSystemConfig
+} from '@/install/api'
 
-const router = useRouter()
-const systemStore = useSystemStore()
+// 安装页为独立页面：系统名称经独立接口回显，不依赖主 SPA 的 system store
+const backendName = ref('')
+const frontendName = ref('')
 
 // 当前步骤
 const currentStep = ref(0)
@@ -744,12 +746,12 @@ const handleExecuteInstall = async () => {
   }
 }
 
-// 根据配置获取安装后跳转路径
+// 根据配置获取安装后跳转路径（独立页面统一跳转登录页）
 const getInstallRedirectPath = () => {
-  return systemStore.install_redirect === 'home' ? '/' : '/panel/login'
+  return '/panel/login'
 }
 
-// 跳转到登录页（已重启确认后）
+// 跳转到登录页（已重启确认后），使用整页跳转以切换到主 SPA
 const goToLogin = async () => {
   // 先验证后端服务是否已恢复
   try {
@@ -769,10 +771,8 @@ const goToLogin = async () => {
   // 确保安装状态已保存
   localStorage.setItem('system_installed', 'true')
   const redirectPath = getInstallRedirectPath()
-  router.push({
-    path: redirectPath,
-    query: redirectPath === '/panel/login' ? { installed: '1' } : {}
-  })
+  const query = redirectPath === '/panel/login' ? '?installed=1' : ''
+  window.location.href = redirectPath + query
 }
 
 // 检查安装状态，返回是否已安装
@@ -782,9 +782,9 @@ const checkInstallStatus = async () => {
     const data = res.data || res
     if (data.installed) {
       const redirectPath = getInstallRedirectPath()
-      ElMessage.info(redirectPath === '/' ? '系统已安装，正在跳转至首页' : '系统已安装，正在跳转至登录页')
+      ElMessage.info('系统已安装，正在跳转至登录页')
       localStorage.setItem('system_installed', 'true')
-      router.replace(redirectPath)
+      window.location.href = redirectPath
       return true
     }
   } catch (e) {
@@ -795,15 +795,16 @@ const checkInstallStatus = async () => {
 }
 
 onMounted(async () => {
-  // 加载现有配置并填充表单
+  // 加载现有配置并填充表单（独立接口，不依赖主 SPA store）
   try {
-    await systemStore.loadConfig()
-    // 用 config.conf 中的现有值填充表单（支持重新安装时回显）
-    if (systemStore.frontend_name) {
-      serverForm.frontend_name = systemStore.frontend_name
-    }
-    if (systemStore.backend_name) {
-      serverForm.backend_name = systemStore.backend_name
+    const res = await fetchSystemConfig()
+    const data = res?.data || res
+    if (data) {
+      if (data.backend_name) backendName.value = data.backend_name
+      if (data.frontend_name) frontendName.value = data.frontend_name
+      // 用 config.conf 中的现有值填充表单（支持重新安装时回显）
+      if (data.frontend_name) serverForm.frontend_name = data.frontend_name
+      if (data.backend_name) serverForm.backend_name = data.backend_name
     }
   } catch (_) {}
 

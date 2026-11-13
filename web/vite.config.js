@@ -16,11 +16,35 @@ export default defineConfig({
     Components({
       resolvers: [ElementPlusResolver()],
       dts: 'src/components.d.ts'
-    })
+    }),
+    // 开发态：让裸路径 /install 直接命中独立的安装页 install.html，
+    // 与生产由后端 app_wrapper 提供 install.html 的行为保持一致，避免 SPA 回退死循环。
+    {
+      name: 'rewrite-install-route',
+      enforce: 'pre',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          if (req.url === '/install' || req.url === '/install/') {
+            req.url = '/install.html'
+          }
+          next()
+        })
+      }
+    }
   ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src')
+    }
+  },
+  build: {
+    // 多入口：主应用 index.html 与独立安装页 install.html 分开打包，
+    // 保证安装向导是独立页面、不混入主 SPA 产物。
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        install: path.resolve(__dirname, 'install.html')
+      }
     }
   },
   define: {

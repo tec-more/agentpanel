@@ -22,12 +22,6 @@ const routes = [
     meta: { title: '管理后台登录', public: true }
   },
   {
-    path: '/install',
-    name: 'Install',
-    component: () => import('@/install/Index.vue'),
-    meta: { title: '系统安装向导', public: true }
-  },
-  {
     path: '/panel',
     name: 'panel',
     component: () => import('@/layouts/MainLayout.vue'),
@@ -79,13 +73,15 @@ router.beforeEach(async (to, from, next) => {
     } catch (_) {}
   }
   // 动态拼接浏览器标题：页面标题 - 系统名称
-  // /panel 和 /install 等后台路径用 backend_name，其他用 frontend_name
-  const siteName = (to.path.startsWith('/panel') || to.path.startsWith('/install'))
+  // /panel 等后台路径用 backend_name，其他用 frontend_name
+  const siteName = to.path.startsWith('/panel')
     ? (systemStore.backend_name || systemStore.app_name)
     : (systemStore.frontend_name || systemStore.app_name)
   document.title = to.meta.title ? `${to.meta.title} - ${siteName}` : siteName
 
   // ---- 安装检查：未安装时强制进入安装向导（每次导航都向后端核实真实状态） ----
+  // 注意：安装向导是独立页面（install.html），与主 SPA 分离，因此这里用整页
+  // 跳转（window.location）切换到独立安装页，而不是 SPA 内部路由。
   const cacheInstalled = localStorage.getItem('system_installed') === 'true'
   if (!cacheInstalled || to.path === '/install') {
     let installed = cacheInstalled
@@ -103,11 +99,11 @@ router.beforeEach(async (to, from, next) => {
       // 后端不可达时依赖本地缓存判断，避免把用户锁死在安装页
     }
     if (!installed && to.path !== '/install') {
-      next({ path: '/install' })
+      window.location.href = '/install'
       return
     }
     if (installed && to.path === '/install') {
-      next({ path: '/panel/login' })
+      window.location.href = '/panel/login'
       return
     }
   }

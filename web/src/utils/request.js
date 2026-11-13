@@ -143,10 +143,10 @@ request.interceptors.response.use(
       } else if (status === 403) {
         ElMessage.error('没有权限访问')
       } else if (status === 503) {
-        // 503 系统未安装 - 静默处理，清除缓存并跳转安装页
+        // 503 系统未安装 - 静默处理，清除缓存并跳转到独立安装页（整页跳转）
         localStorage.removeItem('system_installed')
         if (data?.redirect === '/install') {
-          router.push('/install')
+          window.location.href = '/install'
         }
         // 静默拒绝，不弹错误提示
         return Promise.reject(new Error('SYSTEM_NOT_INSTALLED'))

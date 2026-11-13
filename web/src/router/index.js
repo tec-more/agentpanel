@@ -82,9 +82,12 @@ router.beforeEach(async (to, from, next) => {
   // ---- 安装检查：未安装时强制进入安装向导（每次导航都向后端核实真实状态） ----
   // 注意：安装向导是独立页面（install.html），与主 SPA 分离，因此这里用整页
   // 跳转（window.location）切换到独立安装页，而不是 SPA 内部路由。
-  const cacheInstalled = localStorage.getItem('system_installed') === 'true'
-  if (!cacheInstalled || to.path === '/install') {
-    let installed = cacheInstalled
+  // 安装检查：每次导航都向后端核实真实安装状态，不依赖 localStorage 缓存做短路。
+  // 否则删除 .installed 标记后，浏览器仍会按旧的 system_installed=true 判定为「已安装」，
+  // 既不进安装页、也不再向后端重新核实（旧逻辑里 `if (!cacheInstalled || ...)` 会在
+  // 已缓存为 true 时直接跳过整个核实块）。
+  let installed = localStorage.getItem('system_installed') === 'true'
+  {
     try {
       const resp = await fetch(apiUrl('/v1/install/status'))
       const json = await resp.json()
@@ -98,14 +101,14 @@ router.beforeEach(async (to, from, next) => {
     } catch (_) {
       // 后端不可达时依赖本地缓存判断，避免把用户锁死在安装页
     }
-    if (!installed && to.path !== '/install') {
-      window.location.href = '/install'
-      return
-    }
-    if (installed && to.path === '/install') {
-      window.location.href = '/panel/login'
-      return
-    }
+  }
+  if (!installed && to.path !== '/install') {
+    window.location.href = '/install'
+    return
+  }
+  if (installed && to.path === '/install') {
+    window.location.href = '/panel/login'
+    return
   }
 
   // 插件页面门控：仅已安装且已启用的插件页面可达（PLR-03 / PLR-09）。

@@ -1,4 +1,1 @@
-from .inspection_router import inspection_router
-from .standard_router import standard_router
-
-__all__ = ["inspection_router", "standard_router"]
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

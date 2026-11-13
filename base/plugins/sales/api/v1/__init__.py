@@ -1,8 +1,1 @@
-from fastapi import APIRouter
-from base.plugins.sales.api.v1.order_router import order_router
-from base.plugins.sales.api.v1.stats_router import stats_router
-
-sales_v1_router = APIRouter()
-
-sales_v1_router.include_router(order_router, prefix="", tags=["订单管理"])
-sales_v1_router.include_router(stats_router, prefix="", tags=["销售统计"])
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

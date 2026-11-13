@@ -46,7 +46,7 @@
                     "name": "客户列表",
                     "path": "/customer/list",
                     "icon": "User",
-                    "component": "customer/list/index",
+                    "component": "customer/Index",
                     "sort": 1
                 },
                 {

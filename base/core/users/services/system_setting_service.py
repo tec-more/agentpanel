@@ -213,7 +213,7 @@ class SystemSettingService:
                 name="系统设置",
                 path="/system-setting",
                 icon="Setting",
-                component="systemSetting/index",
+                component="systemSetting/Index",
                 parent_id=system_admin_menu.id,
                 sort=99,
                 is_visible=True,

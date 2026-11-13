@@ -7,15 +7,6 @@ from fastapi import FastAPI
 from base.common.log import log
 
 
-# 导出包含所有API路由的主路由
-try:
-    from base.plugins.thirdparty.api.v1 import api_router
-    thirdparty_router = api_router
-except ImportError:
-    thirdparty_router = None
-    log.warning("api_router模块未找到")
-
-
 async def on_enable(app: FastAPI) -> bool:
     """插件启用时的钩子"""
     log.info("第三方平台对接插件正在启用...")
@@ -42,4 +33,4 @@ async def on_shutdown() -> None:
     # TODO: 执行关闭时需要清理的操作
 
 
-__all__ = ["on_enable", "on_disable", "on_startup", "on_shutdown", "thirdparty_router"]
+__all__ = ["on_enable", "on_disable", "on_startup", "on_shutdown"]

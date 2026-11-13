@@ -10,13 +10,6 @@ from base.common.events.event_bus import event_bus
 
 _registered = False
 
-try:
-    from base.plugins.subcontracting.api.v1 import subcontracting_api_router
-    subcontracting_router = subcontracting_api_router
-except ImportError:
-    subcontracting_router = None
-    log.warning("subcontracting_api_router模块未找到")
-
 
 def register_event_handlers():
     """注册委外订阅（幂等）。"""
@@ -72,5 +65,5 @@ __version__ = "1.0.0"
 __plugin_name__ = "subcontracting"
 __all__ = [
     "on_enable", "on_disable", "on_startup", "on_shutdown",
-    "register_event_handlers", "unregister_event_handlers", "subcontracting_router",
+    "register_event_handlers", "unregister_event_handlers",
 ]

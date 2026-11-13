@@ -1,9 +1,1 @@
-from fastapi import APIRouter
-
-from .supplier_router import supplier_router
-from .purchase_router import purchase_router
-
-purchase_api_router = APIRouter(prefix="/purchase")
-
-purchase_api_router.include_router(supplier_router)
-purchase_api_router.include_router(purchase_router)
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

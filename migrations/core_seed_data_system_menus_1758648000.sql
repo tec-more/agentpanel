@@ -50,6 +50,6 @@ WHERE NOT EXISTS (SELECT 1 FROM menu WHERE name='仪表盘' AND path='/dashboard
 
 -- 9. 系统设置
 INSERT INTO menu (name, path, icon, component, parent_id, sort, is_visible, is_active, menu_type, permission, created_at, updated_at)
-SELECT '系统设置', '/system-setting', 'Setting', 'systemSetting/index', m.id, 10, TRUE, TRUE, 'menu', 'system:setting', NOW(), NOW()
+SELECT '系统设置', '/system-setting', 'Setting', 'systemSetting/Index', m.id, 10, TRUE, TRUE, 'menu', 'system:setting', NOW(), NOW()
 FROM menu m WHERE m.name='系统管理' AND m.path='/system'
 AND NOT EXISTS (SELECT 1 FROM menu WHERE name='系统设置' AND path='/system-setting');

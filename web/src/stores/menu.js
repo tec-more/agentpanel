@@ -160,6 +160,11 @@ const iconMap = {
 // 视图组件映射 - 根据后端返回的 component 路径映射到实际组件
 const viewModules = import.meta.glob('@/views/**/*.vue', { eager: false })
 
+// 大小写不敏感的查找表：小写 key -> 原始 key
+const viewModulesLower = Object.fromEntries(
+  Object.keys(viewModules).map((k) => [k.toLowerCase(), k])
+)
+
 // 根据 component 路径获取组件
 function loadComponent(component) {
   if (!component) return null
@@ -173,6 +178,7 @@ function loadComponent(component) {
     `${normalizedComponent}/index`
   ]
 
+  // 1) 精确匹配（保持原有行为，性能最优）
   for (const pattern of possiblePatterns) {
     const searchKey = `@/views/${pattern}`
     if (viewModules[searchKey]) {
@@ -182,6 +188,20 @@ function loadComponent(component) {
     for (const [key, value] of Object.entries(viewModules)) {
       if (key.endsWith(`/${pattern}`) || key === searchKey) {
         return value
+      }
+    }
+  }
+
+  // 2) 大小写不敏感兜底：兼容后端 component 大小写与磁盘文件名不一致的情况
+  const lowerPatterns = possiblePatterns.map((p) => `@/views/${p}`.toLowerCase())
+  for (const lp of lowerPatterns) {
+    const matchedKey = viewModulesLower[lp]
+    if (matchedKey) {
+      return viewModules[matchedKey]
+    }
+    for (const [lk, original] of Object.entries(viewModulesLower)) {
+      if (lk.endsWith(`/${lp.replace(/^@\/views\//, '')}`) || lk === lp) {
+        return viewModules[original]
       }
     }
   }

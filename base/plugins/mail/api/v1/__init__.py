@@ -1,15 +1,1 @@
-from fastapi import APIRouter
-
-from .message_router import message_router
-from .subtype_router import subtype_router
-from .follower_router import follower_router
-from .notification_router import notification_router
-from .mapping_router import mapping_router
-
-router = APIRouter()
-
-router.include_router(message_router)
-router.include_router(subtype_router)
-router.include_router(follower_router)
-router.include_router(notification_router)
-router.include_router(mapping_router)
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

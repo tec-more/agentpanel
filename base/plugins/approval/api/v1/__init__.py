@@ -1,11 +1,1 @@
-from fastapi import APIRouter
-
-from .flow_router import flow_router
-from .instance_router import instance_router
-from .task_router import task_router
-
-router = APIRouter()
-
-router.include_router(flow_router)
-router.include_router(instance_router)
-router.include_router(task_router)
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

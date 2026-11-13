@@ -1,15 +1,1 @@
-﻿from fastapi import APIRouter
-from .subcontracting_order_router import subcontracting_order_router
-from .subcontracting_issue_router import subcontracting_issue_router
-from .subcontracting_receipt_router import subcontracting_receipt_router
-from .subcontracting_settlement_router import subcontracting_settlement_router
-from .subcontracting_transit_router import subcontracting_transit_router
-from .supplier_material_price_router import supplier_material_price_router
-
-subcontracting_api_router = APIRouter()
-subcontracting_api_router.include_router(subcontracting_order_router)
-subcontracting_api_router.include_router(subcontracting_issue_router)
-subcontracting_api_router.include_router(subcontracting_receipt_router)
-subcontracting_api_router.include_router(subcontracting_settlement_router)
-subcontracting_api_router.include_router(subcontracting_transit_router)
-subcontracting_api_router.include_router(supplier_material_price_router)
+# 路由由各子模块直接导出，由插件管理器按 manifest.routes 递归装配（装配器会跳过 __init__.py，不再在此聚合）。

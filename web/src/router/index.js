@@ -88,8 +88,12 @@ router.beforeEach(async (to, from, next) => {
   // 已缓存为 true 时直接跳过整个核实块）。
   let installed = localStorage.getItem('system_installed') === 'true'
   {
+    // 每次导航都核实真实安装态（不能靠 localStorage 短路），但必须带超时：
+    // 否则后端偶发挂起会把整条导航链卡死，退出时表现为「点了没反应 / 很久才跳」。
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
     try {
-      const resp = await fetch(apiUrl('/v1/install/status'))
+      const resp = await fetch(apiUrl('/v1/install/status'), { signal: controller.signal })
       const json = await resp.json()
       const data = json?.data || json
       installed = !!data.installed
@@ -99,7 +103,9 @@ router.beforeEach(async (to, from, next) => {
         localStorage.removeItem('system_installed')
       }
     } catch (_) {
-      // 后端不可达时依赖本地缓存判断，避免把用户锁死在安装页
+      // 超时 / 后端不可达时依赖本地缓存判断，避免把用户锁死在安装页
+    } finally {
+      clearTimeout(timer)
     }
   }
   if (!installed && to.path !== '/install') {

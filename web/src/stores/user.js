@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { login as loginApi, getCurrentUser, logout as logoutApi } from '@/api/auth'
+import { beginLogout } from '@/utils/request'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -35,11 +36,16 @@ export const useUserStore = defineStore('user', {
     },
 
     async logout() {
+      // 1) 进入登出流程：抑制 401 拦截器弹提示 / 抢跳登录页（避免与本次跳转互相拉扯）
+      beginLogout()
+      // 2) 先让后台轮询、WebSocket 等组件停下来，避免退出后仍拿失效 token 发请求刷 401
+      window.dispatchEvent(new CustomEvent('app:logout'))
+      // 3) 登出审计请求须在清 token 前同步发出，但绝不阻塞跳转：
+      //    后端 logout 只写审计日志，失败/超时都不影响本地登出（fire-and-forget）
       try {
-        await logoutApi()
-      } catch (e) {
-        // 忽略登出错误
-      }
+        logoutApi().catch(() => {})
+      } catch (_) {}
+      // 4) 立即清理本地登录态，页面随即跳转，不再等待任何网络往返
       this.token = ''
       this.userInfo = {}
       localStorage.removeItem('token')

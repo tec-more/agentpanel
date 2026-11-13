@@ -8,6 +8,22 @@ const request = axios.create({
   timeout: 15000
 })
 
+// 登出流程标志：退出过程中，后台轮询 / 在途请求返回的 401 不应再弹「登录已过期」
+// 或抢跳登录页——那会和 logout 自己的跳转互相拉扯，表现为「点了退出没反应 / 跳得很慢」。
+// 由 stores/user.js::logout 置位、MainLayout 完成跳转后复位；10s 兜底自动复位。
+let loggingOut = false
+let logoutGuardTimer = null
+export const beginLogout = () => {
+  loggingOut = true
+  if (logoutGuardTimer) clearTimeout(logoutGuardTimer)
+  logoutGuardTimer = setTimeout(() => { loggingOut = false; logoutGuardTimer = null }, 10000)
+}
+export const endLogout = () => {
+  loggingOut = false
+  if (logoutGuardTimer) { clearTimeout(logoutGuardTimer); logoutGuardTimer = null }
+}
+export const isLoggingOut = () => loggingOut
+
 export function createRequestWithTimeout(timeout) {
   const instance = axios.create({
     baseURL: API_BASE,
@@ -16,8 +32,9 @@ export function createRequestWithTimeout(timeout) {
 
   instance.interceptors.request.use(
     (config) => {
+      // 已由调用方显式指定 Authorization 时（如登出时固化的 token）不要覆盖
       const token = localStorage.getItem('token')
-      if (token) {
+      if (token && !config.headers?.['Authorization']) {
         config.headers['Authorization'] = `Bearer ${token}`
       }
       return config
@@ -44,8 +61,10 @@ export function createRequestWithTimeout(timeout) {
         if (status === 401 && !(error.config?.url || '').includes('/v1/auth/login')) {
           localStorage.removeItem('token')
           localStorage.removeItem('userInfo')
-          ElMessage.error('登录已过期，请重新登录')
-          router.push('/panel/login')
+          if (!isLoggingOut()) {
+            ElMessage.error('登录已过期，请重新登录')
+            router.push('/panel/login')
+          }
         } else if (status === 503) {
           // 503 系统未安装 - 静默处理，清除缓存并跳转安装页
           localStorage.removeItem('system_installed')
@@ -71,8 +90,9 @@ export function createRequestWithTimeout(timeout) {
 // 请求拦截器 - 直接从 localStorage 读取 token
 request.interceptors.request.use(
   (config) => {
+    // 已由调用方显式指定 Authorization 时（如登出时固化的 token）不要覆盖
     const token = localStorage.getItem('token')
-    if (token) {
+    if (token && !config.headers?.['Authorization']) {
       config.headers['Authorization'] = `Bearer ${token}`
     }
     return config
@@ -123,9 +143,14 @@ request.interceptors.response.use(
         })
       }
 
-      // 静默请求（如消息铃铛轮询）由调用方自行处理：不打日志、不弹全局提示，
-      // 但 401 仍要走统一的登录态清理，避免过期 token 一直挂在本地。
-      if (silent && status !== 401) {
+      // 静默请求（如消息铃铛轮询）由调用方自行处理：不打日志、不弹提示、不抢跳登录页。
+      // 401 时仍清掉过期 token，但跳转交还给页面自身流程；否则一次后台轮询 401
+      // 就会把用户从当前页踢走，退出登录时更会与 logout 跳转形成来回拉扯。
+      if (silent) {
+        if (status === 401 && !isLoginRequest) {
+          localStorage.removeItem('token')
+          localStorage.removeItem('userInfo')
+        }
         return Promise.reject(error)
       }
 
@@ -133,12 +158,14 @@ request.interceptors.response.use(
         if (isLoginRequest) {
           // 登录接口 401 = 用户名或密码错误，是登录表单的正常业务结果，
           // 不能当作「登录已过期」清 token 并跳转登录页。
-          if (!silent) ElMessage.error(data?.msg || data?.message || '用户名或密码错误')
+          ElMessage.error(data?.msg || data?.message || '用户名或密码错误')
         } else {
           localStorage.removeItem('token')
           localStorage.removeItem('userInfo')
-          if (!silent) ElMessage.error('登录已过期，请重新登录')
-          router.push('/panel/login')
+          if (!isLoggingOut()) {
+            ElMessage.error('登录已过期，请重新登录')
+            router.push('/panel/login')
+          }
         }
       } else if (status === 403) {
         ElMessage.error('没有权限访问')

@@ -154,6 +154,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useMenuStore } from '@/stores/menu'
 import { changePassword } from '@/api/auth'
+import { endLogout } from '@/utils/request'
 import ApprovalPrompt from '@/views/approval/ApprovalPrompt.vue'
 import GlobalApproval from '@/components/GlobalApproval.vue'
 import MailBell from '@/components/MailBell.vue'
@@ -279,9 +280,14 @@ const handleCommand = async (command) => {
       })
       await userStore.logout()
       menuStore.resetMenus()
-      router.push('/panel')
+      // 直接 replace 到登录页：原来 push('/panel') 是后台父路由，还要靠守卫
+      // 再重定向一次，且会与 401 拦截器的跳转互相拉扯，表现为「没跳转 / 很慢」。
+      await router.replace('/panel/login')
     } catch {
       // 取消操作
+    } finally {
+      // 跳转完成（或用户取消）后复位登出标志，恢复正常的 401 自动跳转
+      endLogout()
     }
   } else if (command === 'password') {
     passwordForm.value = { old_password: '', new_password: '', confirm_password: '' }

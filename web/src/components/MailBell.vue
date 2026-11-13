@@ -67,6 +67,7 @@ const mailUnavailable = ref(false)
 let ws = null
 let shouldReconnect = false
 let pollTimer = null
+let pollAbort = null
 
 const stripHtml = (html) => {
   if (!html) return ''
@@ -92,6 +93,11 @@ const stopPolling = () => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  // 取消已发出但尚未返回的未读数请求，避免退出时残留一条 401
+  if (pollAbort) {
+    try { pollAbort.abort() } catch (e) {}
+    pollAbort = null
+  }
   if (ws) {
     try { ws.close() } catch (e) {}
     ws = null
@@ -105,10 +111,14 @@ const markUnavailable = () => {
 
 const fetchUnread = async () => {
   if (mailUnavailable.value) return
+  const controller = new AbortController()
+  pollAbort = controller
   try {
-    const res = await getUnreadCount()
+    const res = await getUnreadCount({ signal: controller.signal })
     unreadCount.value = res.data?.unread_count || 0
   } catch (e) {
+    // 退出登录时主动取消的在途请求不算失败，也不会留下 401
+    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return
     const status = e?.response?.status
     // 401 表示登录态已失效；404 表示插件路由不可用，两者都停止无效请求
     if (status === 401) {
@@ -117,6 +127,8 @@ const fetchUnread = async () => {
       markUnavailable()
     }
     // 其他错误静默处理
+  } finally {
+    if (pollAbort === controller) pollAbort = null
   }
 }
 
@@ -222,6 +234,9 @@ const onRefreshEvent = () => {
   fetchRecent()
 }
 
+// 退出登录时立即停掉轮询 / WS 重连，避免组件尚未卸载期间用失效 token 刷 401
+const onAppLogout = () => stopPolling()
+
 onMounted(() => {
   // mail 插件未启用时不轮询/不连 WS，避免 404
   if (!system.isPluginEnabled('mail')) return
@@ -230,11 +245,13 @@ onMounted(() => {
   connectWs()
   pollTimer = setInterval(fetchUnread, 30000)
   window.addEventListener('mail:refresh', onRefreshEvent)
+  window.addEventListener('app:logout', onAppLogout)
 })
 
 onUnmounted(() => {
   stopPolling()
   window.removeEventListener('mail:refresh', onRefreshEvent)
+  window.removeEventListener('app:logout', onAppLogout)
 })
 </script>
 

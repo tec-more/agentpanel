@@ -11,6 +11,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - app_default
     # 不暴露宿主机端口：仅编排内网可达
 
   app:
@@ -34,7 +36,9 @@ services:
       - ../../storage:/app/storage
       - ../../logs:/app/logs
     expose:
-      - "9998"                 # 仅编排内网暴露，外部统一走 nginx
+      - "9998"  
+    networks:
+      - app_default               # 仅编排内网暴露，外部统一走 nginx
 
   nginx:
     image: docker.m.daocloud.io/library/nginx:alpine
@@ -47,3 +51,8 @@ services:
       - ../nginx/conf.d:/etc/nginx/conf.d:ro
     ports:
       - "9080:80"              # 管理后台（/panel → web/dist，经后端 app_wrapper）
+    networks:
+      - app_default
+networks:
+  app_default:
+    external: true

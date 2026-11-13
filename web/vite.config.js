@@ -58,7 +58,8 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:9998',
         changeOrigin: true,
-        secure: false
+        secure: false,
+        ws: true  // 代理 WebSocket 升级（/api/v1/*/ws），否则本地开发时握手 404
       }
     },
     historyApiFallback: true

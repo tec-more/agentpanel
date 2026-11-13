@@ -19,7 +19,7 @@ services:
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
-      - monitoring
+      - app_default
 
   # 常驻本地告警接收器：把 Alertmanager 通知追加落盘到 ./alert-sink/alert-events.jsonl。
   # 不发布宿主端口，只在 monitoring 网络内以服务名访问；运行态数据不入库。
@@ -37,7 +37,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - monitoring
+      - app_default
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -54,7 +54,7 @@ services:
     depends_on:
       - alert-webhook-logger
     networks:
-      - monitoring
+      - app_default
 
   grafana:
     image: grafana/grafana:latest
@@ -68,7 +68,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_DEFAULT_LANGUAGE=zh-Hans
     networks:
-      - monitoring
+      - app_default
     depends_on:
       - prometheus
 
@@ -86,7 +86,7 @@ services:
     environment:
       - COLLECTOR_ZIPKIN_HOST_PORT=:9411
     networks:
-      - monitoring
+      - app_default
 
   pushgateway:
     image: prom/pushgateway:latest
@@ -96,7 +96,7 @@ services:
     volumes:
       - pushgateway_data:/pushgateway
     networks:
-      - monitoring
+      - app_default
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
@@ -111,7 +111,7 @@ services:
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
-      - monitoring
+      - app_default
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.0
@@ -121,7 +121,7 @@ services:
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     networks:
-      - monitoring
+      - app_default
     depends_on:
       - elasticsearch
 
@@ -133,7 +133,7 @@ services:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml
       - /var/log/aipaneladmin:/var/log/aipaneladmin:ro
     networks:
-      - monitoring
+      - app_default
     depends_on:
       - elasticsearch
 
@@ -154,7 +154,7 @@ services:
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
-      - monitoring
+      - app_default
 
 volumes:
   prometheus_data:
@@ -164,5 +164,5 @@ volumes:
   pushgateway_data:
 
 networks:
-  monitoring:
-    driver: bridge
+  app_default:
+    external: true

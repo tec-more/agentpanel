@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7-alpine
-    container_name: aipanel-redis
+    container_name: agentpanel-redis
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD required}"]
     volumes:
@@ -17,8 +17,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/app/Dockerfile
-    image: aipanel-app:latest
-    container_name: aipanel-app
+    image: agentpanel-app:latest
+    container_name: agentpanel-app
     restart: always
     depends_on:
       redis:
@@ -37,9 +37,8 @@ services:
       - "9998"                 # 仅编排内网暴露，外部统一走 nginx
 
   nginx:
-    # 纯反代镜像（deploy/nginx/Dockerfile）：配置由卷挂载下发，静态资源由 app_wrapper 提供
-    image: aipanel-nginx:latest
-    container_name: aipanel-nginx
+    image: docker.m.daocloud.io/library/nginx:alpine
+    container_name: agentpanel-nginx
     restart: always
     depends_on:
       - app

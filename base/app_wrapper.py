@@ -156,6 +156,17 @@ class ASGIAppWithPrefix:
 
             static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "dist")
 
+            # 前端静态资源（/assets/*）必须优先于「未安装→跳转」处理：
+            # 否则未安装时，install.html 引用的 JS/CSS 会被误判为「非安装路径」而 302 到 /install，
+            # 浏览器拿到 HTML 当 JS 解析，安装页直接白板。
+            if original_path.startswith("/assets/"):
+                file_path = os.path.join(static_dir, original_path.lstrip("/"))
+                if os.path.exists(file_path):
+                    await FileResponse(file_path)(scope, receive, send)
+                else:
+                    await HTMLResponse(status_code=404, content="Not Found")(scope, receive, send)
+                return
+
             # 如果未安装且访问的不是安装页面，重定向到安装页面
             if not is_installed and not original_path.startswith("/install"):
                 response = RedirectResponse(url="/install", status_code=302)
@@ -181,15 +192,6 @@ class ASGIAppWithPrefix:
                         status_code=503,
                         content="系统尚未安装，且前端资源未构建。请先执行：cd web && npm install && npm run build"
                     )(scope, receive, send)
-                return
-
-            # 检查前端静态资源
-            if original_path.startswith("/assets/"):
-                file_path = os.path.join(static_dir, original_path.lstrip("/"))
-                if os.path.exists(file_path):
-                    await FileResponse(file_path)(scope, receive, send)
-                else:
-                    await HTMLResponse(status_code=404, content="Not Found")(scope, receive, send)
                 return
 
             # 返回前端 index.html（SPA 模式）

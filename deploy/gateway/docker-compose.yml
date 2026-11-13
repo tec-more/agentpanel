@@ -99,7 +99,8 @@ services:
       GW_FAIL_CLOSED: "true"
       GW_PROVIDER_DOMAIN_ALLOWLIST: ${GW_PROVIDER_DOMAIN_ALLOWLIST:-api.deepseek.com}
     secrets: [db_password, redis_password]
-    networks: [agentpanel-net]
+    networks:
+      - app_default
     extra_hosts:
       - "host.docker.internal:host-gateway"
     security_opt:
@@ -146,8 +147,7 @@ services:
       - -c
       - 'export ORCHESTRATION_SERVICE_SECRET="$$(cat /run/secrets/orchestration_service_secret)"; exec python services/orchestration/run.py'
     networks:
-      agentpanel-net:
-        ipv4_address: 172.28.0.10
+      - app_default
     extra_hosts:
       - "host.docker.internal:host-gateway"
     security_opt:
@@ -157,10 +157,6 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
 networks:
-  agentpanel-net:
-    external: true
-  # 由另一仓库的 legacy compose 项目 `app` 创建（aipanel-nginx / 宿主 8080）。
-  # 8080 入口存在时该网络必然存在；无 legacy 栈的干净机器先 docker network create app_default。
   app_default:
     external: true
 

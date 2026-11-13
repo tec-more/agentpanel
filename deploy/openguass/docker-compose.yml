@@ -17,3 +17,11 @@ services:
       LANG: en_US.UTF-8
     # 权限配置
     privileged: true
+    # 接入 app 栈所在的网络，使 agentpanel-app 能用服务名 `opengauss` 直连（端口用容器内 5432）
+    networks:
+      - app_default
+
+# 复用 deploy/app 栈创建的网络，避免容器间跨网络隔离导致 app 解析不到 opengauss
+networks:
+  app_default:
+    external: true

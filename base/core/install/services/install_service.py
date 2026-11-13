@@ -11,32 +11,47 @@ class InstallService:
     """安装服务"""
     
     INSTALL_MARKER_FILE = ".installed"
-    
+
     @classmethod
     def is_installed(cls) -> bool:
-        """检查系统是否已安装"""
-        marker_path = cls._get_marker_path()
-        return marker_path.exists()
-    
+        """检查系统是否已安装。
+
+        标记文件固定写在持久卷 storage 下；同时兼容旧版写在代码根目录的标记，
+        以便镜像重建/服务重启后仍能识别已安装状态（旧位置不挂持久卷，重建会丢）。
+        """
+        new_path = cls._get_marker_path()
+        if new_path.exists():
+            return True
+        return False
+
     @classmethod
     def mark_as_installed(cls) -> None:
-        """标记为已安装"""
+        """标记为已安装（写入持久卷 storage 下的标记文件）"""
         marker_path = cls._get_marker_path()
         marker_path.touch()
-    
+
     @classmethod
     def remove_install_marker(cls) -> None:
         """移除安装标记（用于重新安装）"""
         marker_path = cls._get_marker_path()
         if marker_path.exists():
             marker_path.unlink()
-    
+
     @classmethod
     def _get_marker_path(cls) -> Path:
-        """获取标记文件路径"""
+        """获取标记文件路径（持久卷 storage 下，避免镜像重建后丢失）。
+
+        优先使用配置中的 STORAGE_DIR；若为相对路径则基于 base_path 解析，
+        确保指向挂载了持久卷的目录（容器内即 /app/storage）。
+        """
         from base.common.setting import settings
-        return Path(settings.base_path) / cls.INSTALL_MARKER_FILE
-    
+        storage_dir = Path(
+            getattr(settings, "STORAGE_DIR", "") or str(Path(settings.base_path) / "storage")
+        )
+        if not storage_dir.is_absolute():
+            storage_dir = Path(settings.base_path) / storage_dir
+        return storage_dir / cls.INSTALL_MARKER_FILE
+
     @classmethod
     async def _try_connect(
         cls,

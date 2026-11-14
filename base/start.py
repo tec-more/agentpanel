@@ -11,7 +11,6 @@ from base.common.middleware import register_middlewares
 from base.common.exceptions import register_exceptions
 from base.common.router import register_routers
 from base.common.json_encoder import DateTimeEncoder
-from base.common.jobs import job_scheduler
 from base.common.logging_config import register_exceptions_with_logging
 from base.plugins import get_plugin_manager, init_plugin_manager
 import asyncio
@@ -83,31 +82,16 @@ async def lifespan(app: FastAPI):
         # （否则插件 handler 中的 model 的 default_connection 为 None）
         await initialize_event_center()
 
-        # 初始化EventBusAdapter（RabbitMQ事件总线）
+        # M3：初始化 taskiq broker 客户端连接（发布 → dispatch.kiq 入 ap.events）。
+        # 连接失败不阻断启动；publish 时会重试建连，失败上抛（fail-closed）。
         try:
             from base.common.events.event_bus import event_bus
-            if hasattr(event_bus, 'initialize'):
-                await event_bus.initialize()
-                print("EventBusAdapter初始化完成")
+            await event_bus.initialize()
         except Exception as e:
-            print(f"EventBusAdapter初始化失败(将使用内存模式): {e}")
+            print(f"taskiq broker 连接失败(启动期忽略，publish 时将重试): {e}")
 
-        # 启动ConsumerWorker
-        try:
-            from base.common.events.event_bus import event_bus
-            from base.common.events.consumer_worker import ConsumerWorker
-            if hasattr(event_bus, 'is_rabbitmq_available') and event_bus.is_rabbitmq_available():
-                consumer_worker = ConsumerWorker(event_bus)
-                await consumer_worker.start()
-                app.state.consumer_worker = consumer_worker
-                event_bus._consumer_worker = consumer_worker
-                print("ConsumerWorker已启动")
-            else:
-                app.state.consumer_worker = None
-                print("ConsumerWorker未启动(RabbitMQ不可用)")
-        except Exception as e:
-            print(f"ConsumerWorker启动失败: {e}")
-            app.state.consumer_worker = None
+        # M3：事件消费已外迁 taskiq worker（deploy compose taskiq-worker 服务），
+        # app 进程不再启动旧 RabbitMQ 直连消费者；发布端也不执行内存订阅。
 
         # 事件订阅已在 init_data() 之后由事件中心按 manifest 声明初始化；
         # 插件启用/禁用时由 plugin_manager 调用事件中心做装卸，不再依赖 on_startup。
@@ -119,10 +103,8 @@ async def lifespan(app: FastAPI):
         await manager.startup()
         print("插件系统初始化完成")
 
-        # W2-3：定时任务统一装配（平台 quota 作业 + 已启用插件的 manifest.jobs 声明）。
-        # 作业随插件运行期启停由 plugin_manager 钩子同步装卸，启动入口不再感知具体插件。
-        await job_scheduler.start_all()
-        print("定时任务装配完成")
+        # M2：定时调度已外迁 taskiq beat（deploy compose taskiq-beat 服务，
+        # reconciler 按 manifest 周期写调度行），app 进程不再装配本地 JobScheduler。
 
         # 启动 Prometheus 推送工作器（W2-1 整改：删除 ImportError 兜底，base/common 模块始终存在）
         if getattr(settings, 'PROMETHEUS_PUSH_ENABLED', False):
@@ -139,12 +121,6 @@ async def lifespan(app: FastAPI):
         # 清理逻辑
         print("Application shutting down...")
 
-        # 0. W2-3：先取消平台/插件作业（先于插件 shutdown 与 DB 关闭）
-        try:
-            await job_scheduler.shutdown()
-        except Exception as e:
-            print(f"关闭作业调度器时出错: {e}")
-
         # 1. 取消所有后台任务
         print("正在取消后台任务...")
         for task in background_tasks:
@@ -155,15 +131,7 @@ async def lifespan(app: FastAPI):
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
 
-        # 1.5 停止ConsumerWorker和EventBusAdapter
-        try:
-            if hasattr(app.state, 'consumer_worker') and app.state.consumer_worker:
-                # W3-3：stop() 内部要排空在途消息（drain_timeout=8s），
-                # 外层超时须留足余量，否则取消 stop() 会让 drain 半途而废。
-                await asyncio.wait_for(app.state.consumer_worker.stop(), timeout=12.0)
-                print("ConsumerWorker已停止")
-        except Exception as e:
-            print(f"停止ConsumerWorker时出错: {e}")
+        # 1.5 关闭 taskiq broker 客户端连接（M3：发布端唯一需要清理的连接）
         try:
             from base.common.events.event_bus import event_bus
             if hasattr(event_bus, 'shutdown'):

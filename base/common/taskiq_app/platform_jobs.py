@@ -1,11 +1,16 @@
-"""平台级作业：不依赖任何插件、恒启的公共层能力（W2-3）。
+"""平台级作业：不依赖任何插件、恒启的公共层能力（M2 迁自 base/common/jobs/platform.py）。
 
-任务体由 ``base/start.py`` 原样平移，只保留**单轮**业务逻辑；
-while 循环、首轮 sleep、取消与异常处理统一交给 ``JobScheduler._run_loop``。
+只保留**单轮**业务逻辑；周期与触发由 taskiq-beat 的 reconciler 写入调度行
+（reconcile.py 平台作业段，job_id 前缀 ``platform:``），worker 进程执行。
 """
 from __future__ import annotations
 
+from loguru import logger
 
+from base.common.taskiq_app.broker import broker
+
+
+@broker.task(task_name="platform:quota_reconcile", queue_name="ap.jobs")
 async def quota_reconcile() -> None:
     """每分钟活跃账户配额对账落盘（Redis → PG used）+ 周期滚动。
 
@@ -17,12 +22,13 @@ async def quota_reconcile() -> None:
     processed = int(result.get("processed") or 0)
     skipped = int(result.get("skipped") or 0)
     if processed > 0 or skipped > 0:
-        print(
-            "[定时任务] 配额对账落盘完成 "
+        logger.info(
+            "[平台作业] 配额对账落盘完成 "
             f"batch={result.get('batch_no')} 处理 {processed} 条 / 跳过 {skipped} 条"
         )
 
 
+@broker.task(task_name="platform:quota_hold_cleanup", queue_name="ap.jobs")
 async def quota_hold_cleanup() -> None:
     """每分钟清理悬挂预占（超 TTL 未结算的 hold 释放）。
 
@@ -32,20 +38,4 @@ async def quota_hold_cleanup() -> None:
 
     released = await QuotaService.cleanup_stale_holds()
     if released > 0:
-        print(f"[定时任务] 释放悬挂预占 {released} 个")
-
-
-def install(scheduler) -> None:
-    """由 ``JobScheduler.start_all()`` 调用：代码注册平台作业，不强制 manifest 化。"""
-    scheduler.register_platform_job(
-        "quota_reconcile",
-        quota_reconcile,
-        interval_seconds=60,
-        description="每分钟配额对账落盘",
-    )
-    scheduler.register_platform_job(
-        "quota_hold_cleanup",
-        quota_hold_cleanup,
-        interval_seconds=60,
-        description="每分钟清理悬挂预占",
-    )
+        logger.info(f"[平台作业] 释放悬挂预占 {released} 个")

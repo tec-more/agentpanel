@@ -7,7 +7,10 @@
 """
 from __future__ import annotations
 
+from base.common.taskiq_app.broker import broker
 
+
+@broker.task(task_name="customer:update_membership_data", queue_name="ap.jobs")
 async def run() -> None:
     """重新计算已用时长、剩余时长、过期状态，停用剩余时长为 0 的会员。"""
 

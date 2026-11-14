@@ -31,9 +31,12 @@ class EventReplayService:
             return {"success": False, "error": "EVENT_PAYLOAD_CORRUPTED", "message": "事件载荷为空"}
 
         try:
-            from base.common.events.event_bus import event_bus
-            if hasattr(event_bus, 'is_rabbitmq_available') and not event_bus.is_rabbitmq_available():
-                return {"success": False, "error": "RABBITMQ_UNAVAILABLE", "message": "RabbitMQ不可用"}
+            # M3：重放 = 同一 event_uuid 重新入队（dispatch.kiq），不再走
+            # event_bus.publish（那会生成新 uuid 产生新事件，旧记录悬空）。
+            from base.common.taskiq_app.broker import ensure_started
+            from base.common.taskiq_app.events import dispatch
+
+            await ensure_started()
 
             await EventRecord.filter(event_uuid=event_uuid).update(
                 status="published",
@@ -44,7 +47,16 @@ class EventReplayService:
             )
 
             payload = record.payload if isinstance(record.payload, dict) else {}
-            await event_bus.publish(record.event_name, _source_module=record.source_module, **payload)
+            await dispatch.kiq(
+                {
+                    "event_uuid": event_uuid,
+                    "event_name": record.event_name,
+                    "payload": payload,
+                    "published_at": record.published_at.isoformat()
+                    if record.published_at
+                    else "",
+                }
+            )
 
             await ReplayAuditLog.create(
                 operator=operator,

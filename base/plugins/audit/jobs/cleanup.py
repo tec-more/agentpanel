@@ -6,6 +6,10 @@
 """
 
 
+from base.common.taskiq_app.broker import broker
+
+
+@broker.task(task_name="audit:audit_cleanup", queue_name="ap.jobs")
 async def run() -> None:
     """清理过期数据变更日志（原 audit_cleanup_task 的单轮逻辑）。"""
     from base.plugins.audit.services.data_change_service import (

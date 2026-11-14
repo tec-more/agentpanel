@@ -94,3 +94,10 @@ opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-requests
 opentelemetry-instrumentation-httpx
 opentelemetry-exporter-jaeger-thrift
+
+# --- taskiq 独立调度/消费 (M1) ---
+# 与现有 redis>=5.0.0 / aio-pika>=10.0.1 共存，不升级；不引 taskiq-redis（结果后端用 DummyResultBackend）
+taskiq==0.13.0
+taskiq-aio-pika==0.6.1
+taskiq-beat==1.4.0
+sqlalchemy>=2.0,<3

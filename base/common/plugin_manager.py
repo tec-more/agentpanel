@@ -704,9 +704,8 @@ class PluginManager:
             # 更新 manifest 状态（同时使门控缓存失效）
             self.update_plugin_status(name, is_installed=True, is_enabled=True)
 
-            # W2-3：状态双真后装载 manifest.jobs 声明的作业；
-            # 启动期调度器未就绪会静默跳过，由 lifespan 的 start_all 统一装载。
-            await self._sync_plugin_jobs(name, active=True)
+            # M2：作业调度由独立 taskiq beat 的 reconciler 周期重扫接管（≤reconcile_interval
+            # 生效），本进程不再持有调度器钩子。
 
             degraded = name in (
                 self._degraded_hooks | self._degraded_menus | self._degraded_permissions
@@ -803,32 +802,11 @@ class PluginManager:
         except Exception as e:
             log.error(f"插件 {name} 订阅同步失败(active={active}): {e}")
 
-    async def _sync_plugin_jobs(self, name: str, active: bool) -> None:
-        """把插件作业交给平台调度器统一装卸（W2-3 / AC-PLR-15-1）。
-
-        调度器未就绪（启动期 load_enabled_plugins 阶段）时静默跳过，
-        由 lifespan 的 ``job_scheduler.start_all()`` 统一装载，避免重复启动。
-        """
-        try:
-            from base.common.jobs import job_scheduler
-        except ImportError:
-            return
-        try:
-            if active:
-                await job_scheduler.start_plugin(name)
-            else:
-                await job_scheduler.stop_plugin(name)
-        except Exception as e:
-            log.error(f"插件 {name} 作业同步失败(active={active}): {e}")
-
-
     async def disable_plugin(self, name: str) -> bool:
         """禁用插件"""
         plugin = self._plugins.get(name)
         if not plugin or not plugin.enabled:
             self.update_plugin_status(name, is_enabled=False)
-            # 实例已停用但调度器可能仍有残留任务，一并清理
-            await self._sync_plugin_jobs(name, active=False)
             self._clear_degraded(name)
             return True
 
@@ -852,9 +830,7 @@ class PluginManager:
                 await self._cleanup_plugin_permissions(name, manifest)
             await self._sync_plugin_subscriptions(name, manifest or {}, active=False)
 
-            # W2-3：运行期禁用立刻 cancel 该插件全部作业任务，不再空转
-            await self._sync_plugin_jobs(name, active=False)
-
+            # M2：作业停摆由 beat reconciler 周期重扫 pause 该插件调度行，无需本地钩子
             self.update_plugin_status(name, is_enabled=False)
 
             self._clear_degraded(name)

@@ -13,6 +13,8 @@
 #   deploy/gateway/secrets/redis_password
 #   deploy/gateway/secrets/orchestration_service_secret
 #   deploy/gateway/secrets/app_config.conf        # 容器内 /app/config.conf
+#   deploy/gateway/secrets/taskiq_broker_url      # amqp 完整 URL（含专用 vhost agentpanel）
+#   deploy/gateway/secrets/taskiq_db_url          # PG async URL（postgresql+asyncpg://）
 #   deploy/gateway/.env
 #
 # 说明：app_config.conf 只调整容器内可达地址（DB/Qdrant/RabbitMQ 走
@@ -98,7 +100,25 @@ $confLines = [System.IO.File]::ReadAllLines($sourceConf, [System.Text.Encoding]:
 $dbName = Read-IniValue $confLines 'db' 'db_name' -Required
 $dbUser = Read-IniValue $confLines 'db' 'db_user' -Required
 $dbPassword = Read-IniValue $confLines 'db' 'db_password' -Required
+$dbPort = Read-IniValue $confLines 'db' 'db_port' -Required
 $redisPassword = Read-IniValue $confLines 'redis' 'password' -Required
+
+# taskiq 专用连接串（容器内经 host.docker.internal 访问宿主 RabbitMQ / PG）。
+# vhost / 账号 优先用 [rabbitmq] 的 taskiq_* 专用键；缺省时回退到应用共用键，
+# vhost 最终回退到部署侧事实 vhost `agentpanel`（deploy/rabbitmq/definitions.json）。
+# 这样手动创建的 vhost / 账号密码能直接对齐，无需改代码。
+# 密码与 vhost 经 URI 编码，避免 @ / / 等特殊字符破坏 amqp / postgresql URL。
+$rmqHost = Read-IniValue $confLines 'rabbitmq' 'host' -Required
+$rmqPort = Read-IniValue $confLines 'rabbitmq' 'port' -Required
+$rmqUser = Read-IniValue $confLines 'rabbitmq' 'taskiq_username'
+if (-not $rmqUser) { $rmqUser = Read-IniValue $confLines 'rabbitmq' 'username' -Required }
+$rmqPass = Read-IniValue $confLines 'rabbitmq' 'taskiq_password'
+if (-not $rmqPass) { $rmqPass = Read-IniValue $confLines 'rabbitmq' 'password' -Required }
+$taskiqVhost = Read-IniValue $confLines 'rabbitmq' 'taskiq_vhost'
+if (-not $taskiqVhost) { $taskiqVhost = Read-IniValue $confLines 'rabbitmq' 'virtual_host' }
+if (-not $taskiqVhost) { $taskiqVhost = 'agentpanel' }
+$taskiqBrokerUrl = "amqp://$([System.Uri]::EscapeDataString($rmqUser)):$([System.Uri]::EscapeDataString($rmqPass))@host.docker.internal:$rmqPort/$([System.Uri]::EscapeDataString($taskiqVhost))"
+$taskiqDbUrl = "postgresql+asyncpg://$([System.Uri]::EscapeDataString($dbUser)):$([System.Uri]::EscapeDataString($dbPassword))@host.docker.internal:$dbPort/$dbName"
 
 $orchSecret = $env:ORCHESTRATION_SERVICE_SECRET
 if ([string]::IsNullOrWhiteSpace($orchSecret)) {
@@ -114,6 +134,8 @@ if ([string]::IsNullOrWhiteSpace($orchSecret)) {
 Write-SecretText (Join-Path $secretsDir 'db_password') $dbPassword
 Write-SecretText (Join-Path $secretsDir 'redis_password') $redisPassword
 Write-SecretText (Join-Path $secretsDir 'orchestration_service_secret') $orchSecret.Trim()
+Write-SecretText (Join-Path $secretsDir 'taskiq_broker_url') $taskiqBrokerUrl
+Write-SecretText (Join-Path $secretsDir 'taskiq_db_url') $taskiqDbUrl
 
 # app config.conf：容器内地址改写 + [deploy] 段
 $appLines = $confLines
@@ -138,6 +160,7 @@ $envContent = @(
     "DB_NAME=$dbName",
     "DB_USER=$dbUser",
     "TAG=local",
+    "TASKIQ_VHOST=$taskiqVhost",
     "GW_PROVIDER_DOMAIN_ALLOWLIST=api.deepseek.com",
     "GW_PUBLIC_BASE_URL=http://127.0.0.1:9999",
     "ORCH_PUBLIC_BASE_URL=http://127.0.0.1:9100"
@@ -146,4 +169,6 @@ $envContent = @(
 
 Write-Host "secrets 已生成：$secretsDir"
 Write-Host "  db_password / redis_password / orchestration_service_secret / app_config.conf"
+Write-Host "  taskiq_broker_url / taskiq_db_url"
 Write-Host "env 已生成：$envFile"
+Write-Host "注意：taskiq_broker_url 使用专用 vhost '$taskiqVhost'，须先在 RabbitMQ 创建并授权（deploy/rabbitmq/definitions.json）。"

@@ -1,21 +1,30 @@
 version: "3.8"
 
+# RabbitMQ 部署（agentpanel + 旧项目共用实例）：
+#   - 单一事实源：definitions.json（vhosts / users / permissions，节点启动时导入）。
+#   - rabbitmq.conf 必须显式声明 load_definitions——官方镜像【不会】自动加载
+#     /etc/rabbitmq/definitions.json；且配置了 load_definitions 后
+#     RABBITMQ_DEFAULT_USER/PASS/VHOST 会被镜像入口忽略，故不再设置。
+#   - hostname 固定为 rabbitmq：节点名 rabbit@rabbitmq 跨重建稳定，mnesia
+#     数据库不再随容器 ID 变化而"换库"（此前 RABBITMQ_NODE_NAME 从未生效）。
+#   - taskiq 专用 vhost `agentpanel` / 账号 `agent_user`（见 definitions.json），
+#     对齐 config.conf [rabbitmq] taskiq_* 三键与 prepare-secrets.ps1 优先级链。
 services:
   rabbitmq:
     image: rabbitmq:3.13-management
     container_name: rabbitmq
+    hostname: rabbitmq
     restart: unless-stopped
     ports:
       - "5672:5672"    # AMQP 协议端口
       - "15672:15672"  # 管理界面端口
-    environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: Admin@123
-      RABBITMQ_DEFAULT_VHOST: /
-      RABBITMQ_NODE_NAME: rabbit@rabbitmq
     volumes:
       - F:/rabbitmq/data:/var/lib/rabbitmq
       - F:/rabbitmq/log:/var/log/rabbitmq
+      # 挂载定义文件，只读
+      - ./definitions.json:/etc/rabbitmq/definitions.json:ro
+      # 显式声明 load_definitions（镜像不会自动加载 definitions.json）
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s

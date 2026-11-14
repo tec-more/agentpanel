@@ -5,6 +5,10 @@
 """
 
 
+from base.common.taskiq_app.broker import broker
+
+
+@broker.task(task_name="sales:cancel_expired_orders", queue_name="ap.jobs")
 async def run() -> None:
     """检查并取消过期订单（原 cancel_expired_orders_task 的单轮逻辑）。"""
     from base.plugins.sales.services.order_service import OrderService

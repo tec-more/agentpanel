@@ -1,90 +1,78 @@
+"""事件链路监控（M3 后：探针基于 taskiq broker 与 Redis 心跳键）。
+
+旧的 RabbitMQConnectionManager 队列深度探针与 ConsumerWorker 状态已随消费外迁
+删除；等价观测改为：
+- broker 客户端连接态（app 进程 publish 所需的 taskiq 客户端连接）；
+- taskiq worker / beat 的 Redis 心跳键年龄（health.py healthcheck 同源）。
+队列深度等 MQ 侧指标可经 RabbitMQ 管理接口获取，不再在应用内被动探测。
+"""
 from typing import Dict, Any
 
 from base.common.setting import settings
+
+_HEARTBEAT_MAX_AGE = 30.0  # 心跳键 ex=30s，超过即视为进程不在
+
+
+async def _heartbeat_age(key: str) -> float:
+    """读取 Redis 心跳键的时间戳，返回距今秒数；键缺失返回 -1。"""
+    try:
+        from base.common.cache import RedisCache
+
+        rc = await RedisCache.get_instance()
+        raw = await rc.get(key)
+        if not raw:
+            return -1.0
+        # RedisCache set/get 走 JSON 序列化：写入 str 会被读回为 str
+        ts = float(raw if isinstance(raw, (int, float, str)) else 0)
+        import time
+
+        return max(time.time() - ts, 0.0)
+    except Exception:
+        return -1.0
+
+
+def _broker_client_status() -> str:
+    try:
+        from base.common.taskiq_app import broker as broker_mod
+
+        return "connected" if broker_mod._startup_done else "disconnected"
+    except Exception:
+        return "unknown"
 
 
 class EventMonitorService:
     @staticmethod
     async def get_health_status() -> Dict[str, Any]:
-        from base.common.events.event_bus import event_bus
-        result = {
-            "rabbitmq_connection_status": "unknown",
-            "main_queue_depth": -1,
-            "dlq_depth": -1,
-            "consumer_status": {},
-            "degradation_status": {},
+        worker_age = await _heartbeat_age("ap:taskiq:worker:heartbeat")
+        beat_age = await _heartbeat_age("ap:taskiq:beat:heartbeat")
+        return {
+            "broker_client_status": _broker_client_status(),
+            "taskiq_worker": {
+                "alive": 0 <= worker_age <= _HEARTBEAT_MAX_AGE,
+                "heartbeat_age_s": worker_age,
+            },
+            "taskiq_beat": {
+                "alive": 0 <= beat_age <= _HEARTBEAT_MAX_AGE,
+                "heartbeat_age_s": beat_age,
+            },
         }
-
-        if not settings.RABBITMQ_ENABLED:
-            result["rabbitmq_connection_status"] = "disabled"
-            return result
-
-        if hasattr(event_bus, 'get_connection_manager'):
-            cm = event_bus.get_connection_manager()
-            result["rabbitmq_connection_status"] = cm.get_connection_status().get("status", "unknown")
-
-            try:
-                queue = cm.get_queue()
-                if queue:
-                    queue_info = await queue.declare(passive=True)
-                    result["main_queue_depth"] = queue_info.message_count
-            except Exception:
-                result["main_queue_depth"] = -1
-
-            try:
-                dlq = cm._dlq_queue
-                if dlq:
-                    dlq_info = await dlq.declare(passive=True)
-                    result["dlq_depth"] = dlq_info.message_count
-            except Exception:
-                result["dlq_depth"] = -1
-
-        if hasattr(event_bus, '_consumer_worker') and event_bus._consumer_worker:
-            result["consumer_status"] = event_bus._consumer_worker.get_status()
-
-        if hasattr(event_bus, 'get_degradation_status'):
-            result["degradation_status"] = event_bus.get_degradation_status()
-
-        return result
 
     @staticmethod
     async def get_connection_status() -> Dict[str, Any]:
-        from base.common.events.event_bus import event_bus
         if not settings.RABBITMQ_ENABLED:
             return {"status": "disabled"}
-        if hasattr(event_bus, 'get_connection_manager'):
-            return event_bus.get_connection_manager().get_connection_status()
-        return {"status": "unknown"}
+        return {"status": _broker_client_status()}
 
     @staticmethod
     async def get_queue_metrics() -> Dict[str, Any]:
-        result = {"main_queue": {"message_count": -1, "consumer_count": 0}, "dlq": {"message_count": -1}}
-        if not settings.RABBITMQ_ENABLED:
-            return result
-
-        from base.common.events.event_bus import event_bus
-        if hasattr(event_bus, 'get_connection_manager'):
-            cm = event_bus.get_connection_manager()
-            try:
-                queue = cm.get_queue()
-                if queue:
-                    info = await queue.declare(passive=True)
-                    result["main_queue"] = {"message_count": info.message_count, "consumer_count": info.consumer_count}
-            except Exception:
-                pass
-            try:
-                dlq = cm._dlq_queue
-                if dlq:
-                    dlq_info = await dlq.declare(passive=True)
-                    result["dlq"] = {"message_count": dlq_info.message_count}
-            except Exception:
-                pass
-
-        return result
+        # 队列深度属 MQ 侧指标：改由 RabbitMQ 管理接口 / beat run 历史观测
+        return {"note": "queue depth moved to RabbitMQ management API (M3)"}
 
     @staticmethod
     async def get_consumer_status() -> Dict[str, Any]:
-        from base.common.events.event_bus import event_bus
-        if hasattr(event_bus, '_consumer_worker') and event_bus._consumer_worker:
-            return event_bus._consumer_worker.get_status()
-        return {"is_running": False, "prefetch_count": 0, "processed_count": 0}
+        worker_age = await _heartbeat_age("ap:taskiq:worker:heartbeat")
+        return {
+            "is_running": 0 <= worker_age <= _HEARTBEAT_MAX_AGE,
+            "heartbeat_age_s": worker_age,
+            "processed_count": None,  # 消费计数以 EventRecord 状态为准（可按需聚合）
+        }

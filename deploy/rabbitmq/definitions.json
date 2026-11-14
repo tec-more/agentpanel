@@ -1,0 +1,26 @@
+{
+  "vhosts": [
+    {"name": "/"},
+    {"name": "agentpanel"}
+  ],
+  "users": [
+    {"name": "admin", "password": "Admin@123", "tags": "administrator"},
+    {"name": "agent_user", "password": "Agent@123", "tags": ""}
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "agent_user",
+      "vhost": "agentpanel",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ]
+}

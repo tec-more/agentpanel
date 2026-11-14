@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from base.common.taskiq_app.broker import broker
+
 
 def resolve_interval() -> int:
     """读取对账间隔；非法值回退默认 600s，下限 30s（与契约一致）。"""
@@ -16,6 +18,7 @@ def resolve_interval() -> int:
     return max(int(reconciliation_config().get("interval_seconds") or 600), 30)
 
 
+@broker.task(task_name="harness:gateway_reconcile", queue_name="ap.jobs")
 async def run() -> None:
     """执行一轮网关 vs 客户端上报对账（原 gateway_reconcile_task 的单轮逻辑）。"""
     from base.plugins.harness.services.gateway_config import (

@@ -48,12 +48,17 @@ services:
       ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
       # L2 的 orchestration_proxy 在 proxy 模式下把用户请求转发到该地址
       ORCH_PUBLIC_BASE_URL: "http://orchestration:9100"
+      # M2/M3：app 进程不再本地调度/消费——调度由 taskiq-beat、消费由 taskiq-worker
+      # 服务接管（本文件下方两服务）；app 只发布（EventRecord + dispatch.kiq）。
+      TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
     secrets:
       - source: app_config
         target: /app/config.conf
         mode: 0444
       - db_password
       - redis_password
+      - taskiq_broker_url
     # agentpanel-net: L3 内部网络（编排固定 IP 172.28.0.10、agentredis、app 服务名解析）
     # app_default: 对外 8080 nginx 所在网络。8080 nginx upstream 已改用容器名
     #   agentpanel-app（Docker DNS 按容器名解析，2026-11-10 起不再需要任何别名）。
@@ -156,6 +161,106 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # ---------------------------------------------------------------------------
+  # taskiq 独立调度（beat，严格单实例）+ 独立消费（worker，可多副本）
+  # M2/M3 后这是唯一调度与消费路径：beat 按 manifest 写调度行入 ap.jobs；
+  # worker 消费 ap.jobs + ap.events（作业执行 + 事件分发），可多副本竞争消费。
+  # 详见 reports/prd/AgentPanel-taskiq-M1实施拆解-2026-11-14.md §5 与 M2/M3 实施记录。
+  # 前置：RabbitMQ 需先建专用 vhost 并授权（D6）。vhost/账号优先级：
+  #   config.conf [rabbitmq] taskiq_vhost / taskiq_username / taskiq_password
+  #   -> 缺省回退到 virtual_host / username / password
+  #   -> vhost 仍缺省为 agentpanel。连接串由 prepare-secrets.ps1 生成。
+  # ---------------------------------------------------------------------------
+  taskiq-beat:
+    image: agentpanel-app:${TAG:-local}
+    container_name: agentpanel-beat
+    restart: unless-stopped
+    command:
+      - taskiq-beat-scheduler
+      - base.common.taskiq_app.scheduler:scheduler_app
+      - --startup
+      - base.common.taskiq_app.reconcile:upsert_schedules
+    environment:
+      DEPLOY_ENV: docker
+      RUN_DB_MIGRATIONS: "false"
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
+      TASKIQ_DB_URL_FILE: /run/secrets/taskiq_db_url
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
+    secrets: [db_password, redis_password, taskiq_broker_url, taskiq_db_url]
+    networks:
+      - app_default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "base/common/taskiq_app/health.py", "beat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  taskiq-worker:
+    image: agentpanel-app:${TAG:-local}
+    container_name: agentpanel-worker
+    restart: unless-stopped
+    # 单 worker 消费 ap.jobs + ap.events 两队列（单 broker，task_queues 在 broker.py 声明）
+    # 横向扩缩容：docker compose up --scale taskiq-worker=N 或 k8s replicas（见 §5.2）
+    command:
+      - taskiq
+      - worker
+      - base.common.taskiq_app.broker:broker
+      - base.common.taskiq_app.jobs
+      - base.common.taskiq_app.events
+      - --workers
+      - "2"
+      - --ack-type
+      - when_executed
+      - --max-prefetch
+      - "0"
+    environment:
+      DEPLOY_ENV: docker
+      RUN_DB_MIGRATIONS: "false"
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
+    secrets: [db_password, redis_password, taskiq_broker_url]
+    networks:
+      - app_default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "base/common/taskiq_app/health.py", "worker"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
 networks:
   app_default:
     external: true
@@ -169,6 +274,10 @@ secrets:
     file: ./secrets/orchestration_service_secret
   app_config:
     file: ./secrets/app_config.conf
+  taskiq_broker_url:
+    file: ./secrets/taskiq_broker_url
+  taskiq_db_url:
+    file: ./secrets/taskiq_db_url
 
 volumes:
   app_storage:

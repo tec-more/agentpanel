@@ -300,6 +300,11 @@ class Settings(BaseSettings):
 	RABBITMQ_VIRTUAL_HOST: str = config.config.get("rabbitmq", "virtual_host", fallback="/")
 	RABBITMQ_USERNAME: str = config.config.get("rabbitmq", "username", fallback="guest")
 	RABBITMQ_PASSWORD: str = config.config.get("rabbitmq", "password", fallback="guest")
+	# taskiq 专用 vhost/账号（优先于共用键；缺省回退链见 taskiq_app/broker.py::_resolve_url，
+	# 与 deploy/gateway/scripts/prepare-secrets.ps1 保持一致）
+	RABBITMQ_TASKIQ_VHOST: str = config.config.get("rabbitmq", "taskiq_vhost", fallback="")
+	RABBITMQ_TASKIQ_USERNAME: str = config.config.get("rabbitmq", "taskiq_username", fallback="")
+	RABBITMQ_TASKIQ_PASSWORD: str = config.config.get("rabbitmq", "taskiq_password", fallback="")
 	# 心跳间隔（秒），0 表示禁用心跳，避免空闲连接被判定为 stuck
 	RABBITMQ_HEARTBEAT: int = config.config.getint("rabbitmq", "heartbeat", fallback=0)
 	RABBITMQ_EXCHANGE: str = config.config.get("rabbitmq", "exchange", fallback="event_bus.exchange")

@@ -14,8 +14,8 @@ services:
       RABBITMQ_DEFAULT_VHOST: /
       RABBITMQ_NODE_NAME: rabbit@rabbitmq
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - rabbitmq_log:/var/log/rabbitmq
+      - F:/rabbitmq/data:/var/lib/rabbitmq
+      - F:/rabbitmq/log:/var/log/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
@@ -24,12 +24,6 @@ services:
       start_period: 40s
     networks:
       - app_default
-
-volumes:
-  rabbitmq_data:
-    driver: local
-  rabbitmq_log:
-    driver: local
 
 networks:
   app_default:

@@ -25,7 +25,13 @@ const routes = [
     path: '/panel',
     name: 'panel',
     component: () => import('@/layouts/MainLayout.vue'),
-    redirect: '/panel/dashboard',
+    // 不能用静态 redirect: '/panel/dashboard'：路由表级重定向由 vue-router
+    // 在 beforeEach 之前完成，守卫拦不住，未登录时会先把 URL/history 改写成
+    // /panel/dashboard 再被送去登录页（表现为「仍在跳 dashboard」）。
+    // 改为按登录态即时决定落点，未登录一步直达登录页。
+    redirect: () => (
+      localStorage.getItem('token') ? '/panel/dashboard' : '/panel/login'
+    ),
     // 仅保留非菜单驱动的核心隐藏页；其余页面全部走动态菜单路由
     children: [
       {
@@ -138,48 +144,53 @@ router.beforeEach(async (to, from, next) => {
   // 未登录时不请求 /v1/menus/user-menus：该接口需要鉴权，登录页/落地页会在
   // 控制台刷出 401 并误触「登录已过期」跳转。菜单在登录成功后的首次导航再加载。
   const menuStore = useMenuStore()
-  const resolved = router.resolve(to)
-  // 只有非公开路由才需要加载动态路由，但 NotFound 除外（它需要有机会匹配动态路由）
-  const isNotFound = resolved.name === 'NotFound'
+  // 动态菜单路由尚未注册时，/panel/xxx 会被 vue-router 先解析到 catch-all
+  // NotFound。记下加载前的解析结果，用于判断注册后是否需要重新导航。
+  const isNotFound = router.resolve(to).name === 'NotFound'
 
-  if (isLoggedIn && (isNotFound || !menuStore.routesReady)) {
-    // 防止动态路由加载失败时的无限重定向循环
-    if (menuStore.routeRetryCount >= 3) {
-      console.warn('[路由守卫] 已达最大重试次数(3次)，停止重定向，放行到当前路由')
+  // 菜单只需加载一次。旧写法把 isNotFound 也当作加载条件，会让真正不存在
+  // 的路径反复重定向直到重试上限（3 次）才落到 404 页面。
+  if (isLoggedIn && !menuStore.routesReady) {
+    try {
+      if (!menuStore.isLoaded) {
+        await menuStore.fetchUserMenus()
+      }
+
+      const dynamicRoutes = menuStore.generateRoutes()
+
+      dynamicRoutes.forEach(route => {
+        if (!router.hasRoute(route.name)) {
+          router.addRoute('panel', route)
+          menuStore.dynamicRouteNames.push(route.name)
+        }
+      })
+
       menuStore.routesReady = true
-      // 不调用 next()，继续往下走让后续逻辑处理
-    } else {
-      try {
-        if (!menuStore.isLoaded) {
-          await menuStore.fetchUserMenus()
-        }
 
-        const dynamicRoutes = menuStore.generateRoutes()
-
-        if (dynamicRoutes.length > 0) {
-          dynamicRoutes.forEach(route => {
-            if (!router.hasRoute(route.name)) {
-              router.addRoute('panel', route)
-              menuStore.dynamicRouteNames.push(route.name)
-            }
-          })
-        }
-
-        menuStore.routesReady = true
-        menuStore.routeRetryCount++
-
-        // 重新导航：只传 path，不能展开 to（否则 name: 'NotFound' 会覆盖 path 指向 404）
+      // 仅当加载前解析为 NotFound（可能是刚注册的动态路由）时，才需要用新
+      // 路由表重新导航一次；只传 path，不能展开 to（否则 name: 'NotFound'
+      // 会覆盖 path 把用户送到 404）。
+      if (isNotFound) {
         next({ path: to.path, query: to.query, hash: to.hash, replace: true })
         return
-      } catch (error) {
-        console.error('加载菜单失败:', error)
-        menuStore.routesReady = true
-        // 失败后继续往下走
       }
+    } catch (error) {
+      console.error('加载菜单失败:', error)
+      menuStore.routesReady = true
+      // 失败后继续往下走，由 public / 404 分支处理
     }
   }
 
-  menuStore.routeRetryCount = 0
+  // ---- 未登录访问后台路径：必须先于 public 放行判定 ----
+  // 动态菜单路由未注册时，/panel/dashboard 会被解析到 catch-all NotFound，
+  // 而 NotFound 是 public；若照常按 public 放行，用户看到的是 404 页面而不是
+  // 登录页。因此 /panel 前缀（登录页除外）在本处单独判定，无条件先送登录页。
+  // /panel 裸路径已由路由表里的函数式 redirect 按登录态分流，不会走到这里。
+  const isPanelPath = to.path === '/panel' || to.path.startsWith('/panel/')
+  if (!isLoggedIn && isPanelPath && to.path !== '/panel/login') {
+    next({ path: '/panel/login', query: { redirect: to.fullPath } })
+    return
+  }
 
   // ---- 公开页面直接放行 ----
   if (to.meta.public) {

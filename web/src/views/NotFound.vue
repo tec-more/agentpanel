@@ -8,6 +8,26 @@
   </div>
 </template>
 
+<script setup>
+import { onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+
+const router = useRouter()
+const route = useRoute()
+
+// 兜底：无论因何种原因落到 404 页面，只要目标属于后台且当前未登录，
+// 就直接送登录页。覆盖动态菜单路由尚未注册、bfcache 恢复的旧页面、
+// 以及路由守卫被重定向打断等边缘情况，避免「未登录却看到 404 页面」。
+// 已登录访问真正不存在的后台路径、以及非后台路径的 404 保持原样。
+onMounted(() => {
+  const path = route.path
+  const isPanelPath = path === '/panel' || path.startsWith('/panel/')
+  if (isPanelPath && path !== '/panel/login' && !localStorage.getItem('token')) {
+    router.replace({ path: '/panel/login', query: { redirect: route.fullPath } })
+  }
+})
+</script>
+
 <style lang="scss" scoped>
 .not-found {
   width: 100%;

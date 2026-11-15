@@ -55,6 +55,13 @@ def test_outbox_models_and_migrations() -> None:
     assert "ADD COLUMN IF NOT EXISTS return_value JSONB" in inbox_alter_sql, "已有库须能幂等补列"
     assert "ADD COLUMN IF NOT EXISTS error_detail TEXT" in inbox_alter_sql
     assert "ADD COLUMN IF NOT EXISTS execution_time_ms INT" in inbox_alter_sql
+    # 目标库是 openGauss（非原生 PostgreSQL），没有 to_regclass()：
+    # 迁移必须用 information_schema 判表 + EXECUTE 动态 DDL，否则整批迁移中断。
+    assert "information_schema.tables" in inbox_alter_sql
+    assert "EXECUTE 'ALTER TABLE event_inbox" in inbox_alter_sql
+    for f in (ROOT / "migrations").glob("core_*.sql"):
+        body = "\n".join(line.split("--")[0] for line in f.read_text(encoding="utf-8").splitlines())
+        assert "to_regclass(" not in body, f"{f.name}: openGauss 不支持 to_regclass()"
     for f in alter + inbox + inbox_alter:
         assert parse_migration_filename(f.name) is not None, f.name
 

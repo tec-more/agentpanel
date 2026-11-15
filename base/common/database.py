@@ -224,6 +224,9 @@ async def _run_sql_migrations() -> None:
     try:
         executed = 0
         skipped = 0
+        # 单个文件失败不能中断整批：否则报错点之后的迁移永远不执行，而外层
+        # 「已忽略」会把问题吞掉，直到运行期才以「缺列/缺表」的形式暴露。
+        failures: list[str] = []
 
         for meta in parsed:
             sql_file = migrations_dir / meta.filename
@@ -232,10 +235,14 @@ async def _run_sql_migrations() -> None:
                 skipped += 1
                 continue
             print(f"执行 SQL 迁移: {meta.filename}")
-            sql = sql_file.read_text(encoding="utf-8")
-            for stmt in _split_sql_statements(sql):
-                await conn.execute(stmt)
-            executed += 1
+            try:
+                sql = sql_file.read_text(encoding="utf-8")
+                for stmt in _split_sql_statements(sql):
+                    await conn.execute(stmt)
+                executed += 1
+            except Exception as exc:
+                failures.append(f"{meta.filename}: {exc}")
+                print(f"  [迁移失败] {meta.filename}: {exc}")
 
         # 兼容旧文件：从文件名推断插件名再执行
         for f in legacy:
@@ -255,11 +262,23 @@ async def _run_sql_migrations() -> None:
                 skipped += 1
                 continue
             print(f"执行 SQL 迁移（旧文件）: {f.name}")
-            sql = f.read_text(encoding="utf-8")
-            for stmt in _split_sql_statements(sql):
-                await conn.execute(stmt)
-            executed += 1
+            try:
+                sql = f.read_text(encoding="utf-8")
+                for stmt in _split_sql_statements(sql):
+                    await conn.execute(stmt)
+                executed += 1
+            except Exception as exc:
+                failures.append(f"{f.name}: {exc}")
+                print(f"  [迁移失败] {f.name}: {exc}")
 
+        if failures:
+            summary = (
+                f"自定义 SQL 迁移 {executed} 成功 / {skipped} 跳过 / {len(failures)} 失败；"
+                f"失败文件: {'; '.join(failures)}"
+            )
+            print(summary)
+            # 显式上抛，让启动日志出现完整失败清单而不是一句「已忽略」。
+            raise RuntimeError(summary)
         if executed:
             print(f"自定义 SQL 迁移执行完成（{executed} 个文件执行，{skipped} 个跳过）")
         else:

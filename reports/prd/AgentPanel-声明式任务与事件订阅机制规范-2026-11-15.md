@@ -54,6 +54,19 @@
   SQL 自动生效，**不需要手工执行**。只有显式设 `RUN_DB_MIGRATIONS=false` 的容器
   （`deploy/taskiq/compose.taskiq.yml` 的 beat/worker，及历史 runbook 中的 app）才跳过整个
   启动期迁移，那种部署路径才须由发布流程单独执行 `migrations/*.sql`。
+- **数据库方言约束（2026-11-15 线上故障闭环）**：目标库为 openGauss 7.0（容器
+  `opengauss/opengauss-server`），**没有 `to_regclass()`**。`core_alter_table_event_inbox_1794746532.sql`
+  初版误用该函数，启动迁移报 `function to_regclass(unknown) does not exist` 且整批中断
+  （外层「已忽略」把错误吞掉），导致 `event_inbox` 的 `return_value` / `execution_time_ms` /
+  `error_detail` 三列未建，后台 `/detail` 抛 `OperationalError: column "error_detail" does not exist`。
+  迁移一律用 `information_schema.tables` 判表 + `EXECUTE 'ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...'`
+  （与 `core_alter_table_event_records_1794741648.sql` 同源写法）；`tests/regression_outbox.py`
+  已有禁用 `to_regclass(` 的回归断言。同时 `_run_sql_migrations()` 改为逐文件收集失败、
+  继续执行后续文件、末尾汇总并上抛，避免单文件失败拖垮整批。
+- **镜像与迁移文件**：`agentpanel-app` 镜像由 `deploy/app/Dockerfile` 的 `COPY . .` 把
+  `migrations/` 打包进镜像，compose 只挂载 `config.conf` / `logs` / `storage`。因此修改 SQL
+  后**必须重建镜像**才能让后续重建的容器拿到新文件；本次已 `docker cp` 同步到运行中容器，
+  并在目标库直接执行补列使其立即生效。
 - **已知边界**：handler 副作用不在 DB 事务内，必须自身幂等；事务外调用点若把 publish 异常
   `except` 吞掉（如 `order_service.py` 支付事件），业务仍会提交而消息丢失 —— 这是「平台级」
   事务范围的残留风险；真库端到端（savepoint 回滚 / 并发 CAS / relay 多副本）待目标环境验证。

@@ -4,15 +4,15 @@
   由 ``base.common.taskiq_app.discovery`` 统一扫描发现（2026-11-15 起
   ``manifest.events`` 已废弃），随插件启用/禁用同步注册与注销；
 - 后台新增的 manual 订阅按 handler_ref 动态绑定，支持单条即时启停；
-- 发布统一经 EventCenter.publish 校验规则 → EventBusAdapter.publish 入队
-  ``ap.events``（M3：不在本进程执行订阅者，执行全部在 taskiq worker）；
-- 发布端幂等去重迁移 Redis（D6：多 API worker 跨进程生效；
-  Redis 不可用时回退进程内 dict，语义同旧实现）。
+- 发布统一经 EventCenter.publish 校验规则 → EventBusAdapter.publish 在事务内
+  写 ``EventRecord(status=pending)``（Outbox），由 ``platform:outbox_relay``
+  异步投递进 ``ap.events``；执行全部在 taskiq worker；
+- 发布端幂等改由 ``event_records.idempotency_key`` 唯一约束保证（DB 同事务，
+  替代原 Redis 300s 键）：重复键不产生第二条消息记录。
 """
 from __future__ import annotations
 
 import inspect
-import time
 from typing import Any, Callable
 
 from loguru import logger
@@ -25,9 +25,6 @@ from base.common.events.event_bus import event_bus
 from base.core.events import contract
 from base.core.events.models import EventSubscription
 
-IDEMPOTENCY_TTL = 300
-
-
 class EventCenter:
     def __init__(self) -> None:
         self._bound_plugins: set[str] = set()
@@ -35,7 +32,6 @@ class EventCenter:
         # 绑定时记下注销入口：即使插件目录后来被移除/发现失败，停用时仍能对称摘除
         self._unregister_refs: dict[str, str] = {}
         self._wrapped: dict[str, Callable] = {}
-        self._idempotency: dict[str, float] = {}
 
     # ---------- 规则 ----------
 
@@ -231,7 +227,7 @@ class EventCenter:
                 # 不摘除总线注册，guarded 会按 DB 状态跳过，重新启用即时生效
                 pass
 
-    # ---------- 发布 ----------
+    # ---------- 发布（Outbox） ----------
 
     async def publish(
         self,
@@ -241,50 +237,34 @@ class EventCenter:
         idempotency_key: str | None = None,
         source_module: str = "event-center",
     ) -> dict:
-        """平台统一发布入口：先校验规则，再交给事件总线（入队 ap.events）。"""
+        """平台统一发布入口：校验规则 → 事务内写 pending 消息记录。
+
+        幂等由 ``event_records.idempotency_key`` 唯一约束在 DB 侧判定，
+        与消息落库同一事务；不再依赖 Redis / 进程内 dict。
+        """
         problems = contract.validate_event_name(event_name)
         data = dict(payload or {})
         problems.extend(contract.validate_payload(data))
         if problems:
             raise ValueError("; ".join(problems))
 
-        if idempotency_key and await self._idempotency_seen(idempotency_key):
-            return {"published": False, "duplicate": True, "idempotency_key": idempotency_key}
-        if idempotency_key:
-            data["idempotency_key"] = idempotency_key
+        # 幂等键走显式参数，不混进业务载荷；避免 **data 重复关键字。
+        data.pop("idempotency_key", None)
 
-        await event_bus.publish(event_name, _source_module=source_module, **data)
+        result = await event_bus.publish(
+            event_name,
+            idempotency_key=idempotency_key,
+            _source_module=source_module,
+            **data,
+        )
         return {
-            "published": True,
-            "duplicate": False,
+            "published": result["published"],
+            "duplicate": result["duplicate"],
             "event_name": event_name,
+            "event_uuid": result.get("event_uuid"),
+            "status": result.get("status"),
             "idempotency_key": idempotency_key,
         }
-
-    # ---------- 发布端幂等（D6：Redis 跨进程；不可用回退进程内 dict） ----------
-
-    async def _idempotency_seen(self, key: str) -> bool:
-        """记录并判断幂等键是否已出现。返回 True = 重复（本次发布被抑制）。"""
-        now = time.time()
-        # 清理过期键（两套存储共用同一 TTL）
-        for k, ts in list(self._idempotency.items()):
-            if now - ts > IDEMPOTENCY_TTL:
-                self._idempotency.pop(k, None)
-        try:
-            from base.common.cache import RedisCache
-
-            rc = await RedisCache.get_instance()
-            redis_key = f"ap:event:idempotency:{key}"
-            if await rc.exists(redis_key):
-                return True
-            await rc.set(redis_key, str(now), expire=IDEMPOTENCY_TTL)
-            return False
-        except Exception:
-            # Redis 不可用：回退进程内 dict（多进程下退化为单进程去重，语义同旧实现）
-            if key in self._idempotency:
-                return True
-            self._idempotency[key] = now
-            return False
 
 
 event_center = EventCenter()

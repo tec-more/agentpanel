@@ -8,6 +8,38 @@ except ImportError:
 
 
 class EventRecordService:
+    # 允许在一次 CAS 状态迁移里顺带修改的字段（白名单，防误改业务列）
+    _TRANSITION_FIELDS = frozenset({
+        "retry_count", "replay_count", "error_message", "consumed_at",
+        "next_retry_at", "processing_time_ms", "published_at",
+        "dispatch_attempts", "locked_until", "dispatched_at",
+        "consuming_started_at",
+    })
+
+    @staticmethod
+    async def transition(
+        event_uuid: str,
+        *,
+        from_states: tuple,
+        status: str,
+        **updates,
+    ) -> bool:
+        """CAS 状态迁移：仅当当前状态属于 ``from_states`` 时才写入。
+
+        Outbox/Inbox 全链路的所有状态修改都必须走这里，避免 relay、重放、
+        worker 多副本并发互相覆盖。返回 False = 状态已被其它操作改写。
+        """
+        if EventRecord is None:
+            return False
+        payload = {"status": status}
+        for key, value in updates.items():
+            if key in EventRecordService._TRANSITION_FIELDS:
+                payload[key] = value
+        affected = await EventRecord.filter(
+            event_uuid=event_uuid, status__in=list(from_states)
+        ).update(**payload)
+        return affected > 0
+
     @staticmethod
     async def create_event_record(event_uuid: str, event_name: str, payload: Dict, status: str, source_module: Optional[str] = None) -> Optional[EventRecord]:
         if EventRecord is None:

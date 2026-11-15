@@ -34,7 +34,7 @@ from base.common.plugin_contract import MIN_JOB_INTERVAL
 from base.common.plugin_gate import is_plugin_active
 
 from .config import settings
-from .discovery import discover, scheduled_specs
+from .discovery import PLATFORM_MIN_JOB_INTERVAL, discover, scheduled_specs
 from .scheduler import scheduler_app
 
 
@@ -63,11 +63,15 @@ async def _sync() -> None:
         if spec.requires and not all(is_plugin_active(dep) for dep in spec.requires):
             continue
 
-        interval = spec.schedule or MIN_JOB_INTERVAL
+        # 平台作业可用秒级周期（Outbox relay）；插件作业沿用 30s 下限。
+        min_interval = (
+            PLATFORM_MIN_JOB_INTERVAL if spec.is_platform else MIN_JOB_INTERVAL
+        )
+        interval = spec.schedule or min_interval
         # (c) interval_ref 每轮热重载（beat 无原生支持，放在 reconciler）
         if spec.interval_ref:
             try:
-                interval = max(int(resolve_callable(spec.interval_ref)()), MIN_JOB_INTERVAL)
+                interval = max(int(resolve_callable(spec.interval_ref)()), min_interval)
             except Exception as exc:
                 logger.warning(
                     f"[reconciler] 作业 {spec.job_id} 的 ap_interval_ref "

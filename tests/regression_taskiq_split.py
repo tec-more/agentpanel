@@ -6,7 +6,8 @@
   - TASKIQ_BROKER_URL 未设 → 跳过 worker/R2 类集成用例；
   - TASKIQ_DB_URL 未设 → 跳过 reconciler 幂等 / 调度表存在性用例。
 - M3 专项：dispatch 消息契约（event_uuid/event_name/payload）、终态幂等集、
-  发布 fail-closed、SmartRetry 重试开启、订阅注册表。
+  发布 Outbox 事务落库（2026-11-15 起取代 fail-closed 直投）、SmartRetry
+  重试开启、订阅注册表。
 """
 from __future__ import annotations
 
@@ -22,8 +23,9 @@ pytest.importorskip("taskiq_beat")
 from base.common.taskiq_app.config import settings  # noqa: E402
 from base.common.taskiq_app.scheduler import metadata, scheduler_app  # noqa: E402
 
-# 6 个声明式作业的 task_name（来自 base/plugins/*/task/*.py 的 @broker.task
-# 与 platform_jobs.py；2026-11-15 起 manifest.jobs 已废弃）
+# 8 个声明式作业的 task_name（来自 base/plugins/*/task/*.py 的 @broker.task
+# 与 platform_jobs.py；2026-11-15 起 manifest.jobs 已废弃，同日新增两个
+# Outbox 平台作业）
 EXPECTED_TASK_NAMES = {
     "audit:audit_cleanup",
     "customer:update_membership_data",
@@ -31,6 +33,8 @@ EXPECTED_TASK_NAMES = {
     "sales:cancel_expired_orders",
     "platform:quota_reconcile",
     "platform:quota_hold_cleanup",
+    "platform:outbox_relay",
+    "platform:stale_consuming_reap",
 }
 
 _HAS_BROKER = bool(settings.broker_url)
@@ -206,32 +210,58 @@ def test_dispatch_terminal_idempotency_set() -> None:
     assert events_mod._TERMINAL_STATUSES == frozenset({"consumed", "dead_letter"})
 
 
-def test_smart_retry_enabled() -> None:
-    """SmartRetryMiddleware 必须开启默认重试（default_retry_label 默认 False 不重试）。"""
+def test_smart_retry_disabled_in_favor_of_outbox() -> None:
+    """重试唯一驱动改为 Outbox DB 状态机：中间件延迟重投必须关闭。
+
+    SmartRetryMiddleware.on_error 走 with_labels(delay=...)，本 broker 未配
+    delay_queue / delayed-message-exchange，AioPikaBroker.kick 会抛
+    IncorrectRoutingKeyError（旧链路「失败→ack→无人补投」的根因）。
+    """
     from base.common.taskiq_app.broker import broker
+    from base.common.taskiq_app.events import dispatch
     from taskiq.middlewares.smart_retry_middleware import SmartRetryMiddleware
 
     retries = [m for m in broker.middlewares if isinstance(m, SmartRetryMiddleware)]
-    assert retries, "broker 必须挂载 SmartRetryMiddleware"
-    assert retries[0].default_retry_label is True, "未开启 default_retry_label 时失败任务不会重投"
+    assert retries, "broker 保留 SmartRetryMiddleware 实例（作业可按需逐任务开启）"
+    assert retries[0].default_retry_label is False, "默认延迟重投必须关闭，避免双投/抛错"
+    assert dispatch.labels.get("retry_on_error") is False, "dispatch 双保险：禁止中间件重投"
 
 
-def test_publish_is_failclosed_and_single_channel() -> None:
-    """发布端契约（静态锚定）：fail-closed 上抛 + 不执行内存订阅 + 不再 aio_pika 直发。"""
+def test_ack_type_setting_is_validated_not_dead() -> None:
+    """config.ack_type 与 worker CLI 同源，并在构建 broker 时经官方解析器校验。"""
+    from taskiq.acks import parse_acknowledge_type
+
+    from base.common.taskiq_app.config import settings
+
+    assert parse_acknowledge_type(settings.ack_type).value == settings.ack_type
+    src = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "base" / "common" / "taskiq_app" / "broker.py"
+    ).read_text(encoding="utf-8")
+    assert "parse_acknowledge_type(settings.ack_type)" in src, "ack_type 不得是死配置"
+
+
+def test_publish_is_transactional_outbox() -> None:
+    """发布端契约（静态锚定）：Outbox 事务落库 + 不触网 + DB 唯一键幂等。"""
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[1]
-        / "base"
-        / "common"
-        / "events"
-        / "event_bus_adapter.py"
-    ).read_text(encoding="utf-8")
-    assert "raise" in src, "publish 入队失败必须上抛（fail-closed，R8）"
-    assert "mark_disconnected" in src, "入队失败须重置连接标记，下次 publish 重试建连"
-    assert "_memory_bus" not in src, "发布端不得再执行内存订阅（双执行防护，R1）"
-    assert "aio_pika" not in src.replace('"""', ""), "发布端不再 aio_pika 直发"
-    assert "dispatch.kiq" in src, "发布必须经 dispatch.kiq 入 ap.events"
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "base" / "common" / "events" / "event_bus_adapter.py").read_text(
+        encoding="utf-8"
+    )
+    assert "in_transaction()" in src, "消息记录必须与业务写库在同一 DB 事务"
+    assert 'status="pending"' in src, "发布只写待投递消息记录"
+    assert "dispatch.kiq" not in src, "发布端不得直投 ap.events（唯一通道=relay）"
+    assert "ensure_started" not in src, "发布端不得再建 broker 客户端连接"
+    assert "IntegrityError" in src, "幂等必须由 DB 唯一约束在 savepoint 内判定"
+    assert "_memory_bus" not in src, "发布端不得执行内存订阅（双执行防护，R1）"
+    assert "aio_pika" not in src.replace('"""', ""), "发布端不得直连消息中间件"
+
+    # 唯一通道：投递只出现在 relay 模块
+    relay = (root / "base" / "common" / "taskiq_app" / "outbox.py").read_text(
+        encoding="utf-8"
+    )
+    assert "await dispatch.kiq(message)" in relay
 
 
 def test_adapter_handler_registry() -> None:
@@ -255,41 +285,33 @@ def test_adapter_handler_registry() -> None:
     assert adapter.get_handlers("t.a") == []
 
 
-def test_event_center_idempotency_redis_with_fallback() -> None:
-    """D6：发布端幂等走 Redis；Redis 不可用回退进程内 dict（不重复放行）。"""
+def test_publish_idempotency_is_db_unique_constraint() -> None:
+    """幂等改由 DB 唯一约束保证：与消息落库同事务，不再依赖 Redis / 进程内 dict。"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
     try:
-        from base.core.events.registry import event_center
+        from base.common.events.models.event_record import EventRecord
     except Exception as exc:
-        pytest.skip(f"registry 导入需要完整项目依赖：{exc}")
+        pytest.skip(f"模型导入需要完整项目依赖：{exc}")
 
-    import asyncio
+    field = EventRecord._meta.fields_map["idempotency_key"]
+    assert field.unique is True, "幂等键必须建唯一约束"
 
-    async def _run() -> None:
-        seen: list[bool] = []
-        real_get_instance = None
-        try:
-            from base.common import cache as cache_mod
+    migrations = list(
+        (root / "migrations").glob("core_alter_table_event_records_*.sql")
+    )
+    assert migrations, "缺 event_records Outbox 幂等迁移"
+    sql = migrations[0].read_text(encoding="utf-8")
+    assert "uq_event_records_idempotency_key" in sql
+    assert "ADD COLUMN IF NOT EXISTS dispatch_attempts" in sql
+    assert "ADD COLUMN IF NOT EXISTS locked_until" in sql
 
-            real_get_instance = cache_mod.RedisCache.get_instance
-
-            async def _boom():
-                raise RuntimeError("redis unavailable")
-
-            cache_mod.RedisCache.get_instance = staticmethod(_boom)
-            # 回退路径：第一次 False（放行并记录），第二次 True（抑制）
-            seen.append(await event_center._idempotency_seen("k-1"))
-            seen.append(await event_center._idempotency_seen("k-1"))
-        finally:
-            if real_get_instance is not None:
-                from base.common import cache as cache_mod
-
-                cache_mod.RedisCache.get_instance = real_get_instance
-            # 清理进程内 dict，避免污染其它用例
-            event_center._idempotency.pop("k-1", None)
-
-        assert seen == [False, True], f"回退路径语义错误: {seen}"
-
-    asyncio.run(_run())
+    registry_src = (root / "base" / "core" / "events" / "registry.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_idempotency_seen" not in registry_src, "Redis 幂等已废弃"
+    assert "RedisCache" not in registry_src, "发布端幂等不得再依赖 Redis"
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +514,7 @@ def test_discovery_scans_plugin_task_dirs() -> None:
 
 
 def test_discovery_specs_match_declared_jobs() -> None:
-    """6 个周期作业的 TaskSpec 与旧 manifest 声明逐字段等价，job_id 不变。"""
+    """8 个周期作业的 TaskSpec 与声明逐字段等价，job_id 不变（含 2 个 Outbox 作业）。"""
     try:
         from base.common.taskiq_app.discovery import discover, scheduled_specs
         from base.common.plugin_contract import MIN_JOB_INTERVAL
@@ -526,8 +548,20 @@ def test_discovery_specs_match_declared_jobs() -> None:
         assert spec.job_id == name, "job_id 必须等于 task_name（零数据迁移）"
         assert spec.task.task_name == name, "beat 需要真实 task 对象"
 
+    from base.common.taskiq_app.discovery import PLATFORM_MIN_JOB_INTERVAL
+
+    # Outbox 两个平台作业：秒级 relay 依赖平台下限放宽，插件作业仍 ≥30s
+    for name, interval in (
+        ("platform:outbox_relay", 1),
+        ("platform:stale_consuming_reap", 30),
+    ):
+        spec = by_name[name]
+        assert spec.owner == "platform" and spec.is_platform, name
+        assert spec.queue == "ap.jobs" and spec.job_id == name, name
+        assert spec.schedule == interval >= PLATFORM_MIN_JOB_INTERVAL, name
+
     platform = [spec for spec in specs if spec.is_platform]
-    assert len(platform) == 2, "平台作业必须恒被发现（reconciler fail-safe 依据）"
+    assert len(platform) == 4, "平台作业必须恒被发现（reconciler fail-safe 依据）"
 
 
 def test_discovery_rejects_invalid_labels() -> None:
@@ -538,6 +572,11 @@ def test_discovery_rejects_invalid_labels() -> None:
         "sales:x", {"ap_schedule": 30, "queue_name": "ap.jobs"}
     ) == []
     assert _validate_labels("sales:x", {"ap_schedule": 10, "queue_name": "ap.jobs"})
+    # 平台作业放宽到 1s（Outbox relay），插件作业仍受 30s 下限约束
+    assert _validate_labels(
+        "platform:x", {"ap_schedule": 1, "queue_name": "ap.jobs"}
+    ) == []
+    assert _validate_labels("platform:x", {"ap_schedule": 0, "queue_name": "ap.jobs"})
     assert _validate_labels("sales:x", {"ap_schedule": 30, "queue_name": "ap.events"})
     assert _validate_labels("salesx", {"ap_schedule": 30, "queue_name": "ap.jobs"})
     assert _validate_labels("sales:x", {"ap_interval_ref": "no_colon"})

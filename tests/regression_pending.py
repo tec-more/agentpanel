@@ -3,7 +3,7 @@
 三组用例：
   A. 部署建表：event_subscriptions 在 RUN_DB_MIGRATIONS=false 容器侧的可达性
   B. 调度与消费外迁闭环（M2/M3 / AC-PLR-15-1·13-1）：旧 JobScheduler/ConsumerWorker
-     移除断言 + taskiq 唯一路径（broker 注册 7 任务、发布 fail-closed 单通道）
+     移除断言 + taskiq 唯一路径（broker 注册 9 任务、发布 Outbox 事务落库）
   C. 端到端冒烟（W3-3 / AC-PLR-03-1·03-2·23-1·23-3）：smoke_sample 全生命周期 + 请求期门控 404/200
   D. OPEN 项闭环：门控装配链 / agent 路由自挂载清理 / dispatch 幂等与关闭顺序（M3 更新）
 
@@ -313,26 +313,29 @@ async def group_b_jobs(mgr):
             "sales:cancel_expired_orders",
             "platform:quota_reconcile",
             "platform:quota_hold_cleanup",
+            "platform:outbox_relay",
+            "platform:stale_consuming_reap",
             "taskiq:dispatch",
         }
         check(
-            "B6 taskiq broker 注册 7 个任务(作业6+dispatch)",
+            "B6 taskiq broker 注册 9 个任务(作业8+dispatch)",
             expected <= registered,
             f"missing={expected - registered} registered={sorted(registered)}",
         )
     except Exception as e:
-        check("B6 taskiq broker 注册 7 个任务(作业6+dispatch)", False, f"导入异常: {e}")
+        check("B6 taskiq broker 注册 9 个任务(作业8+dispatch)", False, f"导入异常: {e}")
 
-    # B7 M3：发布端 fail-closed + 单通道（静态锚定）
+    # B7 Outbox：发布只落库、不触网、无内存双通道（静态锚定）
     adapter_src = (
         (WORKDIR / "base" / "common" / "events" / "event_bus_adapter.py").read_text(encoding="utf-8")
     )
     check(
-        "B7 发布端 fail-closed 且不执行内存订阅(M3)",
-        "dispatch.kiq" in adapter_src
-        and "_memory_bus" not in adapter_src
-        and "raise" in adapter_src,
-        "publish = EventRecord + dispatch.kiq；失败上抛；无内存双通道",
+        "B7 发布端 Outbox 事务落库且不直投",
+        "in_transaction()" in adapter_src
+        and 'status="pending"' in adapter_src
+        and "dispatch.kiq" not in adapter_src
+        and "_memory_bus" not in adapter_src,
+        "publish = 事务内写 pending 记录；投递唯一通道=outbox relay",
     )
 
     check("B8 外迁后启动期未抛异常(lifespan 已完成全部 setup)", True)

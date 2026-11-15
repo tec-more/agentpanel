@@ -82,16 +82,16 @@ async def lifespan(app: FastAPI):
         # （否则插件 handler 中的 model 的 default_connection 为 None）
         await initialize_event_center()
 
-        # M3：初始化 taskiq broker 客户端连接（发布 → dispatch.kiq 入 ap.events）。
-        # 连接失败不阻断启动；publish 时会重试建连，失败上抛（fail-closed）。
+        # Outbox：发布只落库，app 不再建立消息中间件写连接。
+        # initialize()/shutdown() 保留为生命周期钩子（已无可建/可关的连接）。
         try:
             from base.common.events.event_bus import event_bus
             await event_bus.initialize()
         except Exception as e:
-            print(f"taskiq broker 连接失败(启动期忽略，publish 时将重试): {e}")
+            print(f"EventBusAdapter 初始化失败(启动期忽略): {e}")
 
-        # M3：事件消费已外迁 taskiq worker（deploy compose taskiq-worker 服务），
-        # app 进程不再启动旧 RabbitMQ 直连消费者；发布端也不执行内存订阅。
+        # 事件消费已外迁 taskiq worker；投递由 platform:outbox_relay 在 worker 侧完成。
+        # app 进程既不直连消费者，也不直接向消息中间件投递，发布端不执行内存订阅。
 
         # 事件订阅已在 init_data() 之后由事件中心按 manifest 声明初始化；
         # 插件启用/禁用时由 plugin_manager 调用事件中心做装卸，不再依赖 on_startup。

@@ -6,13 +6,18 @@
 - 使用 TOPIC exchange（默认），队列以 `routing_key` 绑定，topic 匹配容错且足够；
   无需 DIRECT 的严格枚举校验。
 - 结果后端用 `DummyResultBackend`（D2 决策，不引 taskiq-redis）。
-- 中间件：`SmartRetryMiddleware`（M1 取配置默认值）。
+- 中间件保留 `SmartRetryMiddleware` 实例，但 `default_retry_label=False`：
+  其延迟重投走 `with_labels(delay=...)`，本 broker 未配 `delay_queue` /
+  delayed-message-exchange，`AioPikaBroker.kick` 必然抛
+  `IncorrectRoutingKeyError`。事件失败改由 Outbox 的 DB 状态机退避补投，
+  周期作业失败由 beat 下一周期重跑（幂等），禁止两套重试并存。
 """
 from __future__ import annotations
 
 from aio_pika import ExchangeType
 from loguru import logger
 from taskiq import AsyncBroker
+from taskiq.acks import parse_acknowledge_type
 from taskiq.middlewares.smart_retry_middleware import SmartRetryMiddleware
 from taskiq_aio_pika import AioPikaBroker, Exchange, Queue, QueueType
 
@@ -60,6 +65,10 @@ def _resolve_url() -> str | None:
 
 
 def _build_broker() -> AioPikaBroker:
+    # ack_type 与 compose CLI 的 --ack-type 同源（都读 TASKIQ_ACK_TYPE）。此前
+    # Python 侧读进来却无人消费，是「死配置」；这里用 taskiq 官方解析器做
+    # fail-fast 校验，非法值在进程启动期显形，而不是让 CLI 单独报错。
+    ack_type = parse_acknowledge_type(settings.ack_type)
     # 不传 result_backend：AioPikaBroker 默认即 DummyResultBackend（D2 决策，不引
     # taskiq-redis）。显式传构造参数会触发 taskiq 0.13 的弃用告警，故省略。
     broker = AioPikaBroker(
@@ -96,12 +105,14 @@ def _build_broker() -> AioPikaBroker:
         SmartRetryMiddleware(
             default_retry_count=settings.retry_max,
             default_delay=float(settings.retry_delay),
-            # 关键：default_retry_label 默认 False（不重试）。置 True 使失败任务
-            # 经指数退避重投（事件失败上抛 → dispatch 重入；作业失败自动补试）。
-            default_retry_label=True,
+            # 必须保持 False：True 会让 on_error 走 delay label，而本 broker 没配
+            # delay_queue，重投必然抛 IncorrectRoutingKeyError。失败重投统一由
+            # outbox relay 的 failed + next_retry_at 状态机驱动。
+            default_retry_label=False,
             use_delay_exponent=True,
         )
     )
+    logger.info(f"[taskiq broker] ack_type={ack_type.value}（与 worker CLI 同源）")
     return broker
 
 
@@ -123,8 +134,8 @@ _startup_done = False
 async def ensure_started() -> None:
     """确保 broker 客户端连接就绪（幂等；失败置回未就绪，下次 publish 重试）。
 
-    连接失败向上抛出 → EventBusAdapter.publish fail-closed（调用方/网关得到
-    明确错误，而非静默丢事件）。
+    连接失败向上抛给调用方（Outbox 后 app 发布端不再调用本函数；仅 relay /
+    worker 侧的显式 kiq 路径可能用到），不做静默降级。
     """
     global _startup_done
     if _startup_done:

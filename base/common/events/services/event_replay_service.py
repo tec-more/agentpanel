@@ -31,43 +31,37 @@ class EventReplayService:
             return {"success": False, "error": "EVENT_PAYLOAD_CORRUPTED", "message": "事件载荷为空"}
 
         try:
-            # M3：重放 = 同一 event_uuid 重新入队（dispatch.kiq），不再走
-            # event_bus.publish（那会生成新 uuid 产生新事件，旧记录悬空）。
-            from base.common.taskiq_app.broker import ensure_started
-            from base.common.taskiq_app.events import dispatch
+            # Outbox：重放 = 同一 event_uuid 置回 pending，由 relay 统一投递；
+            # 状态修改与审计日志同事务，CAS 防止并发重放互相覆盖。
+            from tortoise.transactions import in_transaction
 
-            await ensure_started()
+            async with in_transaction():
+                updated = await EventRecord.filter(
+                    event_uuid=event_uuid,
+                    status__in=("failed", "dead_letter"),
+                ).update(
+                    status="pending",
+                    retry_count=0,
+                    dispatch_attempts=0,
+                    locked_until=None,
+                    dispatched_at=None,
+                    replay_count=(record.replay_count or 0) + 1,
+                    error_message=None,
+                    published_at=datetime.now(timezone.utc),
+                )
+                if not updated:
+                    raise ValueError("EVENT_STATUS_CHANGED")
 
-            await EventRecord.filter(event_uuid=event_uuid).update(
-                status="published",
-                retry_count=0,
-                replay_count=record.replay_count + 1,
-                error_message=None,
-                published_at=datetime.now(timezone.utc),
-            )
+                await ReplayAuditLog.create(
+                    operator=operator,
+                    event_uuids=[event_uuid],
+                    reason=reason,
+                    result="success",
+                    success_count=1,
+                    fail_count=0,
+                )
 
-            payload = record.payload if isinstance(record.payload, dict) else {}
-            await dispatch.kiq(
-                {
-                    "event_uuid": event_uuid,
-                    "event_name": record.event_name,
-                    "payload": payload,
-                    "published_at": record.published_at.isoformat()
-                    if record.published_at
-                    else "",
-                }
-            )
-
-            await ReplayAuditLog.create(
-                operator=operator,
-                event_uuids=[event_uuid],
-                reason=reason,
-                result="success",
-                success_count=1,
-                fail_count=0,
-            )
-
-            return {"success": True, "event_uuid": event_uuid, "new_status": "published"}
+            return {"success": True, "event_uuid": event_uuid, "new_status": "pending"}
 
         except Exception as e:
             logger.error(f"重放事件 {event_uuid} 失败: {e}")

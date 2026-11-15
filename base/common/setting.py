@@ -89,6 +89,7 @@ def get_model_list() -> List[str]:
 	# 共享包模型（app/独立服务同一份类定义，注册路径唯一）
 	model_list = core_models + plugin_models + shared_model_modules() + [
 		"base.common.events.models.event_record",
+		"base.common.events.models.event_inbox",
 		"base.common.events.models.replay_audit_log",
 		"base.common.authz.models.resource_grant",
 	] + ['aerich.models']

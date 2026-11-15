@@ -117,6 +117,17 @@ async def list_records(
     return SuccessResponse(data=data)
 
 
+@router.get("/records/{event_uuid}/detail", summary="查询事件详情与 handler 执行结果")
+async def get_record_detail(
+    event_uuid: str, admin: int = Depends(require_admin)
+):
+    """后台事件详情：请求载荷（已脱敏）+ 每个订阅 handler 的状态与返回值。"""
+    data = await EventCenterService.get_record_detail(event_uuid)
+    if not data:
+        return _error("事件记录不存在", code=404)
+    return SuccessResponse(data=data)
+
+
 @router.post("/records/{event_uuid}/replay", summary="重放失败事件")
 async def replay_event(
     event_uuid: str, data: dict = Body(default={}), admin: int = Depends(require_admin)

@@ -12,15 +12,19 @@
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
+# 载荷规则下沉到 base/common（避免 common → core 反向依赖），此处再导出，
+# 保证「规则展示 / 后台发布校验 / 业务直调脱敏」三处同源、不出现第二套阈值。
+from base.common.events.payload_contract import (  # noqa: F401
+    FORBIDDEN_PAYLOAD_KEYS,
+    MAX_PAYLOAD_BYTES,
+    validate_payload,
+)
 from base.common.plugin_contract import is_valid_event_name
 
-MAX_PAYLOAD_BYTES = 256 * 1024
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_TIMEOUT_MS = 30_000
-FORBIDDEN_PAYLOAD_KEYS = {"password", "secret", "token", "api_key", "private_key"}
 
 RULES: dict[str, Any] = {
     "event_name": {
@@ -46,7 +50,7 @@ RULES: dict[str, Any] = {
     },
     "isolation": {
         "rule": "订阅方异常逐个捕获，不冒泡到发布方；停用订阅直接跳过",
-        "reference": "base/common/events/event_bus.py:publish",
+        "reference": "base/common/events/event_bus_adapter.py:publish",
     },
     "subscription": {
         "sources": ["declared", "manual"],
@@ -64,23 +68,6 @@ def validate_event_name(event_name: str) -> list[str]:
     if not is_valid_event_name(event_name):
         return [f"非法事件名 {event_name!r}：应为小写点分格式，如 sales.paid"]
     return []
-
-
-def validate_payload(payload: Any) -> list[str]:
-    """校验载荷：JSON 对象、体积上限、禁止凭据字段。"""
-    problems: list[str] = []
-    if not isinstance(payload, dict):
-        return ["payload 必须是 JSON 对象"]
-    try:
-        raw = json.dumps(payload, ensure_ascii=False, default=str)
-    except (TypeError, ValueError) as e:
-        return [f"payload 不可序列化: {e}"]
-    if len(raw.encode("utf-8")) > MAX_PAYLOAD_BYTES:
-        problems.append(f"payload 超过 {MAX_PAYLOAD_BYTES} 字节上限")
-    found = FORBIDDEN_PAYLOAD_KEYS.intersection({str(k).lower() for k in payload})
-    if found:
-        problems.append(f"payload 含禁止字段: {', '.join(sorted(found))}")
-    return problems
 
 
 def validate_subscription(event_name: str, handler_ref: str | None = None) -> list[str]:

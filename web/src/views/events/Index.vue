@@ -168,10 +168,12 @@
             <el-table-column label="消费时间" width="160">
               <template #default="{ row }">{{ fmtTime(row.consumed_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="100" fixed="right" align="center">
+            <el-table-column label="操作" width="160" fixed="right" align="center">
               <template #default="{ row }">
-                <el-button v-if="canReplay(row)" link type="warning" :icon="VideoPlay" @click="handleReplay(row)">重放</el-button>
-                <span v-else class="muted">-</span>
+                <div class="action-buttons">
+                  <el-button link type="primary" @click="handleDetail(row)">详情</el-button>
+                  <el-button v-if="canReplay(row)" link type="warning" :icon="VideoPlay" @click="handleReplay(row)">重放</el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -248,6 +250,119 @@
         <el-button type="primary" :loading="submitLoading" @click="submitSubscription">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 事件详情：Outbox 载荷 + Inbox 每个 handler 的执行结果 -->
+    <el-drawer v-model="detailVisible" title="事件详情" size="62%" :destroy-on-close="true">
+      <div v-loading="detailLoading" class="detail-body">
+        <template v-if="detailData">
+          <h4 class="detail-section">消息记录（event_records / Outbox）</h4>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="事件 UUID">{{ detailData.record?.event_uuid || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="事件名">{{ detailData.record?.event_name || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag size="small" :type="statusTagType(detailData.record?.status)">{{ detailData.record?.status || '-' }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="来源模块">{{ detailData.record?.source_module || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="发布时间">{{ fmtTime(detailData.record?.published_at) }}</el-descriptions-item>
+            <el-descriptions-item label="投递时间">{{ fmtTime(detailData.record?.dispatched_at) }}</el-descriptions-item>
+            <el-descriptions-item label="消费时间">{{ fmtTime(detailData.record?.consumed_at) }}</el-descriptions-item>
+            <el-descriptions-item label="耗时(ms)">{{ detailData.record?.processing_time_ms ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="投递/重试/重放">
+              {{ detailData.record?.dispatch_attempts ?? 0 }} / {{ detailData.record?.retry_count ?? 0 }} / {{ detailData.record?.replay_count ?? 0 }}
+            </el-descriptions-item>
+            <el-descriptions-item label="幂等键">{{ detailData.record?.idempotency_key || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Trace ID">{{ detailData.record?.trace_id || '-' }}</el-descriptions-item>
+          </el-descriptions>
+          <div v-if="detailData.record?.error_message" class="detail-error">
+            错误信息：{{ detailData.record.error_message }}
+          </div>
+
+          <h4 class="detail-section">请求载荷 payload <small>（事件载荷，非 HTTP 请求体）</small></h4>
+          <pre class="detail-pre">{{ formatJson(detailData.record?.payload) }}</pre>
+
+          <h4 class="detail-section">关联 HTTP 请求 / 响应 <small>（审计模块，按 trace_id 串联）</small></h4>
+          <el-alert
+            v-if="!detailData.trace?.available"
+            type="info"
+            :closable="false"
+            show-icon
+            :title="detailData.trace?.reason || '该事件无关联请求记录'"
+            :description="(detailData.trace?.errors || []).join('；') || undefined"
+          />
+          <template v-else>
+            <el-table v-if="(detailData.trace.audit_logs || []).length" :data="detailData.trace.audit_logs" border stripe size="small">
+              <el-table-column label="请求" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.method }} {{ row.path }}</template>
+              </el-table-column>
+              <el-table-column label="状态码" width="90" align="center">
+                <template #default="{ row }">{{ row.status_code ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="耗时(ms)" width="100" align="center">
+                <template #default="{ row }">{{ row.duration ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="请求参数" min-width="200">
+                <template #default="{ row }">
+                  <pre class="detail-pre detail-pre-inline">{{ formatJson(row.request_params) }}</pre>
+                </template>
+              </el-table-column>
+              <el-table-column label="响应数据" min-width="200">
+                <template #default="{ row }">
+                  <pre class="detail-pre detail-pre-inline">{{ row.response_data || '-' }}</pre>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-row :gutter="12" class="detail-row">
+              <el-col :xs="24" :sm="12">
+                <h5 class="detail-sub">输入层：请求体 + query</h5>
+                <pre class="detail-pre">{{ formatJson(detailData.trace.request?.context_data) }}</pre>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <h5 class="detail-sub">输出层：响应正文</h5>
+                <pre class="detail-pre">{{ detailData.trace.response?.final_output || '-' }}</pre>
+              </el-col>
+            </el-row>
+            <div v-if="(detailData.trace.executions || []).length">
+              <h5 class="detail-sub">执行层明细（{{ detailData.trace.executions.length }}）</h5>
+              <pre class="detail-pre">{{ formatJson(detailData.trace.executions) }}</pre>
+            </div>
+          </template>
+
+          <h4 class="detail-section">Handler 执行结果（{{ (detailData.handlers || []).length }}）</h4>
+          <el-table v-if="(detailData.handlers || []).length" :data="detailData.handlers" border stripe size="small">
+            <el-table-column prop="handler_key" label="Handler" min-width="160" show-overflow-tooltip />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="handlerTagType(row.status)">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="attempts" label="次数" width="70" align="center" />
+            <el-table-column label="耗时(ms)" width="100" align="center">
+              <template #default="{ row }">{{ row.execution_time_ms ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="完成时间" width="160">
+              <template #default="{ row }">{{ fmtTime(row.finished_at) }}</template>
+            </el-table-column>
+            <el-table-column label="错误信息" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span>{{ row.error_message || '-' }}</span>
+                <el-popover v-if="row.error_detail" placement="left" :width="480" trigger="click">
+                  <template #reference>
+                    <el-button link type="danger" size="small">堆栈</el-button>
+                  </template>
+                  <pre class="detail-pre">{{ row.error_detail }}</pre>
+                </el-popover>
+              </template>
+            </el-table-column>
+            <el-table-column label="返回值" min-width="220">
+              <template #default="{ row }">
+                <pre class="detail-pre detail-pre-inline">{{ formatJson(row.return_value) }}</pre>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="尚无 handler 执行记录（消息可能未投递或没有订阅者）" :image-size="60" />
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -266,6 +381,7 @@ import {
   deleteSubscription,
   publishEvent,
   getRecords,
+  getRecordDetail,
   replayEvent,
   getStats,
   syncDeclared
@@ -280,6 +396,7 @@ const hasEntries = (obj) => !!(obj && typeof obj === 'object' && Object.keys(obj
 const fmtTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 19) : '-')
 const sourceTagType = (source) => (source === 'manual' ? 'success' : 'warning')
 const statusTagType = (status) => ({
+  pending: 'warning',
   published: 'success',
   consuming: 'primary',
   consumed: 'success',
@@ -288,6 +405,14 @@ const statusTagType = (status) => ({
   degraded_published: 'warning',
   degraded_consumed: 'warning'
 }[status] || 'info')
+const handlerTagType = (status) => ({
+  done: 'success', failed: 'danger', processing: 'warning'
+}[status] || 'info')
+const formatJson = (value) => {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value, null, 2) } catch (e) { return String(value) }
+}
 
 // ==================== 统计 ==================== //
 
@@ -527,7 +652,7 @@ const recordPage = ref(1)
 const recordPageSize = ref(20)
 const recordTotal = ref(0)
 const recordStatusOptions = [
-  'published', 'consuming', 'consumed', 'failed', 'dead_letter',
+  'pending', 'published', 'consuming', 'consumed', 'failed', 'dead_letter',
   'degraded_published', 'degraded_consumed'
 ]
 
@@ -576,6 +701,27 @@ const handleReplay = async (row) => {
     loadStats()
   } catch (e) {
     showError(e, '重放事件失败')
+  }
+}
+
+// ==================== 事件详情 ==================== //
+
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const detailData = ref(null)
+
+const handleDetail = async (row) => {
+  detailVisible.value = true
+  detailLoading.value = true
+  detailData.value = null
+  try {
+    const res = await getRecordDetail(row.event_uuid)
+    detailData.value = pickData(res) || null
+  } catch (e) {
+    showError(e, '加载事件详情失败')
+    detailVisible.value = false
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -654,4 +800,13 @@ onMounted(() => {
 .rule-title small { color: var(--el-text-color-secondary); font-weight: 400; }
 .rule-pre { max-height: 220px; overflow-y: auto; }
 .action-buttons { display: flex; flex-wrap: wrap; gap: 2px; }
+.detail-body { min-height: 200px; }
+.detail-section { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
+.detail-section:first-child { margin-top: 0; }
+.detail-section small { color: var(--el-text-color-secondary); font-weight: 400; }
+.detail-pre { margin: 0; padding: 10px; background: var(--el-fill-color-light); border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.5; max-height: 260px; overflow-y: auto; }
+.detail-pre-inline { padding: 4px 6px; max-height: 90px; background: transparent; }
+.detail-error { margin-top: 8px; color: var(--el-color-danger); font-size: 12px; line-height: 1.5; }
+.detail-row { margin-top: 12px; }
+.detail-sub { margin: 10px 0 6px; font-size: 13px; font-weight: 600; color: var(--el-text-color-regular); }
 </style>

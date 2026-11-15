@@ -14,7 +14,9 @@ AUDIT_EXCLUDE_MODELS = [
     'AuditLog', 'InputLayerLog', 'DecisionLayerLog', 'ExecutionLayerLog',
     'OutputLayerLog', 'SystemLayerLog', 'DataChangeLog', 'LoginLog',
     'RiskAuditRecord', 'AuditReport', 'AuditConfig',
-    'EventRecord', 'ReplayAuditLog',
+    # Outbox/Inbox 三张表必须排除：事件消息落库自身若被审计探针捕获，会
+    # 产生 model.created 事件 → 再写一条消息记录 → 无限事件风暴。
+    'EventRecord', 'EventInbox', 'ReplayAuditLog',
 ]
 
 

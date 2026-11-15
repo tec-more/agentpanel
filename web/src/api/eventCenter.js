@@ -48,6 +48,11 @@ export function getRecords(params) {
   return request.get('/v1/event-center/records', { params })
 }
 
+// 事件详情：请求载荷（已脱敏）+ 每个 handler 的状态与返回值
+export function getRecordDetail(uuid) {
+  return request.get(`/v1/event-center/records/${uuid}/detail`)
+}
+
 // 重放 failed / dead_letter 事件
 export function replayEvent(uuid, data) {
   return request.post(`/v1/event-center/records/${uuid}/replay`, data)

@@ -23,6 +23,8 @@ class TaskiqSettings:
     events_queue: str = "ap.events"
     dlq_queue: str = "ap.dlq"
     result_backend: str = "dummy"
+    # 与 compose worker CLI 的 ${TASKIQ_ACK_TYPE} 同源；Python 侧由
+    # broker._build_broker() 用 taskiq 官方解析器校验（不再是死配置）。
     ack_type: str = "when_executed"
     workers: int = 2
     max_async_tasks: int = 2

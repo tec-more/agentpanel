@@ -23,6 +23,8 @@ app       不参与发现（只发布事件、只管插件启停状态）
 --------------------------------------------------------------------------
 ``ap_schedule``      int，周期秒数。**有此标签 = 参与 beat 排程**；
                      无此标签 = 仅注册为可被调用的 task，不自动调度。
+                     插件作业 ≥MIN_JOB_INTERVAL(30s)；平台作业(platform:*)≥1s，
+                     供 Outbox relay 这类秒级基础设施轮询使用。
 ``ap_interval_ref``  ``"module:callable"``，可选。beat 每轮重扫时调用，
                      用于「间隔热重载」（如 harness 网关对账）。
 ``ap_requires``      插件名数组，可选。依赖插件未激活 → 不进入 targets。
@@ -91,7 +93,10 @@ PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
 TASK_DIR_CANDIDATES = ("task", "tasks", "jobs")
 
 _JOBS_QUEUE = "ap.jobs"
-# MIN_JOB_INTERVAL 由 plugin_contract 提供（与历史契约同源，避免第二套阈值）
+# MIN_JOB_INTERVAL 由 plugin_contract 提供（与历史契约同源，避免第二套阈值）。
+# 平台作业承担 Outbox relay 这类秒级基础设施轮询，单独放宽到 1s；
+# 插件作业仍必须 ≥MIN_JOB_INTERVAL(30s)，避免业务插件把 beat 打满。
+PLATFORM_MIN_JOB_INTERVAL = 1
 
 
 @dataclass(frozen=True)
@@ -225,11 +230,15 @@ def _validate_labels(task_name: str, labels: dict[str, Any]) -> list[str]:
     避免把错误周期写进 scheduler_job。
     """
     problems: list[str] = []
+    owner = task_name.partition(":")[0]
+    min_interval = (
+        PLATFORM_MIN_JOB_INTERVAL if owner == PLATFORM_OWNER else MIN_JOB_INTERVAL
+    )
     schedule = labels.get(LABEL_SCHEDULE)
     if schedule is not None:
-        if isinstance(schedule, bool) or not isinstance(schedule, int) or schedule < MIN_JOB_INTERVAL:
+        if isinstance(schedule, bool) or not isinstance(schedule, int) or schedule < min_interval:
             problems.append(
-                f"{LABEL_SCHEDULE} 必须是 ≥{MIN_JOB_INTERVAL} 的整数: {schedule!r}"
+                f"{LABEL_SCHEDULE} 必须是 ≥{min_interval} 的整数: {schedule!r}"
             )
     ref = labels.get(LABEL_INTERVAL_REF)
     if ref is not None and (not isinstance(ref, str) or ":" not in ref):
@@ -511,6 +520,7 @@ __all__ = [
     "LABEL_REQUIRES",
     "LABEL_DESCRIPTION",
     "MIN_JOB_INTERVAL",
+    "PLATFORM_MIN_JOB_INTERVAL",
     "PLATFORM_OWNER",
     "PLATFORM_MODULE",
     "PLUGINS_DIR",

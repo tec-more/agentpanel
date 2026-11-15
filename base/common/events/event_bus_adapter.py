@@ -4,10 +4,10 @@ M3 改造（取代旧的 RabbitMQ 直发 + 内存总线双通道）：
 - ``publish`` = 写 ``EventRecord(published)`` + ``dispatch.kiq(...)`` 入 ``ap.events``
   队列；**不再本地执行内存订阅**（消除 handler 双执行的第一正确性前提），
   **不再保留降级静默丢路径**（broker 不可用 → fail-closed 上抛，调用方得到明确错误）。
-- 订阅注册表 ``_handler_registry`` 保留：由各插件 ``register_ref`` 与事件中心
-  ``bind_manual`` 填充。app 进程填充它仅为生产探针注册（publish 端不再消费）；
+- 订阅注册表 ``_handler_registry`` 保留：由 ``task/`` 目录 ``@ap_subscribe``
+  声明的注册函数与事件中心 ``bind_manual`` 填充。app 进程填充它仅为生产探针注册（publish 端不再消费）；
   真正的消费发生在 taskiq worker 进程（``taskiq_app.events.dispatch`` 按本注册表
-  取 handler 执行，worker 启动期同样执行 register_ref / bind_manual 构建注册表）。
+  取 handler 执行，worker 启动期同样按发现结果执行注册 / bind_manual 构建注册表）。
 - 连接管理 = taskiq broker 客户端模式（``ensure_started`` / ``shutdown_client``），
   旧的 ``RabbitMQConnectionManager`` / ConsumerWorker 已删除。
 """
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class EventBusAdapter:
     def __init__(self):
         # 进程内订阅注册表：event_name -> [handler]。
-        # 由 register_ref（各插件注册函数）与 event_center.bind_manual 填充；
+        # 由 task/ 目录 @ap_subscribe 注册函数与 event_center.bind_manual 填充；
         # M3 后唯一消费方是 taskiq worker 的 dispatch 任务（get_handlers）。
         self._handler_registry: Dict[str, List[Callable]] = {}
 

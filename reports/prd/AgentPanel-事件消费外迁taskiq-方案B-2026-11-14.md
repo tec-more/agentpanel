@@ -1,8 +1,23 @@
 # AgentPanel 调度与消费外迁 taskiq（方案 B 消费 + taskiq-beat 调度）详细设计
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> D1 / D4 在 M3 实施期已被改判（`handler_ref` 指向注册函数，worker 用进程内注册表），以 M1 §9.3 与现行规范为准。
+
+
+
 - 日期：2026-11-14
-- 状态：**方案，未实施任何代码/配置/部署改动**
-- 范围：**调度 + 消费 双外迁，统一在 taskiq 生态**。消费采用方案 B（DB 为真相源，§3-4）；调度采用 taskiq-beat（§9），取代原自封装 `JobScheduler` 随 API 进程启停的形态。agentpanel 仅保留"注册订阅 + 发布事件 + 声明作业 manifest"，执行全部外迁到 taskiq worker / beat 进程。
+- 状态：**方案（已归档）**：M3 实施时对 D1 / D4 作出关键修正，见 M1 实施拆解 §9.3 与现行规范；本文正文按 2026-11-14 原始方案保留
+- 范围：**调度 + 消费 双外迁，统一在 taskiq 生态**。消费采用方案 B（DB 为真相源，§3-4）；调度采用 taskiq-beat（§9），取代原自封装 `JobScheduler` 随 API 进程启停的形态。agentpanel 仅保留"注册订阅 + 发布事件 + 声明作业（**现行：插件 `task/` 目录 `@broker.task` 标签**）"，执行全部外迁到 taskiq worker / beat 进程。
 - 决策基线：本方案采用**方案 B**——taskiq worker 不跑 `register_ref`、不依赖进程内 registry，按 `event_name` 直接查 `EventSubscription`（enabled）并 `resolve_callable(handler_ref)` 解析 handler。该方案取代大蓝图 §3.5 的方案 A 消费实现。
 - 依据：对 `base/common/events/event_bus_adapter.py`、`base/common/events/event_bus.py`、`base/core/events/registry.py`、`base/common/events/consumer_worker.py`、`base/plugins/audit/services/orm_event_service.py`、`base/start.py`、`requirements.txt` 的只读调研；taskiq / taskiq-aio-pika 版本与 API 于 2026-11-14 经 PyPI 元数据与官方文档核实。行号为调研时点，实施时需复核。
 - 安全约定：只列配置**键名**，不记录 `config.conf` / `.env` / `secrets/` 的任何取值或凭据。
@@ -47,10 +62,10 @@ taskiq worker (独立进程, 同镜像不同 entrypoint, 可多副本)
 
 | # | 决策 | 选择 | 理由 |
 |---|---|---|---|
-| D1 | handler 来源 | **DB 为真相源（方案 B）** | worker 不跑 register_ref，按 `event_name` 查 `EventSubscription(enabled)` → `resolve_callable`；天然支持运行期 manual 订阅、避免进程内状态不一致 |
+| D1 | handler 来源 | **DB 为真相源（方案 B，实施期已改判）** | 原设计：按 `event_name` 查 `EventSubscription(enabled)` → `resolve_callable`。**实施期发现 `handler_ref` 指向注册函数而非执行体，该路径不成立**；终态为 worker 跑 `event_center.initialize()` 建进程内 `_handler_registry`，`dispatch` 按 `get_handlers()` 执行，见 M1 §9.3 |
 | D2 | 任务粒度 | **单一通用任务** `consume_event(event_uuid, event_name, payload)` | 不为每个事件/订阅预注册 task，保留 manual 订阅运行时灵活性 |
 | D3 | 发布路径 | `EventBusAdapter.publish` 改为"写 EventRecord → `consume_event.kiq(...)`"，去掉 aio_pika 直发 + 本地 `_memory_bus.publish` | 统一入队，消除双通道 |
-| D4 | 生产探针位置 | **只在 agentpanel 跑**（`register_ref` 的 ORM patch 留在 API 进程） | worker 不执行 register_ref，防重入发布 |
+| D4 | 生产探针位置 | **只在 agentpanel 跑**（`register_ref` 的 ORM patch 留在 API 进程，**实施期已改判**） | worker 仍需按 `@ap_subscribe` 发现结果执行注册函数以构建注册表；生产探针（ORM patch）与订阅注册已分离，见 M1 §9.3 |
 | D5 | 重试/死信 | taskiq `retry_on_error` + `max_retries` + `acks_late`；`EventRecord` 仍记录状态机（含 `dead_letter`） | 不再依赖 RabbitMQ 自定义 DLQ；应用层保留重放能力 |
 | D6 | 幂等 | 消费端按 `event_uuid` 去重（已终态跳过）；发布端 300s 内存去重迁 **Redis**（多 API worker 时跨进程生效） | 闭环 W3-1 |
 | D7 | broker 选型 | `taskiq-aio-pika`（`AioPikaBroker`），复用现有 RabbitMQ，async 原生 | 与现有 aio-pika 栈契合；worker 即 asyncio loop，无桥接 |
@@ -267,7 +282,7 @@ services:
 1. **纯自封装 asyncio 调度**：`base/common/jobs/scheduler.py` 的 `JobScheduler` 仅用标准库 `asyncio.create_task` + 自写 `_run_loop`，无 APScheduler/Celery（已核实 `requirements.txt` 无相关依赖）。
 2. **随 API 进程启停、多 worker 双跑**：`base/start.py:124` 在 lifespan `await job_scheduler.start_all()`；多 worker 时每个进程各跑一套，**无分布式锁** → 6 个作业（订单取消/审计清理/会员重算/网关对账/配额对账/预占清理）重复执行 N 遍。
 3. **插件启停靠钩子**：`plugin_manager._sync_plugin_jobs` 在 enable 时注册、disable 时 cancel（对称）；平台作业由 `platform.py:install()` 静态注册 2 个（`quota_reconcile`、`quota_hold_cleanup`）。
-4. **manifest.jobs 声明**：`name` / `handler_ref` / `interval_seconds` 必填；`requires_plugins`（customer 依赖 `llm`）、`interval_ref`（harness 每轮重读间隔）可选；`plugin_contract.validate_jobs()` 仅验格式不 import。
+4. **manifest.jobs 声明（2026-11-14 前提，现已废弃）**：当时要求 `name` / `handler_ref` / `interval_seconds` 必填；`requires_plugins`（customer 依赖 `llm`）、`interval_ref`（harness 每轮重读间隔）可选；`plugin_contract.validate_jobs()` 仅验格式不 import。
 5. **无存活巡检/超时（既有隐患）**：`await result` 无 `wait_for`，同步/卡死 handler 会冻结事件循环；task 意外死掉无自愈（设计文档 §9.5 曾建议巡检未做）。
 
 ### 9.2 目标架构
@@ -296,7 +311,7 @@ taskiq worker (独立进程, 与事件消费同一 broker.run(), 可多副本竞
 |---|---|---|---|
 | DS1 | 调度框架 | **taskiq-beat**（与消费共用 `event_broker`，独立队列 `ap.jobs`） | 与消费统一 taskiq 生态；beat 单实例天然防重复；复用现有 RabbitMQ |
 | DS2 | 任务粒度 | **单一通用任务** `run_plugin_job(plugin_name, job_name)` | 不为每个 job 预注册；支持运行期插件启停/新增 |
-| DS3 | 调度源 | **自定义 `SchedulerSource`** 读 enabled 插件 manifest.jobs + 平台作业 | 动态 enable/disable 即时生效、支持 `interval_ref` 重读 |
+| DS3 | 调度源 | **自定义 `SchedulerSource`** 读 enabled 插件 manifest.jobs + 平台作业（历史方案；**现行由 `discovery.scheduled_specs(discover())` 发现**） | 动态 enable/disable 即时生效、支持 `interval_ref` 重读 |
 | DS4 | 插件钩子 | **移除 `plugin_manager._sync_plugin_jobs`** 的 cancel/start；改由 source 主导 | 消除与多进程状态耦合；启停对称由 source 轮询保证（≤30s 生效） |
 | DS5 | 平台作业 | 在 source 中静态包含 `plugin_name="__platform__"` 的 2 个作业 | 不依赖任何插件，恒启 |
 | DS6 | 执行加固 | 强制 async（`inspect.iscoroutinefunction`，否则 `to_thread` 或拒绝）、`wait_for` 超时（manifest 可选 `timeout_seconds`，默认 120）、`print`→`logger` | 闭环此前提出的 4 项调度器加固，消除"同步 handler 冻结事件循环"风险 |

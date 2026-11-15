@@ -1,9 +1,24 @@
 # AgentPanel W2-3 定时任务注册表设计方案
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> §3 / §5 / §9.1 保留为 2026-11-12 实施记录；§9.6 记录本次废弃与 `PeriodicSchedule` 缺陷修复。
+
+
+
 | 项 | 内容 |
 |---|---|
 | 日期 | 2026-11-12 |
-| 文档类型 | 设计方案 + **已实施（2026-11-12 晚，全量回归通过，详见 §9）** |
+| 文档类型 | 设计方案 + **已实施（2026-11-12 晚，全量回归通过，详见 §9）**；**其中 `manifest.jobs` 契约已于 2026-11-15 废弃，见 §9.6** |
 | 上游文档 | `AgentPanel-路径契约与装配硬编码诊断及整改方案-2026-11-12.md`（W2-3 条目） |
 | 前置状态 | W2-1 已完全整改（2026-11-12 晚）：`base/start.py` 顶层与 init_app/lifespan **装配层**插件导入=0 |
 | 目标 AC | AC-PLR-15-1 / AC-PLR-15-2 / AC-PLR-13-1（完全达标）/ AC-PLR-23-1·23-3（保持） |
@@ -46,9 +61,9 @@
 
 ## 3. 目标架构
 
-### 3.1 manifest `jobs` 声明（契约新增字段）
+### 3.1 manifest `jobs` 声明（契约新增字段，**2026-11-15 已废弃**）
 
-风格对齐 `events.subscribe`，声明式、随插件启停装卸：
+风格对齐 `events.subscribe`（**本章为 2026-11-12 历史设计，已废弃；现行见 §9.6**），声明式、随插件启停装卸：
 
 ```json
 "jobs": [
@@ -245,3 +260,32 @@ lifespan 中 5 段 gating + create_task + 约 300 行任务函数体全部删除
 - 新增目录 `base/common/jobs/` 与 4 个插件的 `jobs/` 必须随代码一同发布；容器镜像若用白名单复制 Python 包，需确认新目录未被排除。
 - `interval_ref` 指向的模块由调度器运行期动态 import，无需在镜像启动脚本额外注册；`handler_ref` 解析失败只记日志不阻断启动（fail-open 于单作业），上线后应巡检 `[作业调度] ... 装载失败` 日志。
 - prod 建议对 `job_scheduler.task_owners()` 增加一条启动巡检/指标，确认期望的作业数（当前 6）全部在线。
+
+### 9.6 后续机制改造（2026-11-15，本节为现行状态）
+
+用户要求「beat / broker / worker 的注册发现执行机制不通过 `manifest.json` 声明，统一到
+各自插件 `task/` 目录下文件里的 `@broker.task`，系统级仍在 `platform_jobs.py`」；随后
+又要求删除 `manifest.events`，事件订阅同样由 `task/` 目录自动发现。落地结果：
+
+- **废弃** `manifest.jobs` / `manifest.events` 两段：`plugin_contract.validate_manifest` 对
+  残留段直接拒绝装配；删除 `validate_jobs()`；`base/cli/command.py` 脚手架不再生成
+  `events`，改为生成 `task/` 声明目录（否则新插件会被自己的模板挡在门外）。
+- 新增 `base/common/taskiq_app/discovery.py`：扫描 `base/plugins/<plugin>/task/*.py` +
+  `platform_jobs.py`，产出 `TaskSpec` / `EventSubSpec`；owner 由模块路径推断，单模块
+  导入失败隔离，进程内缓存。
+- 4 个插件 `jobs/` → `task/`（sales / customer / audit / harness）；5 个插件新增
+  `task/subscriptions.py`（原 20 条订阅）；**mes 历史死代码 4 条一并接入**，共 24 条声明。
+  事件中心 `initialize()` / `resync()` / `sync_plugin()` 改读发现结果，DB 行主键
+  `<owner>:<event_name>` 保持不变，零数据迁移。
+- `reconcile.py` 改读 `scheduled_specs(discover())`，`job_id = task_name` 与既有调度行
+  完全一致；平台作业零发现时跳过本轮 diff（fail-safe，防误停全部调度行）。
+- **修复阻断部署的缺陷**：`taskiq-beat 1.4.0` 要求
+  `trigger=PeriodicSchedule(interval=IntervalTrigger(seconds=...))`；原代码裸传
+  `IntervalTrigger` 会在 `get_strategy()` 抛 `AttributeError`，`--startup` 首轮即失败。
+- `EventCenterService.replay()` 改为复用**同一 `event_uuid`** 重新 `dispatch.kiq`，
+  与 `EventReplayService` 对齐，消除旧记录悬空。
+- 回归：`regression_taskiq_split.py` 27 passed / 5 skipped、`regression_pending.py` 47/47、
+  `regression_plugin_assembly.py` 25/25。
+
+> 现行契约、需求解释与运维约束以
+> `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准；§3 / §5 / §9.1 仅作历史实施记录。

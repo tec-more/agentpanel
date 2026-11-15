@@ -13,9 +13,13 @@
 #   deploy/taskiq/.env                           # compose 变量插值（不含密钥）
 #
 # 说明：
+#   - 主 app 栈（deploy/app/docker-compose.yml）直接引用本目录下的
+#     taskiq_broker_url（../taskiq/secrets/taskiq_broker_url），不另复制第二份。
 #   - taskiq 容器复用 app 镜像（agentpanel-app），config.conf 已烤进镜像；
 #     DB_HOST / REDIS_HOST / TASKIQ_* 经 compose environment 与 *_FILE secret 覆盖，
 #     不在此改写 config.conf。
+#   - 主 app 栈（deploy/app/docker-compose.yml）的 app 服务同样注入
+#     TASKIQ_BROKER_URL_FILE，但直接引用本目录的同一文件，本脚本不生成副本。
 #   - vhost / 账号优先级：config.conf [rabbitmq] taskiq_* 三键 -> 共用键 -> 缺省 agentpanel。
 #   - 密码经 URI 编码，避免 @ / / 等特殊字符破坏 amqp / postgresql URL。
 
@@ -95,6 +99,9 @@ Write-SecretText (Join-Path $secretsDir 'redis_password') $redisPassword
 Write-SecretText (Join-Path $secretsDir 'taskiq_broker_url') $taskiqBrokerUrl
 Write-SecretText (Join-Path $secretsDir 'taskiq_db_url') $taskiqDbUrl
 
+# 主 app 栈（deploy/app/docker-compose.yml）发布端共用同一连接串，
+# 其 compose 以 ../taskiq/secrets/taskiq_broker_url 直接引用上面的文件，不生成副本。
+
 # .env：compose 变量插值（不含密钥）
 $envContent = @(
     "# 由 deploy/taskiq/scripts/prepare-secrets.ps1 生成；禁止入库",
@@ -111,5 +118,6 @@ $envContent = @(
 
 Write-Host "secrets 已生成：$secretsDir"
 Write-Host "  db_password / redis_password / taskiq_broker_url / taskiq_db_url"
+Write-Host "  其中 taskiq_broker_url 由 deploy/app/docker-compose.yml 直接引用（无需复制）"
 Write-Host "env 已生成：$envFile"
 Write-Host "注意：taskiq_broker_url 使用专用 vhost '$taskiqVhost'，须先在 RabbitMQ 创建并授权（deploy/rabbitmq/definitions.json）。"

@@ -22,7 +22,7 @@ class EventMessage(BaseModel):
 
     与 EventRecord 一一对应：`event_uuid` 是消费端幂等键（终态 consumed /
     dead_letter 直接跳过）；worker 按 `event_name` 从进程内 handler registry
-    （`EventBusAdapter.get_handlers`，由 register_ref / bind_manual 填充）取执行体。
+    （`EventBusAdapter.get_handlers`，由 @ap_subscribe 注册函数 / bind_manual 填充）取执行体。
     """
 
     event_uuid: str

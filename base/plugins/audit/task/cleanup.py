@@ -9,7 +9,13 @@
 from base.common.taskiq_app.broker import broker
 
 
-@broker.task(task_name="audit:audit_cleanup", queue_name="ap.jobs")
+# 声明即注册：保留天数仍由任务体每轮重新解析（见 run()）。
+@broker.task(
+    task_name="audit:audit_cleanup",
+    queue_name="ap.jobs",
+    ap_schedule=86400,
+    ap_description="每24小时清理过期数据变更日志（排除授权类表）",
+)
 async def run() -> None:
     """清理过期数据变更日志（原 audit_cleanup_task 的单轮逻辑）。"""
     from base.plugins.audit.services.data_change_service import (

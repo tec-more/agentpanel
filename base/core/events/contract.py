@@ -8,7 +8,7 @@
 3. 幂等：发布方可传 ``idempotency_key``；同一键重复投递不得产生重复副作用。
 4. 投递：至少一次；重试上限、消费确认由事件总线承担；内存降级通道不保证确认。
 5. 隔离：订阅方异常不得冒泡到发布方；停用订阅不得产生副作用。
-6. 订阅声明：插件在 manifest.events.subscribe 声明；后台新增走 manual 来源。
+6. 订阅声明：插件在 task/ 目录用 @ap_subscribe 声明；后台新增走 manual 来源。
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ RULES: dict[str, Any] = {
     },
     "subscription": {
         "sources": ["declared", "manual"],
-        "rule": "插件订阅必须在 manifest.events.subscribe 声明；后台新增为 manual",
+        "rule": "插件订阅必须在 task/ 目录用 @ap_subscribe 声明；后台新增为 manual",
         "lifecycle": "插件启用即注册、禁用即注销，均由 base/core/events/registry.py 统一执行",
     },
     "publish": {

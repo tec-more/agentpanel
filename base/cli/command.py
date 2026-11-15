@@ -67,10 +67,23 @@ def create_plugin(
         "is_enabled": False,
     }
 
-    # 装配契约字段：路径前缀与订阅声明统一放在 manifest，代码不重复声明
-    manifest["events"] = {"subscribe": []}
+    # 装配契约字段：路由前缀 / 菜单 / 权限放 manifest。
+    # 周期作业与事件订阅不在此列：由 task/ 目录的声明标签自动发现
+    # （@broker.task + ap_schedule / @ap_subscribe），manifest 残留 jobs/events 会拒绝装配。
     manifest["menus"] = []
     manifest["permissions"] = []
+
+    # 新插件天然带 task/ 声明目录，避免开发者再往 manifest 写已废弃字段
+    task_dir = plugin_dir / "task"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "__init__.py").write_text(
+        '"""任务与事件订阅声明包（由 discovery 自动扫描）。\n\n'
+        '周期作业：@broker.task(ap_schedule=..., queue_name="ap.jobs")\n'
+        '事件订阅：@ap_subscribe("a.b", unregister_ref="unregister")\n'
+        '"""\n',
+        encoding="utf-8",
+    )
+    typer.echo(f"  [*] Created {task_dir.relative_to(settings.base_path)}/")
 
     # 添加可选字段
     if with_api:

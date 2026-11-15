@@ -23,12 +23,8 @@ async def on_startup() -> None:
     except Exception as e:
         log.warning(f"默认会计科目初始化失败: {e}")
 
-    try:
-        from base.plugins.finance.services.finance_event_handler import register_finance_event_handlers
-        register_finance_event_handlers()
-        log.info("财务集成事件处理器注册完成")
-    except Exception as e:
-        log.warning(f"财务集成事件处理器注册失败: {e}")
+    # 事件订阅注册统一由 task/subscriptions.py 的 @ap_subscribe 声明驱动
+    # （事件中心 initialize / sync_plugin 装配），此处不再手工调用 register_*。
 
     try:
         from base.plugins.finance.services.integration_account_mapping_service import IntegrationAccountMappingService

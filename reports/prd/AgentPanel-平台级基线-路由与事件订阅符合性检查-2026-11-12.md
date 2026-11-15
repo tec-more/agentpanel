@@ -1,5 +1,20 @@
 # AgentPanel 平台级基线（v3.0）路由与事件订阅符合性检查报告
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> §2 的统计是 2026-11-12 时点事实（当时 manifest 确实零声明）；mes 死代码等整改项已闭环。
+
+
+
 | 项 | 内容 |
 |---|---|
 | 检查日期 | 2026-11-12 |
@@ -68,9 +83,9 @@
 
 ---
 
-## 2. 事件订阅：24 条 `subscribe()` 全在 Python 里，manifest 无一处声明
+## 2. 事件订阅：24 条 `subscribe()` 全在 Python 里，manifest 无一处声明（2026-11-12 时点事实，现已整改）
 
-### 2.1 声明缺失与死配置
+### 2.1 声明缺失与死配置（2026-11-12 时点；现由 `task/` 目录声明）
 
 只读统计（`base/plugins/*/manifest.json`，共 **23** 份；启用 8 个：`audit / crm / customer / harness / llm / mail / product / sales`）：
 
@@ -85,7 +100,7 @@
 | `base/plugins/finance/services/finance_event_handler.py:88-95` | 8 | 由 `finance/__init__.py:27-28` 的 `on_startup` 注册；`on_disable():12-14` 只打日志，**不注销** |
 | `base/plugins/mail/services/event_handler.py:170-172` | 3 | **唯一合规样例**：`mail/__init__.py:22-26` 停用注销、`:37-40` 关闭注销，`register_mail_event_handlers():160-165` 幂等防重 |
 | `base/plugins/subcontracting/services/event_handlers.py:58-62` | 3 | `on_disable()` 只打日志 |
-| `base/plugins/mes/services/event_handlers.py:87-94` | 4 | **无任何调用点**（`mes/__init__.py` 为空文件）→ 死代码 |
+| `base/plugins/mes/services/event_handlers.py:87-94` | 4 | 原无任何调用点（历史死代码）；2026-11-15 已接入 `mes/task/subscriptions.py`，随插件启用生效 |
 | `base/plugins/crm/__init__.py:24` | 1 | 仅 `on_shutdown():28-32` 注销，`on_disable():16-17` 不注销 |
 | `base/common/events/event_bus_adapter.py` | 1 | 总线内部转发，非订阅关系 |
 
@@ -155,7 +170,7 @@
 | 订阅 | `base/start.py:41-77` | 5 条订阅 + 4 个插件实现 import + ORM 全局 patch | ✅ 无条件 |
 | 订阅 | `finance/__init__.py:35-44`、`finance/services/finance_event_handler.py:88-95` | 8 条事件→科目映射 + 8 条 subscribe | 停用不注销 |
 | 订阅 | `mail/services/mapping_service.py:13-51` | 5 条业务表→消息映射 | — |
-| 订阅 | `mes/services/event_handlers.py:87-94` | 4 条 subscribe（死代码） | — |
+| 订阅 | `mes/services/event_handlers.py:87-94` | 4 条 subscribe（历史死代码，2026-11-15 已改造） | — |
 | 前端页面 | `web/src/router/index.js:6-324` | 73 条静态路由，41 条属禁用/无 manifest 插件 | ✅ 完全不受门控 |
 | 插件名特例 | `start.py:143/151/172/188/682`、`core/users/api/v1/menu.py:112`、`common/setting.py:107-108`、`harness/services/policy_service.py:21` | `get_plugin("sales")` 等字面量、audit 专用同步端点、harness 特例 | 门控分散 |
 
@@ -170,7 +185,7 @@
 | Blocker | 禁用插件后路由仍可达、权限残留（AC-PLR-03-1/2） | 门控收敛到单一判定函数；`disable_plugin` 补齐权限清理与路由卸载/重建，或改为请求期统一门控依赖 |
 | Blocker | `start.py` 模块级 import 插件实现、19 行插件引用（AC-PLR-13-1 = 0） | 把 WS/内部路由、审计订阅、定时任务改为 manifest 声明 + 服务/事件注册接口；保留 `mail` 装卸幂等做法作模板 |
 | Major | 前端静态路由表并行于 manifest，禁用插件页面可直接访问 | 删除或收敛静态路由，以 `/v1/menus/user-menus` 为唯一前端路由来源；服务端下发时按启用态过滤 |
-| Major | 订阅关系无声明、`hooks` 死配置、停用不注销 | 在 manifest 增加 `events/subscribes` 声明并由 `plugin_manager` 统一注册/注销；清理 `mes` 死代码 |
+| Major | 订阅关系无声明、`hooks` 死配置、停用不注销 | 由插件 `task/` 目录 `@ap_subscribe` 声明、事件中心按发现结果统一注册/注销（2026-11-15 已落地）；mes 死代码已按 `@ap_subscribe` 改造闭环（2026-11-15） |
 | Major | 定时任务直接引用插件模型、`get_plugin` 不检查 enabled | 作业改为注册表动态装载或订阅平台事件；门控改查 `plugin.enabled` |
 | Minor | 幂等键每次生成、内存总线无确认/重试（AC-PLR-14-1） | 允许业务侧传入幂等键，消费端按 `event_uuid` 去重 |
 | Minor | `router.py:25` 死门控、`setting.py:48` 重复实现、状态源双份 | 删除或合并重复判定，统一 manifest/DB 状态写入点 |

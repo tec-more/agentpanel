@@ -1,3 +1,13 @@
+# 主 app 栈（app / redis / nginx）
+#
+# M3 前置：app 进程是 taskiq 事件发布端，需与 taskiq-beat/worker 使用同一份
+# broker 连接串（专用 vhost）。secret 文件只有一份，位于 deploy/taskiq/secrets/，
+# 由 deploy/taskiq/scripts/prepare-secrets.ps1 统一生成；本栈不另建 secrets 目录，
+# 顶层 secrets.file 以相对本 compose 文件所在目录（deploy/app/）的路径直接引用它。
+# 启动前须先执行该脚本，否则 secret 文件缺失会导致容器启动失败。
+# URL 内为 host.docker.internal，故 app 服务需要 host-gateway 映射。
+# 注：secret file 相对路径按 project directory 解析，两栈请分别启动（勿 -f 合并）。
+
 services:
   redis:
     image: redis:7-alpine
@@ -30,6 +40,11 @@ services:
       STRICT_STARTUP: "true"
       UVICORN_WORKERS: "1"     # H-1 硬约束：禁止调大
       UVICORN_PORT: "9998"
+      # M3 发布端：与 taskiq 两服务共用专用 vhost 的 broker 连接串（同一 secret 文件）
+      TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
+    secrets:
+      - taskiq_broker_url
     volumes:
       # 生产配置以卷挂载下发（仓库内仅存模板，真实配置不入库）
       - ./config.conf:/app/config.conf
@@ -37,6 +52,8 @@ services:
       - ../../logs:/app/logs
     expose:
       - "9998"  
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - app_default               # 仅编排内网暴露，外部统一走 nginx
 
@@ -56,3 +73,8 @@ services:
 networks:
   app_default:
     external: true
+
+secrets:
+  # 与 deploy/taskiq/compose.taskiq.yml 同源；不在此目录复制第二份
+  taskiq_broker_url:
+    file: ../taskiq/secrets/taskiq_broker_url

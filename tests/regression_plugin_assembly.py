@@ -8,7 +8,7 @@
   generate_schemas + initialize_event_center + load_enabled_plugins），使所有异步 DB
   断言与启动共用一个 loop。
 - 只读探测启用的 8 个插件 + 全部禁用插件；对 approval（菜单+权限对称）、alipay
-  （路由开关）、finance manifest（订阅装卸，直接调事件中心，不启用其依赖）做动态用例。
+  （路由开关）、finance 的 task/ 订阅声明（装卸，直接调事件中心，不启用其依赖）做动态用例。
 - 结束时还原被改动的 manifest（approval/alipay）并删除 finance 订阅行，保证共享库回归到基线。
 """
 import asyncio
@@ -139,12 +139,13 @@ async def main():
             except Exception as e:
                 check("event_subscriptions 表已创建且可查询", False, str(e))
                 n = -1
-            total_declared = 0
-            for name in mgr.discover_plugins():
-                if not is_plugin_active(name):
-                    continue
-                subs = (mgr.get_manifest(name).get("events") or {}).get("subscribe") or []
-                total_declared += len(subs)
+            from base.common.taskiq_app.discovery import discover_event_subscriptions
+
+            active = {n for n in mgr.discover_plugins() if is_plugin_active(n)}
+            # 声明真源已迁到 task/ 目录的 @ap_subscribe，不再统计 manifest.events
+            total_declared = sum(
+                1 for s in discover_event_subscriptions() if s.owner in active
+            )
             actual = await EventSubscription.filter(source="declared", is_enabled=True).count()
             check("事件中心已同步启用插件声明订阅", actual >= total_declared,
                   f"期望≥{total_declared}，实际={actual}")
@@ -191,9 +192,12 @@ async def main():
                       f"menus={m} perms={p}")
             check("压测结束 approval 处于禁用态", not is_plugin_active("approval"))
 
-            # 5) finance manifest 订阅装卸（不启用其依赖，直接调事件中心）
+            # 5) finance task/ 声明订阅装卸（不启用其依赖，直接调事件中心）
+            from base.common.taskiq_app.discovery import event_specs_by_owner
+
             fm = mgr.get_manifest("finance") or {}
-            fsubs = (fm.get("events") or {}).get("subscribe") or []
+            check("finance manifest 已无 events 段(声明全部迁至 task/)", "events" not in fm)
+            fsubs = event_specs_by_owner("finance")
             await EventSubscription.filter(subscriber="finance").delete()
             await event_center.sync_plugin("finance", fm, active=True)
             f_rows = await EventSubscription.filter(subscriber="finance").count()

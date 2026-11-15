@@ -1,7 +1,7 @@
-"""客户插件作业：会员数据更新（单轮，W2-3）。
+"""客户插件作业：会员数据更新（单轮）。
 
-由 ``manifest.jobs`` 声明并带 ``requires_plugins: ["llm"]``，实现原启动期
-「customer 且 llm 同时启用才启动」的 AND 门控。任务体自
+声明与实装同处本文件：``@broker.task`` 上的 ``ap_requires`` 保持原启动期
+「customer 且 llm 同时启用才调度」的 AND 门控。任务体自
 ``base/start.py::update_membership_data_task`` 机械平移（含全部 print 文案），
 仅剥离 while 循环 / sleep / 取消与异常处理外壳（由平台调度器统一承担）。
 """
@@ -10,7 +10,14 @@ from __future__ import annotations
 from base.common.taskiq_app.broker import broker
 
 
-@broker.task(task_name="customer:update_membership_data", queue_name="ap.jobs")
+# 声明即注册：requires 保持原「customer 且 llm 同时启用才调度」的 AND 门控。
+@broker.task(
+    task_name="customer:update_membership_data",
+    queue_name="ap.jobs",
+    ap_schedule=600,
+    ap_requires=["llm"],
+    ap_description="每10分钟重算会员已用/剩余时长、过期状态与 Fibonacci 等级",
+)
 async def run() -> None:
     """重新计算已用时长、剩余时长、过期状态，停用剩余时长为 0 的会员。"""
 

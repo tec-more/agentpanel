@@ -1,7 +1,22 @@
 # AgentPanel 调度服务与消费服务独立化（taskiq + RabbitMQ + Redis + taskiq-beat + pydantic）可行方案
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> 「`manifest.jobs` 契约**已于 2026-11-15 废弃**（当时「一字不改」的前提不再成立）」的前提已不成立；现行真源为 `@broker.task` 的 `ap_*` 标签。
+
+
+
 - 日期：2026-11-14
-- 状态：**方案待评审，尚未实施任何代码/配置/部署改动**
+- 状态：**已实施**；方案正文按 2026-11-14 原始调研保留，装配真源于 2026-11-15 二次改造（见现行规范）
 - 与既有文档的关系：原拟与 `AgentPanel-调度与消费服务独立化-Celery可行方案-2026-11-14.md`（Celery 候选）并列评估；现 **Celery 方案（含已落地的部署）已由用户删除**，该文档亦已移除，本文为当前**唯一推荐方案**文档。文中现状事实、行号调研与时点保持一致。
 - **当前工作区核查（2026-11-14）**：`requirements.txt` 无 celery、`base/` / `packages/` / `services/` 无 celery 代码引用、`deploy/celery/` 为空目录、Celery 方案文档已删除。即本工作区无 Celery 任何残留，taskiq 为唯一候选。早期工作日志中「Celery 方案 B 与同仓双镜像已落地」的记录因用户已删除该落地方案而不再适用，本文不依赖该记录，基线统一为 taskiq-only。
 - 范围：把 `job_scheduler`（调度）与 `ConsumerWorker`（消费）从 L2 `app` 进程中拆出为独立进程/容器，引入 taskiq；RabbitMQ 作 broker、Redis 作幂等/锁/（可选）结果后端、`taskiq-beat` 作数据库支撑的 beat、pydantic v2 作消息契约。
@@ -15,7 +30,7 @@
 **结论：可行，且为当前唯一推荐方案。** 三条决定性理由（相较原 Celery 候选方案的优势）：
 
 1. **消除异步桥接这一最大工程风险**：taskiq worker 自身就是 asyncio 事件循环，`async def` 任务、Tortoise/asyncpg 连接池、`WORKER_STARTUP/SHUTDOWN` 生命周期在同一 loop 内；不再需要「同步任务 + 常驻 loop 线程 + `run_coroutine_threadsafe`」的桥接层。
-2. **插件启停装卸更轻**：`taskiq-beat` 把调度定义与运行历史落在 `scheduler_job` / `scheduler_run` 两张表，自带 `upsert / pause / resume / run_now / delete`。`manifest.jobs` 契约一字不改，插件 enable/disable 变成对调度行的 diff 同步，天然跨进程，比自定义 `celery.beat.Scheduler` 少一层。
+2. **插件启停装卸更轻**：`taskiq-beat` 把调度定义与运行历史落在 `scheduler_job` / `scheduler_run` 两张表，自带 `upsert / pause / resume / run_now / delete`。`manifest.jobs` 契约**已于 2026-11-15 废弃**（当时「一字不改」的前提不再成立），插件 enable/disable 变成对调度行的 diff 同步，天然跨进程，比自定义 `celery.beat.Scheduler` 少一层。
 3. **版本契合**：taskiq 0.13.0 要求 `pydantic>=2.5,<3`（项目 2.11.7）、`taskiq-aio-pika` 0.6.1 要求 `aio-pika>=9`（项目 `>=10.0.1`）、`taskiq-beat` 1.4.0 要求 Python `>=3.12`（部署镜像 3.12-slim，本地 3.13），内置 Prometheus / OpenTelemetry 中间件与项目已有监控栈对齐。
 
 **新增代价（须书面接受）**：`taskiq-beat` 是第三方包（Artasov，MPL-2.0，非 taskiq 官方；`taskiq-python/taskiq-beat` 仓库为 404），引入 SQLAlchemy 第二套 ORM 与两张表；`taskiq-redis` 与项目 redis-py 版本冲突，需绕开；taskiq CLI 没有 `-Q`、没有 `celery inspect ping` 等价物，运维面要自建。
@@ -135,7 +150,7 @@ HTTP 请求 / 业务代码
        └─ [灰度期] 可选双写旧业务 exchange（仅作对账，不消费）
 
 taskiq-beat: SchedulerApp 轮询 scheduler_job（sync_interval_seconds）
-  └─ ManifestReconciler 按 manifest.jobs + 平台作业 diff 调度行（upsert/pause/delete）
+  └─ Reconciler 按 discovery.scheduled_specs(discover()) + 平台作业 diff 调度行（upsert/pause）
        └─ 到期 job → 直接 kiq 对应 @broker.task（task_name="{owner}:{name}"）→ ap.jobs
 
 taskiq-worker（单进程，task_queues=[ap.jobs, ap.events]，由 tasks_registry 静态注册全部 @broker.task）：
@@ -330,7 +345,7 @@ scheduler_app = SchedulerApp(
 `base/common/taskiq_app/events.py` 定义 `ap.events.dispatch` 任务：
 
 1. **幂等**：Redis `SET ap:taskiq:evt:{event_uuid} NX EX <TTL>`；未取到则查 `EventRecord.status`，终态（`consumed`/`dead_letter`）直接 ack 返回，处理中则延迟重试。同时补上现状缺失的「已 consumed 跳过 handler」。
-2. **订阅解析**：worker 启动执行 `event_center.initialize()`，复用现有 `register_ref` / `guarded` / `_handler_registry`，`get_handlers(event_name)` 与 `ConsumerWorker:86` 完全一致 —— **不依赖「DB 订阅表是否完备」**（部分插件只通过 `register_ref` 注册，未声明 `events.subscribe[]`）。M1 阶段先做一次「运行时注册表 ↔ `EventSubscription` 表」完备性对账并留档。
+2. **订阅解析**：worker 启动执行 `event_center.initialize()`（2026-11-15 起按 `task/` 目录 `@ap_subscribe` 发现结果执行注册函数），复用 `register_ref` / `guarded` / `_handler_registry`，`get_handlers(event_name)` 与 `ConsumerWorker:86` 完全一致 —— **不依赖「DB 订阅表是否完备」**（部分插件只通过 `register_ref` 注册，未声明 `events.subscribe[]`）。M1 阶段先做一次「运行时注册表 ↔ `EventSubscription` 表」完备性对账并留档。
 3. **启停同步**：app 侧 `_sync_plugin_subscriptions()` 写 DB 后，向 Redis channel `ap:taskiq:subscriptions` 广播，worker 收到后 `event_center.sync_plugin(...)` 重绑；任务执行前再按 `is_plugin_active()` + `EventSubscription.is_enabled` 双保险自查。
 4. **状态机与重试**：沿用 `consuming → consumed / failed / dead_letter`、`processing_time_ms`；单 handler `wait_for(30s)`、逐 handler 异常隔离。失败用 `SmartRetryMiddleware` + `retry_on_error` label + `max_retries=RABBITMQ_MAX_RETRIES`；**超上限必须真实 reject 进 DLQ**（修正现状「只改 DB 不 reject」）。**M1 必须验证** `AioPikaBroker` 是否 yield `AckableMessage`（决定用 `--ack-type manual` + `Context.ack()`，还是显式 `nack(requeue=False)`）；验证前不得声称 DLQ 已闭环。重放接口 `/v1/events/replay/*` 改为 `dispatch.kiq(...)` 而非重新 `publish` 到业务 exchange。
 5. **降级补投**：现状 `_recover_degraded_events()`（adapter:36-53）只把状态改成 `degraded_consumed`、**不重新投递**，broker 恢复后事件实际丢失。目标态改为：broker 不可用写 `EventRecord(degraded_published)` 并存 Redis 待投列表，连接恢复后逐条 `kiq` 补投，成功后改状态。

@@ -36,7 +36,7 @@ logging.getLogger('websockets.client').setLevel(logging.WARNING)
 
 
 async def initialize_event_center():
-    """按 manifest.events 声明初始化事件订阅。
+    """按 task/ 目录 @ap_subscribe 声明初始化事件订阅。
 
     替代此前在启动入口硬编码的 5 条审计订阅：处理器由事件中心按声明动态解析，
     核心层不再静态导入插件实现（PLR-13），订阅随插件启停装卸（PLR-14）。

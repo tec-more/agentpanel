@@ -1,6 +1,8 @@
 """事件注册表：订阅/发布的统一入口。
 
-- 插件订阅来自 manifest.events（声明式），随插件启用/禁用同步注册与注销；
+- 插件订阅来自 ``base/plugins/<plugin>/task/`` 下 ``@ap_subscribe`` 声明，
+  由 ``base.common.taskiq_app.discovery`` 统一扫描发现（2026-11-15 起
+  ``manifest.events`` 已废弃），随插件启用/禁用同步注册与注销；
 - 后台新增的 manual 订阅按 handler_ref 动态绑定，支持单条即时启停；
 - 发布统一经 EventCenter.publish 校验规则 → EventBusAdapter.publish 入队
   ``ap.events``（M3：不在本进程执行订阅者，执行全部在 taskiq worker）；
@@ -30,6 +32,8 @@ class EventCenter:
     def __init__(self) -> None:
         self._bound_plugins: set[str] = set()
         self._bootstrapped: set[str] = set()
+        # 绑定时记下注销入口：即使插件目录后来被移除/发现失败，停用时仍能对称摘除
+        self._unregister_refs: dict[str, str] = {}
         self._wrapped: dict[str, Callable] = {}
         self._idempotency: dict[str, float] = {}
 
@@ -47,15 +51,18 @@ class EventCenter:
         app 进程调用 → 填充生产探针 + 订阅注册表；taskiq worker 进程同样调用
         （worker 的 dispatch 任务按进程内注册表取 handler 执行，见
         base/common/taskiq_app/events.py §消费模型）。
+
+        声明真源是 ``task/`` 目录的 ``@ap_subscribe``，不再读 manifest.events。
         """
         try:
             from base.common.plugin_gate import active_plugin_names
-            from base.common.plugin_manager import get_plugin_manager
+            from base.common.taskiq_app.discovery import discover_event_subscriptions
 
-            manager = get_plugin_manager()
-            for name in active_plugin_names():
-                manifest = manager.get_manifest(name) or {}
-                await self.sync_plugin(name, manifest, active=True)
+            owners = {spec.owner for spec in discover_event_subscriptions()}
+            if not owners:
+                logger.warning("[事件中心] 未发现任何 @ap_subscribe 订阅声明（本轮跳过同步）")
+            for name in sorted(set(active_plugin_names()) & owners):
+                await self.sync_plugin(name, active=True)
         except Exception as e:
             logger.error(f"[事件中心] 同步插件声明失败: {e}")
         await self.bind_manual_subscriptions()
@@ -67,72 +74,88 @@ class EventCenter:
         - 新启用插件 → sync_plugin(active=True)（幂等，register_ref 只执行一次）
         - 已停用插件 → sync_plugin(active=False)（unregister_ref 摘除注册表）
         manual 订阅的启停由 guarded 包装器按 DB 状态即时生效，无需重扫。
+
+        发现结果为空时**直接跳过本轮 diff**，避免目录挂载/导入异常导致全线误停用。
         """
         try:
             from base.common.plugin_gate import active_plugin_names
-            from base.common.plugin_manager import get_plugin_manager
+            from base.common.taskiq_app.discovery import discover_event_subscriptions
 
-            manager = get_plugin_manager()
-            active = set(active_plugin_names())
+            owners = {spec.owner for spec in discover_event_subscriptions()}
+            if not owners:
+                logger.warning("[事件中心] resync: 订阅声明为空，跳过本轮 diff")
+                return
+            active = set(active_plugin_names()) & owners
             for name in list(self._bound_plugins):
                 if name not in active:
-                    await self.sync_plugin(
-                        name, manager.get_manifest(name) or {}, active=False
-                    )
+                    await self.sync_plugin(name, active=False)
             for name in sorted(active):
-                await self.sync_plugin(name, manager.get_manifest(name) or {}, active=True)
+                await self.sync_plugin(name, active=True)
         except Exception as e:
             logger.warning(f"[事件中心] resync 失败(下一轮重试): {e}")
 
-    async def sync_plugin(self, name: str, manifest: dict, active: bool) -> None:
-        """插件启用/禁用时由 plugin_manager 调用：装卸对称、可重复执行。"""
-        events = manifest.get("events") or {}
-        if not isinstance(events, dict):
+    async def sync_plugin(
+        self, name: str, manifest: dict | None = None, active: bool = True
+    ) -> None:
+        """插件启用/禁用时由 plugin_manager 调用：装卸对称、可重复执行。
+
+        ``manifest`` 仅为兼容旧调用点保留，**不再读取**；声明真源是 ``task/``
+        目录下的 ``@ap_subscribe``（``discovery.discover_event_subscriptions``）。
+        """
+        from base.common.taskiq_app.discovery import event_specs_by_owner
+
+        specs = event_specs_by_owner(name)
+        head = specs[0] if specs else None
+        if (
+            not specs
+            and name not in self._bound_plugins
+            and name not in self._unregister_refs
+        ):
+            # fail-safe：发现失败时不误停用既有订阅行、不误调注册
             return
 
         try:
-            bootstrap = events.get("bootstrap")
-            if active and bootstrap and name not in self._bootstrapped:
-                await self._invoke(bootstrap)
+            if active and head and head.bootstrap and name not in self._bootstrapped:
+                await self._invoke(head.bootstrap)
                 self._bootstrapped.add(name)
 
-            for item in events.get("subscribe") or []:
-                event_name = item.get("event_name") if isinstance(item, dict) else str(item)
-                handler_ref = item.get("handler_ref") if isinstance(item, dict) else None
-                problems = contract.validate_event_name(event_name)
+            for spec in specs:
+                problems = contract.validate_event_name(spec.event_name)
                 if problems:
                     logger.warning(f"[事件中心] 插件 {name} 声明被忽略: {problems}")
                     continue
-                sub_name = f"{name}:{event_name}"
                 defaults = {
-                    "event_name": event_name,
+                    "event_name": spec.event_name,
                     "subscriber": name,
-                    "handler_ref": handler_ref,
+                    "handler_ref": spec.handler_ref,
                     "source": "declared",
                     "is_enabled": active,
                     "is_system": True,
-                    "description": (item.get("description") if isinstance(item, dict) else None),
+                    "description": spec.description,
                 }
-                sub = await EventSubscription.filter(name=sub_name).first()
+                sub = await EventSubscription.filter(name=spec.sub_name).first()
                 if sub:
                     await EventSubscription.filter(id=sub.id).update(
-                        event_name=event_name,
+                        event_name=spec.event_name,
                         subscriber=name,
-                        handler_ref=handler_ref,
+                        handler_ref=spec.handler_ref,
                         source="declared",
                         is_enabled=active,
                         is_system=True,
                     )
                 else:
-                    await EventSubscription.create(name=sub_name, **defaults)
+                    await EventSubscription.create(name=spec.sub_name, **defaults)
 
             if active:
-                register_ref = events.get("register_ref")
-                if register_ref and name not in self._bound_plugins:
-                    await self._invoke(register_ref)
+                if head and name not in self._bound_plugins:
+                    await self._invoke(head.register_ref)
                     self._bound_plugins.add(name)
+                    if head.unregister_ref:
+                        self._unregister_refs[name] = head.unregister_ref
             else:
-                unregister_ref = events.get("unregister_ref")
+                unregister_ref = self._unregister_refs.pop(
+                    name, head.unregister_ref if head else None
+                )
                 if unregister_ref:
                     await self._invoke(unregister_ref)
                     self._bound_plugins.discard(name)

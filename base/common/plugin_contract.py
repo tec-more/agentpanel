@@ -4,8 +4,10 @@
 1. 浏览器侧唯一合法 API 前缀是 ``/api``，由 ASGI 包装器剥离；
 2. FastAPI 应用内部的插件路由一律以 ``/v1/`` 开头，**禁止**在
    ``APIRouter(prefix=...)`` 或 ``manifest.route_prefix`` 中再写 ``/api``；
-3. 插件装配信息只能来自 manifest；目录不存在、路由文件无标准导出、
-   前缀非法、零路由均视为声明与实装不一致，拒绝装配并给出可定位错误。
+3. 路由装配信息来自 manifest（routes / route_prefix / models 等）；目录不存在、
+   路由文件无标准导出、前缀非法、零路由均视为声明与实装不一致，拒绝装配并给出
+   可定位错误。周期作业与事件订阅不在此列：由 ``task/`` 目录的声明标签自动发现
+   （见 base.common.taskiq_app.discovery），manifest 残留 jobs / events 段一律拒绝装配。
 
 对应 v3.0 基线 AC-PLR-01-1 / AC-PLR-01-2、AC-PLR-13-2。
 """
@@ -24,13 +26,11 @@ INTERNAL_ROUTE_ALLOWED = ("/internal/",)
 
 REQUIRED_FIELDS: tuple[str, ...] = ("name", "route_prefix", "routes")
 RECOMMENDED_FIELDS: tuple[str, ...] = ("version", "display_name", "menus", "permissions")
+# 事件名规则：由 discovery.py 校验 @ap_subscribe 的声明标签使用
 EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
-# W2-3 定时任务声明：作业名插件内唯一，handler_ref 为 module:callable
-JOB_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-HANDLER_REF_RE = re.compile(
-    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"
-    r":[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$"
-)
+# 周期作业的最小间隔。2026-11-15 起 manifest.jobs 已废弃，该阈值由
+# base/common/taskiq_app/discovery.py 校验 @broker.task 的 ap_schedule 标签使用，
+# 这里保留常量以避免出现第二套阈值。
 MIN_JOB_INTERVAL = 30
 
 
@@ -47,57 +47,6 @@ class ContractViolation(Exception):
 def is_valid_event_name(event_name: str) -> bool:
     """事件名规则：小写点分多段，如 ``sales.paid`` / ``model.created``。"""
     return bool(EVENT_NAME_RE.match(event_name or ""))
-
-
-def validate_jobs(jobs: Any) -> list[str]:
-    """校验 manifest.jobs 声明（W2-3）。
-
-    契约校验期**只验格式，不 import handler 模块**：避免校验动作本身执行插件代码。
-    ``interval_ref`` 为可选字段，指向 ``module:callable``，调度器每轮 sleep 前调用，
-    用于保持「间隔每轮重读、后台改配置热生效」的既有语义（如网关对账）。
-    """
-    problems: list[str] = []
-    if jobs is None:
-        return problems
-    if not isinstance(jobs, list):
-        return ["jobs 必须是数组"]
-    seen: set[str] = set()
-    for idx, job in enumerate(jobs):
-        tag = f"jobs[{idx}]"
-        if not isinstance(job, dict):
-            problems.append(f"{tag} 必须是对象")
-            continue
-
-        name = job.get("name")
-        if not isinstance(name, str) or not JOB_NAME_RE.match(name):
-            problems.append(f"{tag}.name 非法（应为 ^[a-z][a-z0-9_]*$）: {name!r}")
-        elif name in seen:
-            problems.append(f"{tag}.name 在插件内重复: {name!r}")
-        else:
-            seen.add(name)
-
-        for ref_field in ("handler_ref", "interval_ref"):
-            ref = job.get(ref_field)
-            if ref is None and ref_field == "interval_ref":
-                continue  # 可选
-            if not isinstance(ref, str) or not HANDLER_REF_RE.match(ref):
-                problems.append(
-                    f"{tag}.{ref_field} 非法（应为 module:callable）: {ref!r}"
-                )
-
-        interval = job.get("interval_seconds")
-        if isinstance(interval, bool) or not isinstance(interval, int) or interval < MIN_JOB_INTERVAL:
-            problems.append(
-                f"{tag}.interval_seconds 必须是 ≥{MIN_JOB_INTERVAL} 的整数: {interval!r}"
-            )
-
-        requires = job.get("requires_plugins")
-        if requires is not None:
-            if not isinstance(requires, list) or any(
-                not isinstance(dep, str) or not dep for dep in requires
-            ):
-                problems.append(f"{tag}.requires_plugins 必须是非空字符串数组")
-    return problems
 
 
 def validate_no_browser_prefix(prefix: str) -> list[str]:
@@ -159,20 +108,19 @@ def validate_manifest(name: str, manifest: dict[str, Any], plugin_dir: Path) -> 
         if not target.is_dir():
             problems.append(f"internal_routes 声明的目录不存在: {route_path!r}")
 
-    declared_events = (manifest.get("events") or {}).get("subscribe") or []
-    if not isinstance(declared_events, list):
-        problems.append("events.subscribe 必须是数组")
-    else:
-        for item in declared_events:
-            if isinstance(item, dict):
-                event_name = item.get("event_name", "")
-            else:
-                event_name = str(item)
-            if not is_valid_event_name(event_name):
-                problems.append(f"非法事件名: {event_name!r}（应为小写点分格式）")
-
-    # W2-3：定时任务声明与路由/事件同级硬校验，声明非法一律拒绝装配
-    problems.extend(validate_jobs(manifest.get("jobs")))
+    # 2026-11-15：周期作业与事件订阅声明统一到插件 task/ 目录。
+    # 残留的 manifest.jobs / manifest.events 一律拒绝装配（写了也不会生效，
+    # 必须显式迁移），由 discovery 的标签校验接管格式约束。
+    if manifest.get("jobs"):
+        problems.append(
+            "jobs 段已废弃：请在插件 task/ 目录用 "
+            "@broker.task(ap_schedule=..., queue_name='ap.jobs') 声明周期作业"
+        )
+    if manifest.get("events"):
+        problems.append(
+            "events 段已废弃：请在插件 task/ 目录用 "
+            "@ap_subscribe('a.b', unregister_ref='unregister') 声明事件订阅"
+        )
 
     if manifest.get("name") and manifest["name"] != name:
         problems.append(

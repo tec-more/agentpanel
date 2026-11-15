@@ -12,6 +12,9 @@ from loguru import logger
 from taskiq import TaskiqState
 from taskiq.events import TaskiqEvents
 
+# 顶层 import 即完成声明式发现与 @broker.task 注册（taskiq CLI 导入本模块时
+# 就必须把任务表准备好，不能等到 WORKER_STARTUP 事件）。
+from . import tasks_registry  # noqa: F401
 from .broker import broker
 from .config import settings
 
@@ -37,7 +40,8 @@ async def on_worker_startup(state: TaskiqState) -> None:
     except Exception as exc:
         logger.warning(f"[taskiq worker] Redis 预热失败（降级）: {exc}")
 
-    # 3) 事件中心（M3 负载关键）：register_ref + bind_manual 填充进程内订阅注册表，
+    # 3) 事件中心（M3 负载关键）：按 task/ 目录 @ap_subscribe 发现结果执行注册函数
+    #    + bind_manual 填充进程内订阅注册表，
     #    dispatch 任务按该注册表取 handler 执行。失败不阻断启动，但事件消费将不可用。
     try:
         from base.core.events.registry import event_center
@@ -47,7 +51,7 @@ async def on_worker_startup(state: TaskiqState) -> None:
         logger.error(f"[taskiq worker] 事件中心初始化失败（事件消费不可用）: {exc}")
 
     # 3.5) 周期 resync：API 进程的插件启停不会同步到 worker，靠本循环收敛
-    #      （新启用 → register_ref 幂等补注册；已停用 → unregister_ref 摘除），
+    #      （新启用 → 注册函数幂等补注册；已停用 → 注销函数摘除），
     #      语义与 beat reconciler 的作业重扫对齐。
     async def _resync_loop() -> None:
         while True:
@@ -61,8 +65,9 @@ async def on_worker_startup(state: TaskiqState) -> None:
 
     asyncio.create_task(_resync_loop())
 
-    # 4) 导入全部作业模块 → 触发 @broker.task 注册（manifest 驱动，见 tasks_registry）
-    from base.common.taskiq_app import tasks_registry  # noqa: F401  (import 即注册)
+    # 4) 声明式发现已在模块 import 期完成（见本文件顶层 tasks_registry），
+    #    此处仅复核注册结果；不再依赖 manifest.jobs。
+    from base.common.taskiq_app import tasks_registry  # noqa: F401
 
     # 5) 写 worker 心跳键（healthcheck 探活用），并启动周期刷新
     #    注意：心跳只写一次会在 30s 后过期，长驻 worker 必须周期刷新，

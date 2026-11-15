@@ -9,7 +9,9 @@
 - api/              可选，API 路由（在 manifest.json 的 routes 中声明目录）
 - models/           可选，数据模型（在 manifest.json 的 models 中声明）
 - schemas/          可选，Pydantic Schema（在 manifest.json 的 schemas 中声明，用于文档）
-- jobs/             可选，定时任务单轮 handler（由 manifest.json 的 jobs 声明，W2-3）
+- task/             可选，周期作业（@broker.task + ap_schedule 等标签）与事件订阅
+                    （@ap_subscribe）声明；2026-11-15 起 manifest.json 的 jobs / events
+                    两段均已废弃，由 base.common.taskiq_app.discovery 统一扫描发现
 - services/         可选，业务逻辑
 
 manifest.json 示例（路径契约见 base/common/plugin_contract.py）：
@@ -87,8 +89,25 @@ class PluginInstance:
         self.router: Optional[APIRouter] = getattr(module, 'router', None) or router
         # internal_routes 声明的内部接口，不带插件业务前缀
         self.internal_router: Optional[APIRouter] = internal_router
-        # manifest.events.subscribe 声明的订阅（由事件中心统一装卸）
-        self.declared_subscriptions: list = (manifest.get("events") or {}).get("subscribe") or []
+    @property
+    def declared_subscriptions(self) -> list:
+        """事件订阅声明（来自 task/ 目录发现结果，manifest.events 已废弃）。
+
+        保留同名只读属性供外部使用；惰性查询，避免装配期耦合到发现器。
+        """
+        try:
+            from base.common.taskiq_app.discovery import event_specs_by_owner
+
+            return [
+                {
+                    "event_name": spec.event_name,
+                    "handler_ref": spec.handler_ref,
+                    "description": spec.description,
+                }
+                for spec in event_specs_by_owner(self.name)
+            ]
+        except Exception:
+            return []
 
     async def on_enable(self, app: FastAPI) -> bool:
         """调用插件的 on_enable 钩子（仅显式 False 视为失败）。
@@ -789,8 +808,10 @@ class PluginManager:
             return False
 
     async def _sync_plugin_subscriptions(self, name: str, manifest: dict, active: bool) -> None:
-        """把 manifest.events.subscribe 交给事件中心统一装卸。
+        """把插件订阅声明交给事件中心统一装卸。
 
+        声明真源是 ``task/`` 目录的 ``@ap_subscribe``（事件中心内部读发现结果），
+        此处传入的 manifest 仅为兼容旧签名的占位，不再被读取。
         事件中心尚未初始化时静默跳过（模块通过延迟导入，保证装配器可独立运行）。
         """
         try:

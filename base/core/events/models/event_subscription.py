@@ -1,6 +1,6 @@
 """事件订阅关系（后台可管理）。
 
-- declared：来自插件 manifest.events.subscribe，随插件启停同步；
+- declared：来自插件 task/ 目录 @ap_subscribe 声明，随插件启停同步；
 - manual：后台新增，handler_ref 指向 module:callable，由注册表动态绑定。
 """
 from tortoise import fields

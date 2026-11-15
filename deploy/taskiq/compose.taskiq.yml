@@ -1,5 +1,7 @@
 # taskiq 独立调度（beat，严格单实例）+ 独立消费（worker，可多副本）
-# M2/M3 后这是唯一调度与消费路径：beat 按 manifest 写调度行入 ap.jobs；
+# 这是唯一调度与消费路径：beat 扫描插件 task/ 目录 + platform_jobs.py 里
+# @broker.task 的 ap_schedule 声明写调度行入 ap.jobs（不再读 manifest.jobs）；
+# 事件订阅同样由 task/ 目录 @ap_subscribe 自动发现（不再读 manifest.events）；
 # worker 消费 ap.jobs + ap.events（作业执行 + 事件分发），可多副本竞争消费。
 # 详见 reports/prd/AgentPanel-taskiq-M1实施拆解-2026-11-14.md §5 与 M2/M3 实施记录。
 # 前置：RabbitMQ 需先建专用 vhost 并授权（D6）。vhost/账号优先级：

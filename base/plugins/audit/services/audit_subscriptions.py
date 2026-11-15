@@ -1,7 +1,7 @@
-"""审计插件订阅的声明式入口（供 manifest.events 引用）。
+"""审计插件订阅的注册入口（由 ``task/subscriptions.py`` 的 ``@ap_subscribe`` 声明引用）。
 
-平台事件中心通过 ``handler_ref`` 动态解析本模块，不在 base/core 中硬编码插件名
-与事件名；注册/注销幂等，避免 on_enable 与 on_startup 重复订阅。
+平台事件中心按发现结果动态解析注册函数，不在 base/core 中硬编码插件名与事件名；
+注册/注销幂等，避免 on_enable 与 on_startup 重复订阅。
 """
 from __future__ import annotations
 

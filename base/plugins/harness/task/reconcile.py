@@ -1,7 +1,8 @@
 """Harness 插件作业：网关记账对账（单轮，W2-3）。
 
-- ``resolve_interval`` 由调度器在**每轮 sleep 前**调用（含首轮），保持原任务
-  「间隔每轮重读、后台改配置热生效」的语义；
+- ``ap_interval_ref`` 指向 ``resolve_interval``，由 beat 的 reconciler
+  在**每轮重扫**时调用（含首轮），保持原任务「间隔每轮重读、后台改配置
+  热生效」的语义；
 - ``run`` 内含业务级 gating 自查：网关或对账开关关闭时本轮直接返回，
   任务保留但不产生业务调用（与「插件被平台禁用 → 任务取消」是不同层）；
 - 与手动接口复用同一幂等服务，重复执行不会重复插入差异。
@@ -18,7 +19,14 @@ def resolve_interval() -> int:
     return max(int(reconciliation_config().get("interval_seconds") or 600), 30)
 
 
-@broker.task(task_name="harness:gateway_reconcile", queue_name="ap.jobs")
+# 声明即注册：ap_interval_ref 由 beat 每轮重扫时解析，保持「间隔热重载」语义。
+@broker.task(
+    task_name="harness:gateway_reconcile",
+    queue_name="ap.jobs",
+    ap_schedule=600,
+    ap_interval_ref="base.plugins.harness.task.reconcile:resolve_interval",
+    ap_description="网关记账 vs 客户端上报对账（间隔每轮重读，业务开关自查）",
+)
 async def run() -> None:
     """执行一轮网关 vs 客户端上报对账（原 gateway_reconcile_task 的单轮逻辑）。"""
     from base.plugins.harness.services.gateway_config import (

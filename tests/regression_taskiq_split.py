@@ -22,7 +22,8 @@ pytest.importorskip("taskiq_beat")
 from base.common.taskiq_app.config import settings  # noqa: E402
 from base.common.taskiq_app.scheduler import metadata, scheduler_app  # noqa: E402
 
-# 6 个已改造 @broker.task 的 task_name（与 base/plugins/*/jobs/*.py + platform.py 装饰器一致）
+# 6 个声明式作业的 task_name（来自 base/plugins/*/task/*.py 的 @broker.task
+# 与 platform_jobs.py；2026-11-15 起 manifest.jobs 已废弃）
 EXPECTED_TASK_NAMES = {
     "audit:audit_cleanup",
     "customer:update_membership_data",
@@ -177,6 +178,16 @@ def test_all_tasks_registered() -> None:
     registered = set(broker.get_all_tasks().keys())
     missing = EXPECTED_ALL_TASK_NAMES - registered
     assert not missing, f"以下 task 未注册：{missing}"
+
+    # 偏差1整改：所有 ap.jobs 作业必须已装配执行期插件门控
+    from base.common.taskiq_app.job_gate import _GATE_MARK
+
+    for name, task in broker.get_all_tasks().items():
+        if (task.labels or {}).get("queue_name") != "ap.jobs":
+            continue
+        assert getattr(task.original_func, _GATE_MARK, False), (
+            f"{name} 未装配执行期插件门控（tasks_registry.apply_plugin_gate 漏调？）"
+        )
 
 
 def test_dispatch_task_routing_label() -> None:
@@ -346,3 +357,379 @@ def test_worker_min_async_same_loop_placeholder() -> None:
 @pytest.mark.skipif(not _HAS_BROKER, reason="requires TASKIQ_BROKER_URL (RabbitMQ)")
 def test_worker_pool_isolation_placeholder() -> None:
     pytest.skip("R2 连接池隔离需真实 `taskiq worker --workers 2` 集成验证，见 M1 runbook smoke")
+
+
+# ---------------------------------------------------------------------------
+# 执行期插件门控（偏差1整改）：停用插件的已投递作业不得在 worker 执行
+# ---------------------------------------------------------------------------
+class _FakeDecoratedTask:
+    """最小 task 替身：taskiq receiver 只取 task_name / labels / original_func。"""
+
+    def __init__(self, task_name: str, queue_name: str, func) -> None:
+        self.task_name = task_name
+        self.labels = {"queue_name": queue_name}
+        self.original_func = func
+
+
+def test_job_gate_owner_classification(monkeypatch) -> None:
+    from base.common.taskiq_app import job_gate
+
+    monkeypatch.setattr(job_gate, "is_plugin_active", lambda name: name == "enabled")
+    assert job_gate.is_job_allowed("platform:quota_reconcile") is True
+    assert job_gate.is_job_allowed("taskiq:dispatch") is True
+    assert job_gate.is_job_allowed("no_owner_prefix") is True
+    assert job_gate.is_job_allowed("enabled:some_job") is True
+    assert job_gate.is_job_allowed("disabled:some_job") is False
+
+
+def test_job_gate_wraps_only_ap_jobs_and_is_idempotent(monkeypatch) -> None:
+    from base.common.taskiq_app import job_gate
+
+    monkeypatch.setattr(job_gate, "is_plugin_active", lambda name: True)
+
+    async def _noop():
+        return None
+
+    job = _FakeDecoratedTask("audit:audit_cleanup", "ap.jobs", _noop)
+    event = _FakeDecoratedTask("taskiq:dispatch", "ap.events", _noop)
+    assert job_gate.wrap_job_with_plugin_gate(job) is True
+    assert job_gate.wrap_job_with_plugin_gate(event) is False
+    wrapped = job.original_func
+    assert job_gate.wrap_job_with_plugin_gate(job) is False
+    assert job.original_func is wrapped
+    assert event.original_func is _noop
+
+
+def test_job_gate_skips_inactive_plugin_execution(monkeypatch) -> None:
+    from base.common.taskiq_app import job_gate
+
+    calls: list[str] = []
+
+    async def _run():
+        calls.append("executed")
+        return "ok"
+
+    job = _FakeDecoratedTask("audit:audit_cleanup", "ap.jobs", _run)
+    job_gate.wrap_job_with_plugin_gate(job)
+
+    monkeypatch.setattr(job_gate, "is_plugin_active", lambda name: False)
+    assert asyncio.run(job.original_func()) is None
+    assert calls == [], "停用插件的已投递作业不得执行"
+
+    monkeypatch.setattr(job_gate, "is_plugin_active", lambda name: True)
+    assert asyncio.run(job.original_func()) == "ok"
+    assert calls == ["executed"], "插件启用后同一任务应立即恢复执行"
+
+
+def test_apply_plugin_gate_covers_all_job_tasks() -> None:
+    from base.common.taskiq_app import job_gate
+
+    async def _noop():
+        return None
+
+    tasks = {
+        "gate:job_a": _FakeDecoratedTask("gate:job_a", "ap.jobs", _noop),
+        "gate:job_b": _FakeDecoratedTask("gate:job_b", "ap.jobs", _noop),
+        "taskiq:dispatch": _FakeDecoratedTask("taskiq:dispatch", "ap.events", _noop),
+    }
+
+    class _FakeBroker:
+        def get_all_tasks(self):
+            return tasks
+
+    assert job_gate.apply_plugin_gate(_FakeBroker()) == 2
+    for name, task_obj in tasks.items():
+        if task_obj.labels["queue_name"] == "ap.jobs":
+            assert getattr(task_obj.original_func, job_gate._GATE_MARK, False), name
+    assert tasks["taskiq:dispatch"].original_func is _noop
+
+
+def test_tasks_registry_installs_execution_gate() -> None:
+    """静态锚定：worker 注册任务后必须装配门控，防止后续重构漏掉装配点。"""
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "base" / "common" / "taskiq_app" / "tasks_registry.py"
+    ).read_text(encoding="utf-8")
+    assert "apply_plugin_gate" in src
+    assert "job_gate" in src
+
+
+# ---------------------------------------------------------------------------
+# 声明式发现（2026-11-15）：单一真源 = 插件 task/ 目录里的 @broker.task 标签
+# 全部为纯单测，不需要 PG / RabbitMQ。
+# ---------------------------------------------------------------------------
+def _project_root():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[1]
+
+
+def test_manifest_has_no_jobs_section() -> None:
+    """周期作业声明不得再出现在 manifest.json（迁移后残留会被装配契约拒绝）。"""
+    import json
+
+    root = _project_root() / "base" / "plugins"
+    offenders = [
+        path.parent.name
+        for path in sorted(root.glob("*/manifest.json"))
+        if "jobs" in json.loads(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, f"以下插件仍带已废弃的 manifest.jobs: {offenders}"
+
+
+def test_discovery_scans_plugin_task_dirs() -> None:
+    """发现器只认插件 task/ 目录（兼容 tasks/、jobs/），且不再依赖 manifest.jobs。"""
+    from base.common.taskiq_app.discovery import iter_plugin_task_modules, iter_all_modules
+
+    modules = iter_plugin_task_modules()
+    assert modules, "未扫描到任何插件作业模块"
+    assert all(".task." in module for _, module in modules), modules
+    assert not any(".jobs." in module for _, module in modules), modules
+    assert {"sales", "customer", "audit", "harness"} <= {owner for owner, _ in modules}
+    assert iter_all_modules()[0][0] == "platform", "平台作业必须最先注册"
+
+
+def test_discovery_specs_match_declared_jobs() -> None:
+    """6 个周期作业的 TaskSpec 与旧 manifest 声明逐字段等价，job_id 不变。"""
+    try:
+        from base.common.taskiq_app.discovery import discover, scheduled_specs
+        from base.common.plugin_contract import MIN_JOB_INTERVAL
+    except Exception as exc:
+        pytest.skip(f"发现器导入需要完整项目依赖：{exc}")
+
+    specs = scheduled_specs(discover())
+    by_name = {spec.task_name: spec for spec in specs}
+    assert set(by_name) == EXPECTED_TASK_NAMES, (
+        f"声明作业集合漂移: missing={EXPECTED_TASK_NAMES - set(by_name)} "
+        f"extra={set(by_name) - EXPECTED_TASK_NAMES}"
+    )
+
+    expected = {
+        "sales:cancel_expired_orders": ("sales", 300, (), None),
+        "customer:update_membership_data": ("customer", 600, ("llm",), None),
+        "audit:audit_cleanup": ("audit", 86400, (), None),
+        "harness:gateway_reconcile": (
+            "harness", 600, (), "base.plugins.harness.task.reconcile:resolve_interval"
+        ),
+        "platform:quota_reconcile": ("platform", 60, (), None),
+        "platform:quota_hold_cleanup": ("platform", 60, (), None),
+    }
+    for name, (owner, interval, requires, ref) in expected.items():
+        spec = by_name[name]
+        assert spec.owner == owner, name
+        assert spec.queue == "ap.jobs", name
+        assert spec.schedule == interval >= MIN_JOB_INTERVAL, name
+        assert spec.requires == requires, name
+        assert spec.interval_ref == ref, name
+        assert spec.job_id == name, "job_id 必须等于 task_name（零数据迁移）"
+        assert spec.task.task_name == name, "beat 需要真实 task 对象"
+
+    platform = [spec for spec in specs if spec.is_platform]
+    assert len(platform) == 2, "平台作业必须恒被发现（reconciler fail-safe 依据）"
+
+
+def test_discovery_rejects_invalid_labels() -> None:
+    """标签校验替代旧 validate_jobs：周期下限 / 队列 / task_name 形式。"""
+    from base.common.taskiq_app.discovery import _validate_labels
+
+    assert _validate_labels(
+        "sales:x", {"ap_schedule": 30, "queue_name": "ap.jobs"}
+    ) == []
+    assert _validate_labels("sales:x", {"ap_schedule": 10, "queue_name": "ap.jobs"})
+    assert _validate_labels("sales:x", {"ap_schedule": 30, "queue_name": "ap.events"})
+    assert _validate_labels("salesx", {"ap_schedule": 30, "queue_name": "ap.jobs"})
+    assert _validate_labels("sales:x", {"ap_interval_ref": "no_colon"})
+    assert _validate_labels(
+        "sales:x", {"ap_schedule": 30, "queue_name": "ap.jobs", "ap_interval_ref": "m:f"}
+    ) == []
+
+
+def test_reconciler_uses_periodic_schedule_trigger() -> None:
+    """taskiq-beat 1.4.0 要求 trigger 为 PeriodicSchedule，裸 IntervalTrigger 会崩。"""
+    src = (
+        _project_root() / "base" / "common" / "taskiq_app" / "reconcile.py"
+    ).read_text(encoding="utf-8")
+    assert "PeriodicSchedule(interval=IntervalTrigger(seconds=interval))" in src
+    assert "scheduled_specs(discover())" in src, "reconciler 必须走统一发现器"
+    assert "manifest.get(\"jobs\")" not in src, "reconciler 不得再解析 manifest.jobs"
+
+
+# ---------------------------------------------------------------------------
+# 事件订阅声明发现（2026-11-15：manifest.events → task/ @ap_subscribe）
+# ---------------------------------------------------------------------------
+
+EXPECTED_EVENT_SUBS = {
+    "audit": {
+        "model.created", "model.updated", "model.deleted", "user.login", "user.logout",
+    },
+    "mail": {"model.created", "model.updated", "model.deleted"},
+    "crm": {"sales.paid"},
+    "finance": {
+        "purchase.confirmed", "purchase.received", "purchase.payment",
+        "sales.paid", "sales.receipt", "work_order.completed",
+        "material.picked", "production.receipt",
+    },
+    "subcontracting": {
+        "mrp2.planned_order_confirmed", "inventory.picking_done", "inventory.receipt_done",
+    },
+    # 2026-11-15：原 mes/services/event_handlers.py 的 4 条无人调用订阅
+    # 改造为 task/subscriptions.py 的 @ap_subscribe 声明（历史死代码闭环）。
+    "mes": {
+        "equipment.status_changed", "quality.inspection_completed",
+        "inventory.picking_done", "inventory.receipt_done",
+    },
+}
+
+
+def test_event_subscription_discovery() -> None:
+    """24 条声明逐项等价于旧 manifest.events + mes 死代码改造，入口均可解析。"""
+    try:
+        from base.common.taskiq_app.discovery import (
+            discover_event_subscriptions,
+            event_specs_by_owner,
+            reset,
+        )
+        from base.common.dynamic_ref import resolve_callable
+    except Exception as exc:
+        pytest.skip(f"发现器导入需要完整项目依赖：{exc}")
+
+    reset()  # 强制重扫真实插件目录
+    specs = discover_event_subscriptions()
+    assert len(specs) == sum(len(v) for v in EXPECTED_EVENT_SUBS.values()) == 24
+
+    by_owner: dict[str, set[str]] = {}
+    for spec in specs:
+        by_owner.setdefault(spec.owner, set()).add(spec.event_name)
+    assert by_owner == EXPECTED_EVENT_SUBS
+
+    for owner, events in EXPECTED_EVENT_SUBS.items():
+        group = event_specs_by_owner(owner)
+        assert len(group) == len(events), owner
+        head = group[0]
+        assert head.owner == owner
+        assert head.module.startswith(f"base.plugins.{owner}.task.subscriptions")
+        assert head.register_ref == f"{head.module}:register"
+        assert head.unregister_ref == f"{head.module}:unregister"
+        assert head.handler_ref == head.register_ref
+        assert head.sub_name == f"{owner}:{head.event_name}"
+        assert head.description
+        # 注册/注销入口必须真实可解析（避免声明指向不存在的函数）
+        assert callable(resolve_callable(head.register_ref))
+        assert callable(resolve_callable(head.unregister_ref))
+    assert all(spec.owner != "platform" for spec in specs), "平台模块不声明业务事件订阅"
+
+
+def test_ap_subscribe_declaration_validation() -> None:
+    """装饰器只挂声明属性；非法事件名/重复/ref 被校验拦截。"""
+    from base.common.taskiq_app.discovery import (
+        SUBSCRIPTION_ATTR,
+        _validate_subscription_decl,
+        ap_subscribe,
+    )
+
+    @ap_subscribe("sales.paid", description="说明", unregister_ref="unregister")
+    def register() -> None:
+        return None
+
+    decl = getattr(register, SUBSCRIPTION_ATTR)
+    assert decl["events"] == ("sales.paid",)
+    assert decl["unregister_ref"] == "unregister"
+    assert _validate_subscription_decl(decl) == []
+    assert _validate_subscription_decl({"events": ()})
+    assert _validate_subscription_decl({"events": ("BadName",)})
+    assert _validate_subscription_decl({"events": ("a.b", "a.b")})
+    assert _validate_subscription_decl({"events": ("a.b",), "bootstrap": ":"})
+    assert _validate_subscription_decl(
+        {"events": ("a.b",), "unregister_ref": "mod:fn"}
+    ) == []
+
+
+def test_manifest_event_declarations_removed() -> None:
+    """manifest 全量无 jobs/events 残留；事件中心/契约/CLI 均切换到发现器。"""
+    import json
+
+    root = _project_root()
+    manifests = sorted((root / "base" / "plugins").glob("*/manifest.json"))
+    assert manifests
+    for mf in manifests:
+        manifest = json.loads(mf.read_text(encoding="utf-8"))
+        assert "events" not in manifest, f"{mf.parent.name} 仍残留 events 段"
+        assert "jobs" not in manifest, f"{mf.parent.name} 仍残留 jobs 段"
+
+    contract = (
+        root / "base" / "common" / "plugin_contract.py"
+    ).read_text(encoding="utf-8")
+    assert 'if manifest.get("events"):' in contract, "残留 events 必须拒绝装配"
+
+    registry = (
+        root / "base" / "core" / "events" / "registry.py"
+    ).read_text(encoding="utf-8")
+    assert 'manifest.get("events")' not in registry
+    assert "discover_event_subscriptions" in registry
+    assert "event_specs_by_owner" in registry
+
+    cli = (root / "base" / "cli" / "command.py").read_text(encoding="utf-8")
+    assert 'manifest["events"]' not in cli, "CLI 脚手架不得再生成废弃声明"
+    assert "task_dir" in cli
+
+
+def test_mes_dead_code_now_declarative() -> None:
+    """mes 历史死代码闭环（2026-11-15）：声明可发现、注册幂等、注销对称。
+
+    原 ``mes/services/event_handlers.py:87-94`` 的 4 条 subscribe 全仓库无调用点，
+    符合性检查报告 §2.2 / 整改方案 W2-2 均登记为死代码。现在由
+    ``mes/task/subscriptions.py`` 的 ``@ap_subscribe`` 声明驱动。
+    """
+    import json
+
+    root = _project_root()
+    mes = root / "base" / "plugins" / "mes"
+
+    decl_src = (mes / "task" / "subscriptions.py").read_text(encoding="utf-8")
+    assert "@ap_subscribe(" in decl_src
+    assert "unregister_ref=\"unregister\"" in decl_src
+
+    handler_src = (mes / "services" / "event_handlers.py").read_text(encoding="utf-8")
+    assert "\nexcept ImportError:" not in handler_src, "ImportError 兜底会让订阅静默失效"
+    assert "_HANDLER_PAIRS" in handler_src, "注册/注销必须遍历同一张表"
+    assert "def unregister_event_handlers" in handler_src
+
+    manifest = json.loads((mes / "manifest.json").read_text(encoding="utf-8"))
+    assert "events" not in manifest and "jobs" not in manifest
+    assert manifest.get("is_installed") is False, "改造不应擅自激活未安装插件"
+    assert manifest.get("is_enabled") is False
+
+    # 发现结果与装卸对称（不依赖 DB，注册表现场在 finally 恢复）
+    from base.common.taskiq_app.discovery import event_specs_by_owner, reset
+    from base.common.dynamic_ref import resolve_callable
+    from base.common.events.event_bus import event_bus
+    from base.plugins.mes.services import event_handlers as eh
+
+    reset()
+    group = event_specs_by_owner("mes")
+    assert len(group) == 4
+    assert {spec.event_name for spec in group} == EXPECTED_EVENT_SUBS["mes"]
+    head = group[0]
+    assert head.module == "base.plugins.mes.task.subscriptions"
+    assert head.register_ref == f"{head.module}:register"
+    assert head.unregister_ref == f"{head.module}:unregister"
+    assert callable(resolve_callable(head.register_ref))
+    assert callable(resolve_callable(head.unregister_ref))
+
+    snapshot = {k: list(v) for k, v in event_bus._handler_registry.items()}
+    try:
+        eh.unregister_event_handlers()  # 从干净状态起步
+        eh.register_event_handlers()
+        first = {name: len(event_bus.get_handlers(name)) for name, _ in eh._HANDLER_PAIRS}
+        eh.register_event_handlers()
+        second = {name: len(event_bus.get_handlers(name)) for name, _ in eh._HANDLER_PAIRS}
+        assert first == second and all(v == 1 for v in first.values()), (first, second)
+        eh.unregister_event_handlers()
+        after = {name: len(event_bus.get_handlers(name)) for name, _ in eh._HANDLER_PAIRS}
+        assert all(v == 0 for v in after.values()), after
+    finally:
+        event_bus._handler_registry.clear()
+        event_bus._handler_registry.update(snapshot)
+        eh._registered = False

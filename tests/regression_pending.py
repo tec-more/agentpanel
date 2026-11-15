@@ -108,17 +108,6 @@ SMOKE_FILES = {
             "menus": [{"name": MENU_NAME, "path": MENU_PATH, "icon": "smoke", "is_hidden": False}],
             "permissions": [{"code": PERM_CODE, "name": "冒烟查看", "is_active": True}],
             "routes": ["api/v1"],
-            "events": {
-                "subscribe": [
-                    {
-                        "event_name": EVENT_NAME,
-                        "handler_ref": "base.plugins.smoke_sample.handlers.on_ping",
-                        "description": "冒烟订阅示例",
-                    }
-                ],
-                "register_ref": "base.plugins.smoke_sample.handlers.register",
-                "unregister_ref": "base.plugins.smoke_sample.handlers.unregister",
-            },
         },
         ensure_ascii=False,
         indent=2,
@@ -139,6 +128,23 @@ SMOKE_FILES = {
         '        _registry.remove("registered")\n'
         '    logger.info("[smoke] unregister 调用")\n'
         "    return True\n"
+    ),
+    # 事件订阅声明已迁到 task/ 目录（@ap_subscribe），manifest 不再含 events 段
+    "task/__init__.py": '"""冒烟插件任务与事件订阅声明包。"""\n',
+    "task/subscriptions.py": (
+        '"""冒烟插件事件订阅声明（由 discovery 自动扫描 task/ 目录发现）。"""\n'
+        "from base.common.taskiq_app.discovery import ap_subscribe\n\n"
+        "@ap_subscribe(\n"
+        f'    "{EVENT_NAME}",\n'
+        '    description="冒烟订阅示例",\n'
+        '    unregister_ref="unregister",\n'
+        ")\n"
+        "def register():\n"
+        "    from base.plugins.smoke_sample.handlers import register as _register\n"
+        "    return _register()\n\n"
+        "def unregister():\n"
+        "    from base.plugins.smoke_sample.handlers import unregister as _unregister\n"
+        "    return _unregister()\n"
     ),
     "api/__init__.py": "",
     "api/v1/__init__.py": "",
@@ -161,6 +167,13 @@ def build_smoke_sample():
         p = d / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
+    # 新插件目录写入后必须清空发现器缓存，否则本进程沿用旧的订阅/作业发现结果
+    try:
+        from base.common.taskiq_app.discovery import reset as reset_discovery
+
+        reset_discovery()
+    except Exception:
+        pass
     return d
 
 
@@ -368,7 +381,23 @@ async def group_c_e2e(app, mgr):
     except Exception as e:
         check("C6 API 200 (GET /v1/_smoke/ping)", False, f"请求异常: {e}")
 
-    # 订阅生效
+    # 订阅生效（声明真源已迁到 task/ 目录的 @ap_subscribe）
+    smoke_manifest = json.loads(
+        (PLUGINS / SMOKE_NAME / "manifest.json").read_text(encoding="utf-8")
+    )
+    check(
+        "C6b smoke_sample manifest 无 events 段(声明已迁 task/)",
+        "events" not in smoke_manifest,
+        f"keys={list(smoke_manifest)}",
+    )
+    from base.common.taskiq_app.discovery import event_specs_by_owner
+
+    smoke_specs = event_specs_by_owner(SMOKE_NAME)
+    check(
+        "C6c task/ 目录 @ap_subscribe 声明被自动发现",
+        len(smoke_specs) == 1 and smoke_specs[0].event_name == EVENT_NAME,
+        f"specs={[(s.owner, s.event_name) for s in smoke_specs]}",
+    )
     sub_on = await EventSubscription.filter(subscriber=SMOKE_NAME, is_enabled=True).count()
     check("C7 启用后声明订阅生效(is_enabled=True)", sub_on == 1, f"on={sub_on}")
 
@@ -490,6 +519,38 @@ async def group_d_open_items():
         "resync: 停用→unregister_ref 摘除；启用→register_ref 幂等补注册",
     )
 
+    # D5 声明真源统一：manifest 不再含 jobs/events，契约对残留一律拒绝装配
+    bad_manifests = []
+    for mf in (WORKDIR / "base" / "plugins").glob("*/manifest.json"):
+        m = json.loads(mf.read_text(encoding="utf-8"))
+        if "jobs" in m or "events" in m:
+            bad_manifests.append(mf.parent.name)
+    check(
+        "D5 全部 manifest 无 jobs/events 残留(声明统一到 task/)",
+        not bad_manifests,
+        f"残留={bad_manifests}",
+    )
+    contract_src = (WORKDIR / "base" / "common" / "plugin_contract.py").read_text(encoding="utf-8")
+    check(
+        "D5a 契约对残留 events 段拒绝装配",
+        'if manifest.get("events"):' in contract_src
+        and 'if manifest.get("jobs"):' in contract_src,
+        "写了不生效的旧声明必须显式报错，而不是静默忽略",
+    )
+    check(
+        "D6 事件中心改读发现结果，不再解析 manifest.events",
+        'manifest.get("events")' not in registry_src
+        and "discover_event_subscriptions" in registry_src
+        and "event_specs_by_owner" in registry_src,
+        "initialize/resync/sync_plugin 统一消费 EventSubSpec",
+    )
+    cli_src = (WORKDIR / "base" / "cli" / "command.py").read_text(encoding="utf-8")
+    check(
+        "D7 CLI 脚手架不再往 manifest 写 events 段",
+        'manifest["events"]' not in cli_src and "task_dir" in cli_src,
+        "新插件天然带 task/ 声明目录",
+    )
+
 
 async def main():
     build_smoke_sample()
@@ -517,6 +578,12 @@ async def main():
         except Exception:
             pass
         shutil_rmtree(PLUGINS / SMOKE_NAME)
+        try:
+            from base.common.taskiq_app.discovery import reset as reset_discovery
+
+            reset_discovery()
+        except Exception:
+            pass
 
     passed = sum(1 for _, c, _ in results if c)
     failed = [r for r in results if not r[1]]

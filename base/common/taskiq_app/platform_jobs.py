@@ -1,7 +1,12 @@
 """平台级作业：不依赖任何插件、恒启的公共层能力（M2 迁自 base/common/jobs/platform.py）。
 
-只保留**单轮**业务逻辑；周期与触发由 taskiq-beat 的 reconciler 写入调度行
-（reconcile.py 平台作业段，job_id 前缀 ``platform:``），worker 进程执行。
+这里是**系统级作业的唯一发现点**：``base.common.taskiq_app.discovery`` 固定
+import 本模块触发 ``@broker.task`` 注册，再从 ``ap_schedule`` 标签读出调度周期。
+周期不再由 ``reconcile.py`` 硬编码，新增平台作业只需在本文件加一个带声明的
+``@broker.task``，beat / worker 无需改动。
+
+只保留**单轮**业务逻辑；调度行的写入由 taskiq-beat 的 reconciler 完成，
+job_id 前缀 ``platform:``（owner 恒为 platform，不受插件启停门控影响）。
 """
 from __future__ import annotations
 
@@ -10,7 +15,12 @@ from loguru import logger
 from base.common.taskiq_app.broker import broker
 
 
-@broker.task(task_name="platform:quota_reconcile", queue_name="ap.jobs")
+@broker.task(
+    task_name="platform:quota_reconcile",
+    queue_name="ap.jobs",
+    ap_schedule=60,
+    ap_description="每分钟活跃账户配额对账落盘（Redis → PG used）+ 周期滚动",
+)
 async def quota_reconcile() -> None:
     """每分钟活跃账户配额对账落盘（Redis → PG used）+ 周期滚动。
 
@@ -28,7 +38,12 @@ async def quota_reconcile() -> None:
         )
 
 
-@broker.task(task_name="platform:quota_hold_cleanup", queue_name="ap.jobs")
+@broker.task(
+    task_name="platform:quota_hold_cleanup",
+    queue_name="ap.jobs",
+    ap_schedule=60,
+    ap_description="每分钟清理悬挂预占（超 TTL 未结算的 hold 释放）",
+)
 async def quota_hold_cleanup() -> None:
     """每分钟清理悬挂预占（超 TTL 未结算的 hold 释放）。
 

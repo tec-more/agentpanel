@@ -1,9 +1,26 @@
 # AgentPanel · taskiq 独立调度与消费 · M1 实施任务拆解
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> §3 布局表已按发现器重写；§10 记录 2026-11-15 二次改造。示意代码块为 M1 历史稿，不代表现行代码。
+
+
+
 - 日期：2026-11-14
 - 上级文档：`AgentPanel-调度与消费服务独立化-taskiq可行方案-2026-11-14.md`（以下简称「主方案」）
-- 阶段：M1（基础设施与骨架 + R2/R16/R17 三项必验），**不改动 `run.py` / `base/start.py` 的业务装配**，app 侧 `mode` 在 M1 保持 `off`。
-- 状态：**拆解态，未实施任何代码/配置/部署改动**。
+- 阶段：M1（基础设施与骨架 + R2/R16/R17 三项必验）；**M2/M3 后调度与消费已全量外迁 taskiq，旧调度/消费代码已删除**。
+- 状态：**已实施**。§0–§8 保留 M1 设计稿原文（含当时的示意代码与 compose 片段），**终态以 §9.3 / §9.4 及实际源码为准**；§3 布局表、§3.1 关键字段、§5 compose 示例的关键项已按终态对齐（见 §9.5）。
+- 文档状态（2026-11-15 偏差整改）：① 补上 worker 执行期插件门控；② app 服务 broker 连接串统一走专用 vhost secret；③ 设计稿中与终态不符的模块布局/路径/配置字段修正。详见 §9.5。
+- 机制变更（2026-11-15 二次）：声明真源从 `manifest.jobs` / `manifest.events` 迁到插件 `task/` 目录的 `@broker.task` / `@ap_subscribe`，统一由 `discovery.py` 发现；详见 §10 与现行规范。
 - 安全约定：只列配置键名与 `_FILE` secret 约定，不记录 `config.conf` / `.env` / secrets 任何取值。
 
 ---
@@ -66,7 +83,7 @@ sqlalchemy>=2.0,<3
 | `retry_max` / `retry_delay` | `TASKIQ_RETRY_MAX` / `…_RETRY_DELAY` | int | `SmartRetryMiddleware` 参数 |
 | `redis_key_prefix` / `redis_db_taskiq` | `TASKIQ_REDIS_KEY_PREFIX` / `…_REDIS_DB` | str/int | 统一 `ap:taskiq:*` 前缀（R10） |
 | `subscription_channel` | `TASKIQ_SUBSCRIPTION_CHANNEL` | str | Redis 订阅变更广播频道 |
-| `metrics_port` | `TASKIQ_METRICS_PORT` | int | `PrometheusMiddleware` 端口 |
+| `metrics_port` | `TASKIQ_METRICS_PORT` | int | 预留；终态未挂 `PrometheusMiddleware`，探活走 `health.py`（§6） |
 | `run_history_retention_days` | `TASKIQ_RUN_HISTORY_RETENTION_DAYS` | int | `SchedulerConfig`，建议显式设值 |
 
 > 这些键 **不写入 `config.conf`**（该文件已有明文凭据）；broker/db 连接串只走 `_FILE` secret，沿用 `read_secret_file` 契约。
@@ -75,29 +92,36 @@ sqlalchemy>=2.0,<3
 
 ## 3. 模块布局：`base/common/taskiq_app/`
 
+> **本节按 2026-11-15 终态源码重写**（M1 原稿提到的 `PrometheusMiddleware`、`create_scheduler`、`base/common/jobs/platform.py`、`run_job` 骨架均未落地/已删除）。
+
 | 文件 | 职责 | 关键签名 / 内容 |
 |---|---|---|
-| `__init__.py` | 包初始化 | — |
-| `config.py` | 读取 §2 配置，暴露 `TaskiqSettings` dataclass | `TaskiqSettings.load()` → 调 `read_env_value(..., secret=True)` |
-| `schema.py` | pydantic 消息契约（D7） | `JobMessage`、`EventMessage`，`model_dump(mode="json")` / `model_validate` |
-| `broker.py` | 单个 `AioPikaBroker` 定义 + 中间件 | `broker`（`task_queues=[ap.jobs, ap.events]`），带 `DummyResultBackend` + `SmartRetryMiddleware` + `PrometheusMiddleware`；显式 `exchange`；各插件 `@broker.task` 作业与 `dispatch` 任务经 `tasks_registry` 静态注册（CLI 无 `-Q`，见主方案 §2.1） |
-| `jobs.py` | worker 生命周期（**不再有通用 `run_job` 分发**，见 §3.1） | `@broker.on_event(WORKER_STARTUP)` 内 `Tortoise.init` + `RedisCache.get_instance()` + `initialize_event_center()` + `import tasks_registry`；`@WORKER_SHUTDOWN` 排空 + `Tortoise.close_connections()` |
-| `tasks_registry.py` | manifest 驱动发现并 import 全部已安装插件的 job 模块（含平台作业），触发 `@broker.task` 注册（见 §3.1 ②） | `import_all_job_tasks()` 扫描 `manifest.jobs[].handler_ref` 的 module 段 import（跨进程安全、单模块失败隔离）；平台作业 `base/common/jobs/platform.py` 单独 import |
-| `events.py` | 事件 dispatch 任务（M3 才接真实业务；M1 仅骨架 + smoke） | `dispatch(payload: dict)` 骨架（label `ap.events`）；M1 只做 pydantic 往返与 ACK 验证，不接 `ConsumerWorker` 逻辑 |
-| `scheduler.py` | 构建 `SchedulerApp` | `scheduler_app = SchedulerApp(broker=broker, session_factory=..., config=SchedulerConfig(sync_interval_seconds=1.0, idle_sleep_seconds=0.2, dispatch_retry_seconds=5, dispatch_concurrency=32, dispatch_batch_size=256, record_runs=True, run_history_retention_days=<显式>, default_timezone="UTC"))` |
-| `reconcile.py` | `ManifestReconciler`（主方案 §3.4） | `async def upsert_schedules(session)`：扫 `get_enabled_plugins_from_manifests()` + 各 `manifest.jobs` + 平台作业 → 与 `scheduler_job` diff → 对每作业 `scheduler_app.create_scheduler(job_id=f"{owner}:{name}", task=<真实 task 对象>, trigger=PeriodicSchedule(interval=IntervalTrigger(seconds=interval))).upsert(session)`；`task=<真实 task 对象>` 由 `from base.plugins.<owner>.jobs.<mod> import <fn>` 取得（taskiq-beat 要求已注册对象）；`interval_ref` 热重载已迁 reconciler（§3.1）；插件禁用 `pause`/`delete` |
-| `health.py` | 两进程 healthcheck 脚本 | 见 §6 |
+| `__init__.py` | 包说明 | 单 broker、单 worker 消费 `ap.jobs` + `ap.events`、beat 唯一调度源、执行期门控 |
+| `config.py` | 运行配置 | `TaskiqSettings.load()` 只读 `TASKIQ_*` 环境变量与 `_FILE` secret；默认 exchange `ap.taskiq`、队列 `ap.jobs`/`ap.events`/`ap.dlq`、`reconcile_interval=5s` |
+| `broker.py` | 单 `AioPikaBroker` + 中间件 | TOPIC exchange + 三队列（含 DLX）+ `DummyResultBackend` + `SmartRetryMiddleware(default_retry_label=True)`；`_resolve_url()` 回退链（`TASKIQ_BROKER_URL` → `[rabbitmq] taskiq_*` → 共用键 → vhost 缺省 `agentpanel`）；`ensure_started` / `mark_disconnected` / `shutdown_client` 客户端连接管理 |
+| `scheduler.py` | 构建 `SchedulerApp` | `scheduler_app = SchedulerApp(broker=broker, session_factory=..., config=SchedulerConfig(...))`；`metadata = SchedulerBase.metadata`；`scheduler_id` 不传（随机 uuid4，禁止固定） |
+| `discovery.py` | **统一声明发现器（2026-11-15 新增）** | 扫描 `base/plugins/<plugin>/task/*.py` + `platform_jobs.py`，产出 `TaskSpec` / `EventSubSpec`；`@broker.task` 的 `ap_*` 标签与 `@ap_subscribe` 是唯一声明真源 |
+| `reconcile.py` | beat `--startup` 无参钩子 | `upsert_schedules()`：基线 `_sync()` + 5s 周期重扫 + 心跳；`_sync()` 用 `scheduled_specs(discover())` + `is_plugin_active` / `ap_requires` AND 门控 + `ap_interval_ref` 热重载 → `scheduler_app.single(task=...).upsert(session, trigger=PeriodicSchedule(interval=IntervalTrigger(seconds=...)), job_id=task_name, ...)` → 差集 `pause`；平台作业零发现时跳过本轮 diff |
+| `jobs.py` | worker 生命周期 | `WORKER_STARTUP`：`init_data()` + Redis 预热 + `event_center.initialize()` + 事件注册表 `resync()` 循环 + `import tasks_registry` + worker 心跳；`WORKER_SHUTDOWN`：`Tortoise.close_connections()` |
+| `tasks_registry.py` | 发现器驱动注册 + 门控装配 | `import_all_job_tasks()` 调 `discover()` 统一导入全部 task 模块（单模块失败隔离，含平台作业）；末尾调 `apply_plugin_gate(broker)`；**不再解析 manifest** |
+| `job_gate.py` | **执行期插件门控**（§9.5 补齐） | `is_job_allowed(task_name)` / `wrap_job_with_plugin_gate(task)` / `apply_plugin_gate(broker)`；包装 `task.original_func`，执行前按 `is_plugin_active(owner)` 复核；`platform:*` / `taskiq:*` 恒放行，仅作用于 `queue_name=ap.jobs` |
+| `platform_jobs.py` | 2 个恒启平台作业 | `platform:quota_reconcile` / `platform:quota_hold_cleanup`，`@broker.task(ap_schedule=60)`，不在任何 manifest 中；由发现器按 `owner=platform` 归入平台组 |
+| `events.py` | 事件分发任务 | `@broker.task(task_name="taskiq:dispatch", queue_name="ap.events")`；`EventRecord` 终态幂等跳过、registry 取 handler、单 handler 30s 超时隔离、失败置 `failed` 并上抛重试、超预算 `dead_letter` |
+| `schema.py` | pydantic 消息契约（D7） | `JobMessage` / `EventMessage`；跨进程只传 dict，`model_dump(mode="json")` / `model_validate` |
+| `health.py` | 两进程 healthcheck | beat：PG 可达 + Redis 心跳键；worker：MQ 可达 + Redis 心跳键；退出码 0/1 |
 
-> `scheduler_job` 行的 `task=` 必须是已注册 `TaskiqTask` 对象（taskiq-beat `create_scheduler` 要求），reconciler 直接 import 对应插件模块的 task 函数。
-> `WORKER_STARTUP` 在同一 asyncio loop 内建连接池 → 这是 R2「消除异步桥接」的落点。
+> 终态事实源：`base/common/taskiq_app/` 共 **12 个文件**；上表按源码逐文件核对。
+> `scheduler_job` 行的 `task=` 必须是已注册 `TaskiqTask` 对象（`@broker.task` 装饰产物），reconciler 直接 import 对应模块取得；实际 API 是 `scheduler_app.single(task=...).upsert(...)`，**不是** M1 稿的 `create_scheduler`。
+> `WORKER_STARTUP` 在同一 asyncio loop 内建连接池 → R2「消除异步桥接」的落点；`apply_plugin_gate` 也在该钩子内（import `tasks_registry` 时）执行。
+> 旧 `base/common/jobs/`（`JobScheduler` / `platform.py`）与 `ConsumerWorker` 已删除，平台不再有任何进程内调度或消费。
 
-### 3.1 现有任务 `@broker.task` 重构方案（替代通用分发 `run_job`）
+### 3.1 现有任务 `@broker.task` 重构方案（M1 改造记录，终态见 §9.3 / §9.4）
 
 > **决策依据**：用户 2026-11-14 确认「逐任务 `@broker.task` + 静态聚合 import」「`interval_ref` 热重载迁到 reconciler」。本方案**不采用** M1 初版的单一通用 `run_job` 分发：现有每个作业改成**各自一个真实的 `@broker.task`**，beat 直接投递到该 task，去掉 `run_job` 中转。
 >
 > **已核实现状（2026-11-14 读源码）**：当前共 **6 个**已装载作业，handler 全部已是单轮 `async def run() -> None` / `async def quota_*(...) -> None`（W2-3 已剥离 while/sleep/取消），改造成本极低——仅需在函数上加 `@broker.task` 装饰器 + 让 worker 静态 import。
 
-**现状盘点：当前 6 个已装载作业（改造前）**
+**作业清单：当前 6 个 `@broker.task`（M1 改造记录；平台作业路径按终态修正）**
 
 | job_id（`{owner}:{name}`） | 来源 | `handler_ref` | `interval_seconds` | `interval_ref` | `requires_plugins` |
 |---|---|---|---|---|---|
@@ -105,10 +129,10 @@ sqlalchemy>=2.0,<3
 | `customer:update_membership_data` | `base/plugins/customer/manifest.json` | `base.plugins.customer.jobs.membership:run` | 600 | — | `["llm"]` |
 | `harness:gateway_reconcile` | `base/plugins/harness/manifest.json` | `base.plugins.harness.jobs.reconcile:run` | 600 | `base.plugins.harness.jobs.reconcile:resolve_interval` | — |
 | `sales:cancel_expired_orders` | `base/plugins/sales/manifest.json` | `base.plugins.sales.jobs.orders:run` | 300 | — | — |
-| `platform:quota_reconcile` | `base/common/jobs/platform.py::install` 代码注册 | `base.common.jobs.platform:quota_reconcile` | 60 | — | —（平台级） |
-| `platform:quota_hold_cleanup` | 同上 | `base.common.jobs.platform:quota_hold_cleanup` | 60 | — | —（平台级） |
+| `platform:quota_reconcile` | `base/common/taskiq_app/platform_jobs.py`（终态） | `base.common.taskiq_app.platform_jobs:quota_reconcile` | 60 | — | —（平台级，恒启） |
+| `platform:quota_hold_cleanup` | 同上 | `base.common.taskiq_app.platform_jobs:quota_hold_cleanup` | 60 | — | —（平台级，恒启） |
 
-> 注：平台作业不经过 `manifest.jobs`，由 `platform.py::install(scheduler)` 在 `JobScheduler.start_all()` 时 `register_platform_job` 代码注册；改造后同样包成 `@broker.task`，但「是否启用」不再由插件启停驱动，而是随 worker 永驻（与现状 `register_platform_job` 语义一致）。
+> 注（2026-11-15 修订）：平台作业不经过任何 manifest 声明，定义在 `base/common/taskiq_app/platform_jobs.py`（`ap_schedule=60`），由 `discovery.discover()` 归入 `owner=platform` 并在 `reconcile._sync()` 以 `task_name` 为 `job_id` 写入调度行；「是否启用」不由插件启停驱动，随 worker 永驻。M1 稿中的 `platform.py::install` / `JobScheduler.start_all()` / `register_platform_job` 已随 `base/common/jobs/` 整包删除。
 
 **改造步骤**
 
@@ -156,7 +180,7 @@ async def run() -> None:
 ```
 
 ```python
-# base/common/jobs/platform.py（两个平台作业，随 worker 永驻）
+# base/common/taskiq_app/platform_jobs.py（终态；两个平台作业，随 worker 永驻）
 from base.common.taskiq_app.broker import broker
 
 @broker.task(task_name="platform:quota_reconcile", queue_name="ap.jobs")  # ← 新增
@@ -188,8 +212,9 @@ async def quota_hold_cleanup() -> None:
   beat 投递 worker 也能执行（reconciler 只给已启用插件建调度行）。
 - 不依赖文件名推断 task_name（由装饰器显式声明），也不裸扫 jobs/ 目录
   （避免误 import __init__.py / helper 模块）。
-- 平台作业（base.common.jobs.platform）不在任何 manifest，单独显式 import。
-- 单模块导入失败隔离：与现有 JobScheduler fail-open 语义一致。
+- 平台作业（base.common.taskiq_app.platform_jobs）不在任何 manifest，单独显式 import。
+- 单模块导入失败隔离（worker 启动不因单个插件模块出错而中断）。
+- 注册完成后统一装配执行期插件门控（见 §3 布局表 `job_gate.py` 与 §9.5）。
 
 前置：init_plugin_manager() 须先调用（worker 镜像复用 L2，由 jobs.py 的
 WORKER_STARTUP 或 broker 加载期完成）；依赖 settings.base_path 已配置（同 app）。
@@ -277,22 +302,24 @@ async def upsert_schedules(session):
             mod, fn = job["handler_ref"].split(":")   # module:callable
             task_obj = getattr(import_module(mod), fn)  # 已注册的 TaskiqTask
             targets.append((job_id, task_obj, int(job["interval_seconds"]), owner, None))
-    # (b) 平台作业：从 tasks_registry 直接取，随 worker 永驻（requires=None）
-    for job_id in ("platform:quota_reconcile", "platform:quota_hold_cleanup"):
-        targets.append((job_id, getattr(base.common.jobs.platform, job_id.split(':')[1]), 60, "platform", None))
-    # diff + upsert（复用 taskiq-beat SchedulerApp.create_scheduler）
-    existing = {row.job_id for row in session.query(SchedulerJob).all()}
-    for job_id, task_obj, interval, owner, _ in targets:
-        scheduler_app.create_scheduler(
-            job_id=job_id, task=task_obj,
-            trigger=IntervalTrigger(seconds=interval),
-        ).upsert(session)
-    # 清理已不存在/已禁用：pause + delete 行（beat 不再投递）
-    for stale in existing - {t[0] for t in targets}:
-        scheduler_app.delete_scheduler(stale, session)
+    # (b) 平台作业：显式 import platform_jobs，随 worker 永驻
+    from base.common.taskiq_app import platform_jobs
+    for name in ("quota_reconcile", "quota_hold_cleanup"):
+        targets[f"platform:{name}"] = (getattr(platform_jobs, name), 60)
+    # diff + upsert（终态 API：scheduler_app.single(task=...).upsert(...)）
+    async with scheduler_app.session_factory() as session:
+        for job_id, (task_obj, interval) in targets.items():
+            await scheduler_app.single(task=task_obj, args=[], kwargs={}).upsert(
+                session, trigger=IntervalTrigger(seconds=interval),
+                job_id=job_id, name=job_id, is_enabled=True,
+            )
+        # 清理已不存在/依赖缺失/已禁用：pause（beat 不再投递，保留运行历史）
+        existing = {row.id for row in (await session.execute(select(SchedulerJob.id))).scalars()}
+        for stale in existing - set(targets):
+            await scheduler_app.pause(session, stale)
 ```
 
-> `task=<真实 task 对象>`：taskiq-beat `create_scheduler` 要求 `task` 为已注册的 `TaskiqTask` 对象（即 `jobs.cleanup.run` 经 `@broker.task` 装饰后的产物），不是字符串引用——这正是 ② 静态 import 的目的。
+> `task=<真实 task 对象>`：终态用 `scheduler_app.single(task=...).upsert(...)`，要求 `task` 为已注册的 `TaskiqTask` 对象（即 `jobs.cleanup.run` 经 `@broker.task` 装饰后的产物），不是字符串引用——这正是 ② 静态 import 的目的。M1 稿中的 `create_scheduler` / `delete_scheduler` API 并未落地；stale 只 `pause`、不删除，以保留 `scheduler_run` 历史。
 
 **④ `interval_ref` 每轮热重载 → 迁到 reconciler（beat 无原生支持；`harness:gateway_reconcile` 特例）**
 
@@ -304,8 +331,9 @@ async def upsert_schedules(session):
       ref_fn = resolve_callable(job["interval_ref"])   # -> harness.jobs.reconcile:resolve_interval
       effective = max(int(ref_fn()), MIN_JOB_INTERVAL)  # 复用现有 resolve_interval()，下限 30s
       # 写回 scheduler_job：更新 trigger interval + 重算 next_run_at
-      scheduler_app.create_scheduler(job_id, task=task_obj,
-          trigger=IntervalTrigger(seconds=effective)).upsert(session)
+      await scheduler_app.single(task=task_obj, args=[], kwargs={}).upsert(
+          session, trigger=IntervalTrigger(seconds=effective),
+          job_id=job_id, name=job_id, is_enabled=True)
   ```
 - **行为变更（记为回归差异）**：「handler 返回 int 覆盖下一间隔」在 beat 下**取消**（M1 回归 B 组移除该断言）；「每轮重读」改为「reconciler 周期扫描重读」（默认 reconcile_interval=5s 级，足够热生效）。`harness.jobs.reconcile:resolve_interval` 函数体保留复用，仅调用方从调度器循环变为 reconciler。
 
@@ -316,8 +344,8 @@ async def upsert_schedules(session):
 
 **⑥ 启用/禁用单一真源 & 验收**
 
-- **单一真源 = `scheduler_job` 行**（reconciler 在 app 进程写 PG，跨进程同步）：插件 enable → 该行 `upsert(enabled=True)`；disable → `pause`/`delete` → beat 不再投递。
-- `is_plugin_active(owner)` 保留为 worker 侧**兜底门控**：即使行未清，幽灵作业也立即 return（防 beat 遗漏时的双执行，呼应 R1 双通道关闭后的幂等约束）。
+- **单一真源 = `scheduler_job` 行**（终态：reconciler 在 **beat 进程**写 PG，由 `--startup` 钩子 + 5s 周期重扫驱动；app 进程已不参与调度）：插件 enable → 该行 `upsert(is_enabled=True)`；disable / 依赖缺失 → `pause`（不删除，保留运行历史）→ beat 不再投递。
+- **worker 侧执行期兜底门控已落地（§9.5）**：`job_gate.apply_plugin_gate` 包装 `task.original_func`，执行前调 `is_plugin_active(owner)`，覆盖「插件停用 → 下一轮 reconcile pause」窗口内已投递到 `ap.jobs` 的消息。M1 稿只写了这一设计意图，M2/M3 终态代码一度漏实现，2026-11-15 补齐。
 - **M1 验收（R2/R16/R17 之外，本方案专项）**：
   - 6 个 `@broker.task` 在 worker 启动时全部注册（断言 `broker.get_all_tasks()` 含 6 个 `owner:name`）；
   - reconciler 对 6 个 job 各生成 1 行 `scheduler_job`，`task_name` 与装饰器 `task_name` 一致；
@@ -403,20 +431,22 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_broker_task_id  ON scheduler_run (br
 CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (finished_at);
 ```
 
-`kind` ∈ {`periodic`, `one_off`}，`strategy` ∈ {`immediate`, `one_off`, `<trigger.strategy>`}——由 `scheduler_app.create_scheduler(...).upsert(...)` 在库内赋值，SQL 只需 `VARCHAR(16) NOT NULL`，reconciler 不需硬编码枚举。
+`kind` ∈ {`periodic`, `one_off`}，`strategy` ∈ {`immediate`, `one_off`, `<trigger.strategy>`}——由 `scheduler_app.single(task=...).upsert(...)` 在库内赋值，SQL 只需 `VARCHAR(16) NOT NULL`，reconciler 不需硬编码枚举。
 
 ---
 
-## 5. compose 两服务（复用 L2 镜像，仅 `command` / `environment` / `healthcheck` 不同）
+## 5. compose 两服务（M1 设计稿示意；**实际部署文件 = `deploy/taskiq/compose.taskiq.yml`**）
 
-沿用 `deploy/gateway/docker-compose.yml` 的 `app` 服务形态（`agentpanel-net` + `app_default` 网络、`host.docker.internal` extra_hosts、`db_password` / `redis_password` secrets、`RUN_DB_MIGRATIONS: "false"`、json-file 日志、`no-new-privileges`）。
+> **本节 YAML 是 M1 阶段设计稿，终态以 `deploy/taskiq/compose.taskiq.yml` 与 `deploy/app/docker-compose.yml` 为准**（见 §9.3 / §9.4 / §9.5）。下方示意的关键项已按终态修正：镜像 tag `latest`、单 `app_default` 网络、`REDIS_HOST=agentpanel-redis`、vhost `agentpanel`、**无 `TASKIQ_MODE`**（该开关已随旧调度代码删除）。
+>
+> 复用同一个 `agentpanel-app` 镜像，仅 `command` / `environment` / `healthcheck` 不同；`host.docker.internal` extra_hosts、`RUN_DB_MIGRATIONS: "false"`、json-file 日志、`no-new-privileges` 沿用。
 
 > **前置（D6，已落地见 §9.4）**：RabbitMQ 专用 vhost `agentpanel` + 账号 `agent_user` 由 `deploy/rabbitmq/definitions.json` 声明、`rabbitmq.conf` 显式 `load_definitions` 导入（镜像不会自动加载 definitions.json，且配置 load_definitions 后 `RABBITMQ_DEFAULT_*` 环境变量被入口忽略）；`TASKIQ_BROKER_URL_FILE` 指向该 vhost 的 URL。旧消费者已删除，vhost 隔离主要防旧 `#` 通配消费者误拉（主方案 R4）。
 
 ```yaml
   taskiq-beat:
-    image: agentpanel-app:${TAG:-local}
-    container_name: agentpanel-taskiq-beat
+    image: agentpanel-app:${TAG:-latest}
+    container_name: agentpanel-beat
     restart: unless-stopped
     command:
       - taskiq-beat-scheduler
@@ -432,15 +462,15 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (f
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      TASKIQ_MODE: "off"
+      # TASKIQ_MODE 开关已随旧调度代码删除（§9.3）；beat 无条件排程
       TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
       TASKIQ_DB_URL_FILE: /run/secrets/taskiq_db_url
-      TASKIQ_VHOST: agentpanel-taskiq
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
     secrets: [db_password, redis_password, taskiq_broker_url, taskiq_db_url]
-    networks: [agentpanel-net, app_default]
+    networks: [app_default]
     extra_hosts: ["host.docker.internal:host-gateway"]
     healthcheck:
       test: ["CMD", "python", "base/common/taskiq_app/health.py", "beat"]
@@ -452,8 +482,8 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (f
     security_opt: [no-new-privileges:true]
 
   taskiq-worker:
-    image: agentpanel-app:${TAG:-local}
-    container_name: agentpanel-taskiq-worker
+    image: agentpanel-app:${TAG:-latest}
+    container_name: agentpanel-worker
     restart: unless-stopped
     # 单 worker 消费 ap.jobs + ap.events 两队列（单 broker，task_queues 在 broker.py 声明）
     # 横向扩缩容：docker compose up --scale taskiq-worker=N 或 k8s replicas（见 §5.2）
@@ -478,14 +508,14 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (f
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      TASKIQ_MODE: "off"
+      # TASKIQ_MODE 开关已随旧调度代码删除（§9.3）；beat 无条件排程
       TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
-      TASKIQ_VHOST: agentpanel-taskiq
+      TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
     secrets: [db_password, redis_password, taskiq_broker_url]
-    networks: [agentpanel-net, app_default]
+    networks: [app_default]
     extra_hosts: ["host.docker.internal:host-gateway"]
     healthcheck:
       test: ["CMD", "python", "base/common/taskiq_app/health.py", "worker"]
@@ -497,7 +527,7 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (f
     security_opt: [no-new-privileges:true]
 ```
 
-并在 compose `secrets:` 块追加（文件由 `deploy/gateway/scripts/prepare-secrets.ps1` 生成，同 `db_password` / `redis_password`）：
+并在 compose `secrets:` 块追加（终态文件由 `deploy/taskiq/scripts/prepare-secrets.ps1` 生成，同 `db_password` / `redis_password`）：
 
 ```yaml
   taskiq_broker_url:
@@ -505,6 +535,8 @@ CREATE INDEX IF NOT EXISTS ix_scheduler_run_finished_at      ON scheduler_run (f
   taskiq_db_url:
     file: ./secrets/taskiq_db_url
 ```
+
+> **主 app 栈（§9.5 补齐）**：`deploy/app/docker-compose.yml` 的 `app` 服务也注入 `TASKIQ_BROKER_URL_FILE` + `TASKIQ_VHOST` 并声明同名 secret；该 secret **不另复制文件**，直接指向 `../taskiq/secrets/taskiq_broker_url`（相对 app compose 所在目录），与 `deploy/taskiq/compose.taskiq.yml` 共用同一份由 `prepare-secrets.ps1` 生成的连接串；另加 `host.docker.internal:host-gateway` 映射。三进程连接串同源，不再出现「app 走 `config.conf` 回退、beat/worker 走 secret」的漂移。
 
 > **beat 严格单实例**（无 `replicas` / `scale`），**worker 可多副本**（见 §5.2）。worker 与 beat 解耦，M1 不互相 `depends_on`（beat 写表、worker 消费 broker，无强序依赖；若需，beat `depends_on` 指向 PG/Redis/RabbitMQ 就绪而非 worker）。
 > **scheduler_id 禁止钉固定值**：beat 的 `SchedulerConfig.scheduler_id` 默认 `uuid4().hex`（每次启动随机）。崩溃窗口内孤儿 job 靠租约（`claim_ttl_seconds` 默认 60s）保护；若把 `scheduler_id` 设成固定值（如 pod 名），重启的 beat 会立即重新认领自身孤儿 job → **可能重复投递一次**。故部署约束：不设置 `TASKIQ_BEAT_SCHEDULER_ID`（用默认随机），详见 §5.1。
@@ -591,20 +623,20 @@ taskiq worker/beat **不提供 HTTP 端口、无 `inspect ping` 等价物**（�
 > 实施进度记录见末尾「§9.1 实施进度（2026-11-14）」。✅=已落地/已验证；🟡=已落地但需目标环境（RabbitMQ/PG）补集成验证；⬜=未做。
 
 - [✅] `requirements.txt` 新增 4 行，隔离 venv 导入全通过，`redis`/`aio-pika` 版本未升（沿用既有，不引 taskiq-redis）。
-- [✅] `base/common/taskiq_app/` 九文件就位（§3 布局表 9 项 + `__init__.py`），`taskiq-beat-scheduler` 与 `taskiq worker` 能加载模块（不报 import/loop 错）；本机实测 broker/config/schema/scheduler 冒烟通过、无弃用告警。
+- [✅] `base/common/taskiq_app/` **12 文件**就位（M1 时 9 文件；终态布局见 §3 表，含 `platform_jobs.py` 与 2026-11-15 新增的 `job_gate.py`），`taskiq-beat-scheduler` 与 `taskiq worker` 能加载模块（不报 import/loop 错）；本机实测 broker/config/schema/scheduler 冒烟通过、无弃用告警。
 - [🟡] §4 SQL 在测试 PG 执行成功，`SchedulerBase.metadata.create_all` 为 no-op——**静态对齐已验证**：metadata 的 21+10 列名/NOT NULL/8+5 索引名与迁移 SQL 逐字段一致；真实 PG 跑迁移 + create_all no-op 比对留目标环境。
-- [🟡] compose 两服务 `config --quiet` 通过（含新增 secrets）——本机 YAML 校验通过（5 服务 + 2 secret）；专用 vhost `agentpanel-taskiq` 须先在 RabbitMQ 建并授权（D6）。
+- [🟡] compose 两服务 `config --quiet` 通过（含新增 secrets）——本机 YAML 校验通过（5 服务 + 2 secret）；专用 vhost `agentpanel` 须先在 RabbitMQ 建并授权（D6，§9.4 已落地）。
 - [🟡] 两进程独立启动，healthcheck 探活 200/0；beat/worker 心跳键周期刷新（修复一次性写入过期误判）——留目标环境端到端验收。
 - [🟡] R2 / R16 / R17 三项验证：R16 静态部分 ✅（列/索引对齐）；R2（--workers 2 连接池隔离）、R17（ACK/DLQ 语义）待含 RabbitMQ 集成环境验证。
 - [🟡] `tests/regression_taskiq_split.py` 上述 6 类用例：schema 往返 / 元数据对齐 / broker 拓扑 7 项本机通过；reconciler 幂等 / 调度表存在性 / 6 任务注册 / R2 共 5 项需 DB 或 broker，已用 skip 门控。
-- [✅] 主方案 `regression_plugin_assembly` 24/24、`regression_pending` 42/42 在 `mode=off` 下零回归（app 未改，无反向导入）。
-- [✅] 文档状态：`mode=off` 骨架已验证，M2（调度独立）可启动；本拆解 §0 范围未被突破（全部为新增，旧 JobScheduler/ConsumerWorker 原样保留）。
+- [✅] 主方案 `regression_plugin_assembly` 24/24、`regression_pending` 42/42 在 `mode=off` 下零回归（app 未改，无反向导入）——此为 M1 当时状态；终态回归见 §9.3 与 §9.5。
+- [✅] 文档状态（M1 当时）：`mode=off` 骨架已验证，M2（调度独立）可启动；本拆解 §0 范围当时未被突破（全部为新增，旧 JobScheduler/ConsumerWorker 原样保留）。**该状态已被 M2/M3 取代**（旧调度/消费全量删除），终态见 §9.3 / §9.4。
 
 ### 9.1 实施进度（2026-11-14）
 
 **已落地（新增，全 additive，不改 `run.py`/`base/start.py`）：**
 1. `requirements.txt` 追加 `taskiq==0.13.0` / `taskiq-aio-pika==0.6.1` / `taskiq-beat==1.4.0` / `sqlalchemy>=2.0,<3`。
-2. `base/common/taskiq_app/` 九文件：`config.py`(TaskiqSettings)、`broker.py`(单 AioPikaBroker + TOPIC exchange + ap.jobs/ap.events/ap.dlq + SmartRetryMiddleware)、`schema.py`、`events.py`(dispatch M1 骨架)、`jobs.py`(WORKER_STARTUP 建池+注册+周期心跳)、`tasks_registry.py`(manifest 驱动发现+注册)、`scheduler.py`(SchedulerApp+引擎+metadata)、`reconcile.py`(ManifestReconciler，`upsert_schedules` 无参 beat `--startup` 钩子)、`health.py`(beat|worker 探活)。
+2. `base/common/taskiq_app/` 九文件：`config.py`(TaskiqSettings)、`broker.py`(单 AioPikaBroker + TOPIC exchange + ap.jobs/ap.events/ap.dlq + SmartRetryMiddleware)、`schema.py`、`events.py`(dispatch M1 骨架)、`jobs.py`(WORKER_STARTUP 建池+注册+周期心跳)、`tasks_registry.py`(manifest 驱动发现+注册)、`scheduler.py`(SchedulerApp+引擎+metadata)、`reconcile.py`(ManifestReconciler，`upsert_schedules` 无参 beat `--startup` 钩子)、`health.py`(beat|worker 探活)。（M1 当时 9 文件；终态 12 文件见 §3 表与 §9.5。）
 3. 6 个作业加 `@broker.task`（仅装饰器，不动函数体，旧 JobScheduler 仍可本地执行）。
 4. `migrations/core_create_table_scheduler_1794580000.sql`（两表 + 4 复合 + 11 单列索引）。
 5. `deploy/gateway/docker-compose.yml` 追加 `taskiq-beat`/`taskiq-worker` 两服务 + `taskiq_broker_url`/`taskiq_db_url` secrets；`prepare-secrets.ps1` 生成两 secret（密码 URI 编码）。
@@ -662,7 +694,7 @@ taskiq worker/beat **不提供 HTTP 端口、无 `inspect ping` 等价物**（�
 - **重放**：`event_replay_service` 改为**同一 event_uuid 重新 `dispatch.kiq`**（旧实现经 `event_bus.publish` 会生成新 uuid、旧记录悬空）。
 - **监控**：`event_monitor_service` 探针改 taskiq 客户端连接态 + worker/beat Redis 心跳键；队列深度移交 RabbitMQ 管理接口。
 - **dev 兼容**：`broker._resolve_url()` 未配 `TASKIQ_BROKER_URL` 时回退 `config.conf [rabbitmq]` 构造 URL（旧链路同源凭据；旧消费者已删除故共用 vhost 无污染）；生产仍走 `TASKIQ_BROKER_URL_FILE` 专用 vhost（D6）。
-- compose：`app` 服务补 `TASKIQ_BROKER_URL_FILE` secret + vhost env（app 进程发布需要 broker 连接）；`TASKIQ_MODE` 相关全部移除。
+- `TASKIQ_MODE` 相关全部移除。**`app` 服务补 `TASKIQ_BROKER_URL_FILE` secret + vhost env 一项当时只写在计划里、未落到 compose**，2026-11-15 由 §9.5 补齐（app 进程发布需要 broker 连接）。
 
 **回归（全部真实运行通过，dev venv 装齐 taskiq 依赖）：**
 - `regression_taskiq_split.py` **13 passed / 5 skipped**（新增：dispatch 路由 label、终态幂等集、SmartRetry 开启校验、发布 fail-closed 静态锚定、adapter 注册表、EventCenter 幂等 Redis+回退）。
@@ -692,9 +724,71 @@ taskiq worker/beat **不提供 HTTP 端口、无 `inspect ping` 等价物**（�
 
 **遗留**：F:/rabbitmq/data 下存有历史容器 ID 命名的两个孤儿 mnesia 目录（`rabbit@08ed86611432`、`rabbit@df5c14cc0252`，含旧 `/` vhost 的 event_bus 队列定义），确认无依赖后可清理；beat/worker 容器端到端仍待目标环境补验（先跑 `migrations/core_create_table_scheduler_*.sql`）。
 
+### §9.5 偏差整改：执行期门控 / app 连接串 / 设计稿对齐（2026-11-15）
+
+针对 2026-11-15 代码走查发现的三项「设计稿声称已做但未落地 / 文档与终态不符」偏差：
+
+**① worker 执行期插件门控（实质缺口，补实现）**
+
+- **事实**：§3.1 ⑥ 与 `reconcile.py` 注释都写明「`is_plugin_active` 作 worker 侧兜底门控」，但 M2/M3 终态代码里**执行侧没有任何门控**——broker 只挂 `SmartRetryMiddleware`，6 个作业 `run()` 均不查插件激活态。插件停用后仅靠 reconciler 5s 重扫 `pause` 调度行，**已投递到 `ap.jobs` 的消息仍会执行一次**。
+- **修复**：新增 `base/common/taskiq_app/job_gate.py`（`is_job_allowed` / `wrap_job_with_plugin_gate` / `apply_plugin_gate`），在 `tasks_registry.import_all_job_tasks()` 末尾统一包装 `task.original_func`（taskiq 0.13.0 `receiver` 的实际执行目标），执行前按 `task_name` 的 owner 段调 `is_plugin_active(owner)`。`platform:*` / `taskiq:*` 恒放行、仅作用于 `queue_name=ap.jobs`；包装幂等、单任务失败隔离、门控自身异常 fail-open。beat 侧 `single(task=...)` 只取 `task_name`/`labels`，不受影响；新增插件作业自动受保护，无需改作业源码。
+- **同步**：`tasks_registry.py` docstring 与装配点、`reconcile.py` / `__init__.py` 注释改为准确描述；`tests/regression_taskiq_split.py` 新增 5 个用例，`test_all_tasks_registered` 增加「所有 ap.jobs 任务已装配门控」断言。
+
+**② app 服务 broker 连接串配置链**
+
+- **事实**：`deploy/app/docker-compose.yml` 的 `app` 服务未注入 `TASKIQ_BROKER_URL_FILE` / `TASKIQ_VHOST`（§9.3 曾声称已补），实际靠挂载的 `deploy/app/config.conf` 走 `broker._resolve_url()` 回退链连通，与 beat/worker 走专用 vhost secret 的寻址不统一。
+- **修复**：app 服务补 `TASKIQ_BROKER_URL_FILE` + `TASKIQ_VHOST` + `secrets: [taskiq_broker_url]` + `host.docker.internal:host-gateway`；compose 顶层 `secrets.taskiq_broker_url.file` 指向 `../taskiq/secrets/taskiq_broker_url`（**单一事实源**，不在 `deploy/app/` 下复制第二份），`prepare-secrets.ps1` 只写 `deploy/taskiq/secrets/`，`.gitignore` 无需新增条目。三进程连接串同源，`config.conf` 回退链保留为 dev/故障兜底。
+- **同日修正**：初版误写成 `./secrets/taskiq_broker_url`，并让脚本额外同步生成 `deploy/app/secrets/` 副本——该目录实际不存在且产生两份文件，已改为 app 栈直接引用 taskiq 栈的 secret 文件。
+- **部署前置**：启动 app 栈前须先跑 `prepare-secrets.ps1`，否则 `deploy/taskiq/secrets/taskiq_broker_url` 缺失会导致容器启动失败（与 gateway/taskiq 栈既有约束一致）。
+
+**③ 设计稿与终态对齐**
+
+- 文档顶部新增状态说明：§0–§8 为 M1 设计稿，终态以 §9.3 / §9.4 与实际源码为准。
+- §3 布局表按终态重写为 **12 文件**（含 `platform_jobs.py` / `job_gate.py`），删除未落地的 `PrometheusMiddleware`、`create_scheduler`、`base/common/jobs/platform.py`、`run_job` 骨架等表述；§2 `metrics_port` 标注为预留。
+- §3.1 平台作业路径、`tasks_registry` 注释、③ 示意代码改为 `single(task=...).upsert(...)` 与 `pause`（非 delete）、⑥ 明确门控已落地；§5 标注为设计稿示意，并把镜像 tag / 网络 / `REDIS_HOST` / vhost / `TASKIQ_MODE` 等字段对齐终态；§9 验收清单「九文件」→ 12 文件、vhost `agentpanel-taskiq` → `agentpanel`；§9.3 中「app 服务补 secret」的不实陈述已标注为当时漏做。
+
+**验证（2026-11-15，项目 `.venv`）**
+
+- `tests/regression_taskiq_split.py`：**18 passed / 5 skipped**（整改前 13 passed / 5 skipped；新增 5 个门控用例全部通过）。
+- `tests/regression_pending.py`：**41/41**；`tests/regression_plugin_assembly.py`：**24/24**，零回归。
+- 真实 broker 冒烟：`import tasks_registry` 后 6 个 `ap.jobs` 任务全部 `gated=True`；把 `is_plugin_active` 置 False 后执行 `audit:audit_cleanup` 直接跳过（无 DB 访问），置回 True 立即放行。
+- 改动 Python 文件 `py_compile` 通过；两份 compose YAML 解析通过；`prepare-secrets.ps1` PowerShell 语法解析通过。
+- **secret 路径复核（同日）**：`deploy/taskiq/secrets/taskiq_broker_url` 实际存在、`deploy/app/secrets/` 不存在；app compose 的 `../taskiq/secrets/taskiq_broker_url` 按 project directory（`deploy/app/`）解析后命中该文件。
+- **仍待目标环境**：app / beat / worker 三容器真实端到端、`docker compose config --quiet`、R2 / R17（同 §9.3 遗留）。
+
 
 ---
 
 ## 10. 回滚
 
 M2+M3 终态后**没有运行时回滚开关**（旧 JobScheduler / ConsumerWorker 已物理删除，用户指令「不要保留」）。回滚 = git revert 本轮提交（旧调度/消费代码在版本历史中），并停掉 `taskiq-beat` / `taskiq-worker` 两容器；`migrations/core_create_table_scheduler_*.sql` 建的两表对旧代码无影响可保留。事件链路在回滚后恢复「RabbitMQ 直发 + 内存双通道 + ConsumerWorker」旧行为（该旧代码含已知的双执行与幂等缺口，见方案 B §1）。
+
+## 10. 后续机制改造：声明真源迁移（2026-11-15）
+
+M1~M3 解决的是「调度与消费跑在哪个进程」，本轮解决的是「声明写在哪里」。三处装配逻辑
+各自解析 `manifest.jobs` / `manifest.events`，声明与实装易漂移，因此统一为**代码即声明**：
+
+| 对象 | 旧（本文 §3/§9 所述） | 现行（2026-11-15） |
+|---|---|---|
+| 周期作业声明 | `manifest.jobs[name/handler_ref/interval_seconds/requires_plugins/interval_ref]` | 插件 `task/*.py` 的 `@broker.task(task_name, queue_name="ap.jobs", ap_schedule, ap_interval_ref, ap_requires)` |
+| 事件订阅声明 | `manifest.events[register_ref/unregister_ref/subscribe]` | 插件 `task/subscriptions.py` 的 `@ap_subscribe(...)` 装饰注册函数 |
+| 平台作业 | `tasks_registry` 显式 import + reconciler 硬编码名单 | `platform_jobs.py` 带 `ap_schedule=60`，由发现器按 `owner=platform` 归入 |
+| 发现逻辑 | beat 与 worker 各读一遍 manifest | `discovery.py` 单一发现器，beat / worker / 事件中心共用 |
+
+**装配链路**：`discover()` → `scheduled_specs()` → reconciler 写 `scheduler_job`
+（`job_id = task_name`，零迁移）；`discover()` → worker 注册 task + `apply_plugin_gate`；
+`discover_event_subscriptions()` → 事件中心 `initialize/resync/sync_plugin` 装卸订阅。
+manifest 残留 `jobs` / `events` 段一律拒绝装配。
+
+**同步修复**：`reconcile.py` 的 trigger 改为 `PeriodicSchedule(interval=IntervalTrigger(...))`
+（1.4.0 裸传 `IntervalTrigger` 必抛 `AttributeError`）；`EventCenterService.replay()` 改为
+复用同一 `event_uuid`；CLI 脚手架不再生成废弃的 `events` 段。
+
+**mes 历史死代码闭环**：`mes/services/event_handlers.py` 原有 4 条订阅全仓库无调用点
+（符合性检查 §2.2 / 整改方案 W2-2 已登记）。本次新增 `mes/task/subscriptions.py` 声明，
+补幂等 `register_event_handlers()` 与对称 `unregister_event_handlers()`，删除
+`try/except ImportError` 静默兜底。注意 `mes` 默认未安装/未启用，声明只在插件启用后生效；
+其中 2 个库存事件 handler 仍是占位实现（no-op），未补业务逻辑。
+
+**回归**：27 passed / 5 skipped、47/47、25/25；发现结果 6 个周期作业 + 24 条订阅声明。
+现行规范见 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md`。

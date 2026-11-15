@@ -1,7 +1,7 @@
 """委外管理插件。
 
-事件订阅由 manifest.events 声明，事件中心在插件启用/禁用时装卸，
-不再只在进程启动时由 on_startup 注册。
+事件订阅由 ``task/subscriptions.py`` 的 ``@ap_subscribe`` 声明，事件中心在插件
+启用/禁用时装卸，不再只在进程启动时由 on_startup 注册。
 """
 from fastapi import FastAPI
 
@@ -50,7 +50,7 @@ async def on_disable() -> bool:
 
 
 async def on_startup() -> None:
-    log.info("委外管理插件启动（订阅已由事件中心按 manifest 声明注册）")
+    log.info("委外管理插件启动（订阅已由事件中心按 task/ 声明注册）")
     try:
         from base.plugins.subcontracting.services.init_data import init_subcontracting_data
         await init_subcontracting_data()

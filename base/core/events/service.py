@@ -6,7 +6,6 @@ from typing import Any
 
 from tortoise.functions import Count
 
-from base.common.events.event_bus import event_bus
 from base.common.events.models.event_record import EventRecord
 from base.core.events import contract
 from base.core.events.models import EventSubscription
@@ -129,10 +128,32 @@ class EventCenterService:
             payload = json.loads(payload)
         payload = dict(payload or {})
         payload.pop("idempotency_key", None)
-        await event_bus.publish(record.event_name, **payload)
+
+        # M3：重放必须用**同一个 event_uuid**重新 kiq（与 EventReplayService
+        # 一致）。旧实现走 event_bus.publish 会生成新 uuid + 新 EventRecord，
+        # 旧记录永远悬空，消费端按 event_uuid 的终态幂等也随之失效。
+        from datetime import datetime, timezone
+
+        from base.common.taskiq_app.broker import ensure_started
+        from base.common.taskiq_app.events import dispatch
+
+        await ensure_started()
         await EventRecord.filter(id=record.id).update(
             status="published",
+            retry_count=0,
             replay_count=(record.replay_count or 0) + 1,
+            error_message=None,
+            published_at=datetime.now(timezone.utc),
+        )
+        await dispatch.kiq(
+            {
+                "event_uuid": event_uuid,
+                "event_name": record.event_name,
+                "payload": payload,
+                "published_at": (
+                    record.published_at.isoformat() if record.published_at else ""
+                ),
+            }
         )
         return {"event_uuid": event_uuid, "replayed": True, "reason": reason}
 

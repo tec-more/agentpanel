@@ -1,74 +1,67 @@
-"""worker 启动聚合 import：触发全部 @broker.task 注册（跨进程安全）。
+"""worker 启动聚合 import：触发全部 ``@broker.task`` 注册（跨进程安全）。
 
-设计（manifest 驱动发现，取舍见 M1 拆解 §3.1 ②）：
-- 单一真源 = 各插件 manifest.json 的 jobs[*].handler_ref（"module:callable"）。
-- 扫描【所有已安装插件】（不止当前已启用），提取 module 段 import，
-  确保任意插件的 @broker.task 都已注册——即便当前被禁用，未来启用后
-  beat 投递 worker 也能执行（reconciler 只给已启用插件建调度行）。
-- 不依赖文件名推断 task_name（由装饰器显式声明），也不裸扫 jobs/ 目录
-  （避免误 import __init__.py / helper 模块）。
-- 平台作业（base.common.taskiq_app.platform_jobs）不在任何 manifest，单独显式 import。
-- 单模块导入失败隔离。
+改造（2026-11-15）：发现逻辑统一收敛到 ``discovery.discover()``。
+此前本模块自己解析 ``manifest.jobs[*].handler_ref``，与 beat 的 reconciler
+各读一遍 manifest；现在两者共用同一份 ``TaskSpec``：
+
+- 扫描 ``base/plugins/<plugin>/task/*.py`` + 平台 ``platform_jobs.py``，
+  import 即注册；**扫描全部已安装插件（不止当前启用）**，保证插件启用瞬间
+  broker 里已有对应 task（reconciler 只给已启用插件建调度行）。
+- 不依赖文件名推断 task_name，也不裸扫目录里的 helper 模块
+  （``__init__.py`` / ``_*.py`` 跳过）。
+- 单模块导入失败隔离，不影响其它插件。
+- 注册完成后统一装配**执行期插件门控**（``job_gate.apply_plugin_gate``）：
+  插件停用后 reconciler 周期 pause 存在 ≤reconcile_interval 窗口，已投递到
+  ``ap.jobs`` 的消息在 worker 执行前按 ``is_plugin_active(owner)`` 复核。
 """
 from __future__ import annotations
 
-import importlib
-from typing import List
-
 from loguru import logger
 
-from base.common.plugin_manager import get_plugin_manager, init_plugin_manager
-from base.common.taskiq_app.broker import broker  # 确保 broker 先就绪
+from .broker import broker  # 确保 broker 先就绪
+from .discovery import TaskSpec, discover, scheduled_specs
 
 
-def _discover_job_modules() -> List[str]:
-    """返回所有已安装插件声明的作业模块路径（去重、保序）。"""
-    init_plugin_manager()  # 幂等：独立 worker 进程需先建插件管理器
-    mgr = get_plugin_manager()
-    seen: dict[str, None] = {}
-    for name in mgr.discover_plugins():
-        manifest = mgr.get_manifest(name) or {}
-        for job in (manifest.get("jobs") or []):
-            ref = job.get("handler_ref")
-            if not isinstance(ref, str) or ":" not in ref:
-                logger.warning(
-                    f"[tasks_registry] 插件 {name} 作业 {job.get('name')} 的 "
-                    f"handler_ref 非法（应为 module:callable）: {ref!r}，已跳过"
-                )
-                continue
-            seen.setdefault(ref.split(":", 1)[0], None)
-    return list(seen)
+def import_all_job_tasks() -> list[TaskSpec]:
+    """导入全部作业模块触发 ``@broker.task`` 注册；worker 启动期调用（import 即执行）。
 
-
-def _import_one(module_path: str) -> None:
+    返回发现到的全部声明任务（含不参与调度的纯调用型 task），便于
+    WORKER_STARTUP 输出可核对的注册清单。
+    """
+    # 独立 worker 进程需先建插件管理器：事件中心 initialize/resync 会用到
+    # get_plugin_manager()，此处保持与原实现一致的幂等初始化。
     try:
-        importlib.import_module(module_path)
-    except Exception as exc:  # 单模块失败隔离
-        logger.error(
-            f"[tasks_registry] 作业模块 {module_path} 导入失败（已隔离，"
-            f"对应任务不会被 worker 注册）: {exc}"
-        )
+        from base.common.plugin_manager import init_plugin_manager
 
+        init_plugin_manager()
+    except Exception as exc:
+        logger.warning(f"[tasks_registry] 插件管理器初始化失败（不阻断注册）: {exc}")
 
-def import_all_job_tasks() -> None:
-    """导入全部作业模块触发 @broker.task 注册；在 WORKER_STARTUP 调用一次。"""
-    # 平台作业：随 worker 永驻，不由 manifest 驱动
-    _import_one("base.common.taskiq_app.platform_jobs")
-    # 插件作业：manifest 驱动发现（优于手写清单与裸 glob）
-    modules = _discover_job_modules()
-    if not modules:
+    specs = discover()
+    scheduled = scheduled_specs(specs)
+    if not scheduled:
         logger.warning(
-            "[tasks_registry] 未发现任何插件作业模块——请确认 settings.base_path "
-            "已配置且插件 manifest.jobs 已声明（否则 worker 将无任务可消费）"
+            "[tasks_registry] 未发现任何周期作业——请确认插件 task/ 目录存在且 "
+            "@broker.task 已带 ap_schedule 声明（否则 worker 将无作业可消费）"
         )
-    for module_path in modules:
-        _import_one(module_path)
-    count = len(broker.get_all_tasks()) if hasattr(broker, "get_all_tasks") else "?"
-    logger.info(f"[tasks_registry] 作业模块导入完成，broker 已注册 {count} 个任务")
+
+    registered = len(broker.get_all_tasks()) if hasattr(broker, "get_all_tasks") else "?"
+    logger.info(
+        f"[tasks_registry] 声明发现完成：{len(specs)} 个声明任务 / "
+        f"{len(scheduled)} 个周期作业，broker 已注册 {registered} 个任务"
+    )
+
+    # 执行期兜底门控：reconciler 每 reconcile_interval 才重扫一次调度行，
+    # 插件停用后这段窗口内已投递的 ap.jobs 消息仍会到达 worker；包装
+    # task.original_func 让每次执行前复核 is_plugin_active(owner)。
+    from base.common.taskiq_app.job_gate import apply_plugin_gate
+
+    apply_plugin_gate(broker)
+    return specs
 
 
 # 模块被 import 即触发注册（worker 命令 import base.common.taskiq_app.jobs ->
-# jobs 内 import tasks_registry -> 此处执行）
+# jobs 顶层 import tasks_registry -> 此处执行），保证早于 receiver 构建任务表。
 import_all_job_tasks()
 
 __all__ = ["broker", "import_all_job_tasks"]

@@ -98,7 +98,7 @@ _registered = False
 
 
 def register_finance_event_handlers():
-    """注册财务集成订阅（幂等，由 manifest.events.register_ref 驱动）。"""
+    """注册财务集成订阅（幂等，由 task/ 目录 @ap_subscribe 声明驱动）。"""
     global _registered
     if _registered:
         return

@@ -2,8 +2,8 @@
 CRM Plugin - CRM模块
 提供线索管理、商机管理、活动管理、联系人管理、跟进任务管理、统计分析等功能
 
-事件订阅由 manifest.events 声明，事件中心在插件启用/禁用时调用下列函数，
-不再依赖只在进程启动时触发的 on_startup 钩子。
+事件订阅由 ``task/subscriptions.py`` 的 ``@ap_subscribe`` 声明，事件中心在插件
+启用/禁用时调用下列注册函数，不再依赖只在进程启动时触发的 on_startup 钩子。
 """
 from loguru import logger
 
@@ -50,7 +50,7 @@ async def on_disable():
 
 
 async def on_startup():
-    logger.info("CRM插件启动（订阅已由事件中心按 manifest 声明注册）")
+    logger.info("CRM插件启动（订阅已由事件中心按 task/ 声明注册）")
 
 
 async def on_shutdown():

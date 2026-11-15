@@ -5,11 +5,11 @@
    dead_letter）直接跳过——RabbitMQ at-least-once 重投、SmartRetry 重试、
    worker 多副本竞争都不会重复执行 handler。
 2. **handler 来源 = 进程内 registry**（`EventBusAdapter.get_handlers`）。
-   实施期发现：manifest `events.subscribe[].handler_ref` 指向的是**注册函数**
-   （把真 handler 绑进总线），不是可直接执行的事件处理体，因此方案 B
-   「DB 直接 resolve handler_ref 执行」对本代码库不成立；worker 须跑
-   `event_center.initialize()`（register_ref + bind_manual）构建 registry，
-   运行期插件启停由 worker 周期 `event_center.resync()` 收敛（见 jobs.py）。
+   `task/` 目录 `@ap_subscribe` 装饰的是**注册函数**（把真 handler 绑进总线），
+   不是可直接执行的事件处理体，因此「DB 直接 resolve handler_ref 执行」对本
+   代码库不成立；worker 须跑 `event_center.initialize()`（按发现结果执行注册
+   + bind_manual）构建 registry，运行期插件启停由 worker 周期
+   `event_center.resync()` 收敛（见 jobs.py）。
 3. **handler 执行**：逐个执行、单 handler 超时（`event_handler_timeout`）、
    异常隔离（一个失败不阻断其它）。
 4. **重试语义**：失败未超上限 → EventRecord 置 failed 并**上抛异常**，

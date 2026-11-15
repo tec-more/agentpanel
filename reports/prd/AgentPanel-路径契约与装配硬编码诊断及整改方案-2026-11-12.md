@@ -1,5 +1,20 @@
 # AgentPanel 路径契约与装配硬编码：诊断与整改方案
 
+> ## ⚠️ 机制变更修订（2026-11-15）
+>
+> **本文描述的 `manifest.json` 的 `jobs` / `events` 声明机制已废弃。** 现行装配真源为
+> 插件 `base/plugins/<plugin>/task/` 目录中的 `@broker.task(ap_schedule=...)` 与
+> `@ap_subscribe(...)` 声明，由 `base/common/taskiq_app/discovery.py` 统一发现；
+> `manifest.json` 中残留 `jobs` / `events` 段会被 `plugin_contract.validate_manifest`
+> **直接拒绝装配**。系统级作业仍在 `base/common/taskiq_app/platform_jobs.py`。
+>
+> 本文正文按历史设计 / 实施记录保留（manifest 相关条款只反映 2026-11-1x 时点），
+> **现行规范以 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md` 为准**。
+>
+> W2-2 的 mes 死代码待办已于本轮闭环；§0.2 / W0-1 / W2-2 / W2-3 表格条目已按现行机制修订。
+
+
+
 | 项 | 内容 |
 |---|---|
 | 文档类型 | 诊断 + 整改方案 + **全部遗留 OPEN 项已闭环 + 动态回归全通过（24/24 + 42/42，2026-11-12）** |
@@ -39,12 +54,14 @@
 | 注册表 | `base/core/events/registry.py` | `initialize()` / `sync_plugin()` / `bind_manual()` / `set_enabled()` / `publish()`；`handler_ref` 动态解析，core 不静态导入插件实现 |
 | 管理服务 | `base/core/events/service.py` | 订阅 CRUD、发布记录查询、重放、统计 |
 | REST | `base/core/events/api/v1/event_center.py` | `/v1/event-center/*`：rules / subscriptions / publish / records / replay / stats / sync，全部管理员鉴权，由 `register_routers` 自动发现 |
-| 启动接入 | `base/start.py` | `initialize_event_center()` 在 `init_data()` 后按 manifest 声明初始化，替代硬编码的 5 条审计订阅 |
-| 插件声明 | `audit / mail / finance / crm / subcontracting` 的 `manifest.json` | `events.register_ref` / `unregister_ref` / `subscribe` 共 20 条声明；配套 `audit_subscriptions.py`、`finance_event_handler` 幂等注册/注销、`crm`/`subcontracting` 的 `__init__.py` 装卸函数 |
+| 启动接入 | `base/start.py` | `initialize_event_center()` 在 `init_data()` 后按 **`task/` 目录 `@ap_subscribe` 发现结果**初始化，替代硬编码的 5 条审计订阅（2026-11-15 修订） |
+| 插件声明 | 6 个插件的 `task/subscriptions.py`（audit / mail / finance / crm / subcontracting / **mes**） | `@ap_subscribe` 共 **24 条**声明（含 mes 历史死代码 4 条），由 `discovery.discover_event_subscriptions()` 发现；注册/注销入口幂等对称（2026-11-15 修订，manifest.events 已废弃） |
 | 后台页面 | `web/src/api/eventCenter.js`、`web/src/views/events/Index.vue` | 订阅管理 / 手动发布 / 发布记录与重放 / 规则说明 + 统计 |
 | 菜单权限 | `migrations/core_seed_data_event_center_menus_1794478446.sql` | 幂等写入「事件中心」目录与「订阅与发布」菜单、`events:admin:view` / `events:admin:manage` 权限 |
 
 **关键行为变化**：插件订阅不再依赖只在进程启动时执行的 `on_startup`；`enable_plugin` 即调用事件中心注册、`disable_plugin` 即注销，运行时启停即时生效，且停用不再残留 handler。
+
+> 2026-11-15 补注：装卸入口改由 `task/` 目录 `@ap_subscribe` 发现结果驱动（不再是 `manifest.events`），worker 侧由 5s `event_center.resync()` 按发现结果收敛；见现行规范 §5。
 
 ### 0.3 校验结果与未完成项
 
@@ -156,8 +173,8 @@
 
 ### 3.3 事件订阅硬编码（详见符合性检查报告 §2）
 
-- 23 份 manifest **0 份**声明 `events/subscribes/subscribers/listeners/consumers`；7 份 `hooks` 非空（+1 份空）但全库 `*.py` 零消费，实际钩子靠 `plugin_manager.py:77-109` 的 `hasattr` 约定方法反射。
-- **25 处 `.subscribe(`**（24 条订阅关系 + 1 处总线内部转发）：`start.py:59-61,67-68`（5 条，审计，无条件注册、ORM monkey-patch 无撤销）、`finance/services/finance_event_handler.py:88-95`（8 条）、`mail/services/event_handler.py:170-172`（3 条）、`subcontracting/services/event_handlers.py:58-62`（3 条）、`mes/services/event_handlers.py:87-94`（4 条**无人调用的死代码**）、`crm/__init__.py:24`（1 条）。
+- （2026-11-12 时点）23 份 manifest **0 份**声明 `events/subscribes/subscribers/listeners/consumers`；现行机制下 manifest 本就不应含这些段，声明在插件 `task/` 目录；7 份 `hooks` 非空（+1 份空）但全库 `*.py` 零消费，实际钩子靠 `plugin_manager.py:77-109` 的 `hasattr` 约定方法反射。
+- **25 处 `.subscribe(`**（24 条订阅关系 + 1 处总线内部转发）：`start.py:59-61,67-68`（5 条，审计，无条件注册、ORM monkey-patch 无撤销）、`finance/services/finance_event_handler.py:88-95`（8 条）、`mail/services/event_handler.py:170-172`（3 条）、`subcontracting/services/event_handlers.py:58-62`（3 条）、`mes/services/event_handlers.py:87-94`（4 条；2026-11-15 已按 `@ap_subscribe` 改造）、`crm/__init__.py:24`（1 条）。
 - 装卸不对称：**只有 mail** 做到 `on_disable` 注销、`on_shutdown` 注销、注册幂等（`mail/__init__.py:22-40`、`event_handler.py:160-187`），可作模板；finance/crm/subcontracting 的 `on_disable()` 只打日志，停用后 handler 常驻 `_handler_registry` 继续被空调用。
 - 契约缺口：`event_bus.py:21` 载荷仅 `**kwargs` 无 schema；`event_bus_adapter.py:71` 幂等键每次 `uuid4()`、业务侧无法指定，`consumer_worker.py:58` 不检查已消费，`event_replay_service.py:38-47` 重放生成新 uuid → AC-PLR-14-1 不成立；重试/确认仅 RabbitMQ 通道有，`start.py:113-114` 允许降级为纯内存总线（三者全无）。唯一达标的是「订阅方异常不冒泡到发布方」（`event_bus.py:29-35`）。
 - 6 个定时作业中 4 个直接 import 插件实现：`sales`（`:398`）、`customer + llm`（`:433-434,557`）、`harness`（`:326,329`）、`audit`（`:356-360`）；门控 `get_plugin()`（`plugin_manager.py:140-141`）**只查是否加载过、不查 enabled**，且 `disable_plugin()` 不移除实例。「不抛异常」靠每轮 `except Exception` 吞掉，插件卸载后按 5/10 分钟周期反复空转报错。
@@ -190,7 +207,7 @@
 
 | 动作 | 目标文件 | 验收 |
 |---|---|---|
-| W0-1 定义 manifest schema v2 | 契约说明（本文 §4 总原则与 W0 表即规范草案，不另建运行时文件） | 明确必填 `name/version/route_prefix/routes/menus/permissions`，可选 `websockets/internal_routes/events.publish/events.subscribe/hooks/jobs/component`；规定 `route_prefix` 必须以 `/v1/` 开头，**禁止路由代码内再写 `/api`** |
+| W0-1 定义 manifest schema v2 | 契约说明（本文 §4 总原则与 W0 表即规范草案，不另建运行时文件） | 明确必填 `name/version/route_prefix/routes/menus/permissions`，可选 `websockets/internal_routes/events.publish/hooks/component`；规定 `route_prefix` 必须以 `/v1/` 开头，**禁止路由代码内再写 `/api`**。**2026-11-15 修订：`events.subscribe` / `jobs` 已废弃，改由插件 `task/` 目录声明，残留段拒绝装配** |
 | W0-2 修正官方示例 | `base/common/plugin_manager.py:14-40,296-300` | 示例与拼接公式改为 `/v1/hello_world`，补充「`/api` 由包装器统一剥离」说明 |
 | W0-3 修正 CLI 模板 | `base/cli/command.py:60-103` | 生成 manifest 带 `route_prefix=/v1/{name}`、`routes=["api/v1"]`；示例文件名 `{name}_router.py` 且导出 `{name}_router`；`APIRouter()` 不自带业务前缀 |
 | W0-4 统一菜单声明 | 各 `manifest.json`（重点 `subcontracting`） | `menus[].path` 统一裸路径写法；`component` 统一为 `@/views` 下真实存在的相对路径；补齐 14 条无 `component` 的菜单或显式标为目录节点 |
@@ -215,8 +232,8 @@
 | 动作 | 目标文件 | 对应 AC |
 |---|---|---|
 | W2-1 启动入口去插件实现 | `base/start.py:15,26-31,41-77,640-690` | **已完成（2026-11-12 晚，AC-PLR-13-1 达标）**：① events/quota 公共层路由集中到 `register_routers::_register_common_layer_routers`（删除 init_app 手动注册）；② 全部 `try/except ImportError` 兜底删除（events/quota/health/prometheus/jaeger/网关块，base/common 模块直接导入）；③ 嵌入式网关挂载改经 `get_plugin_manager().get_manifest("harness")` 读 config（不 import 插件实现，enabled 缺省 True / deployment 缺省 standalone 与 DEFAULTS 语义一致）；④ `configure_shared_runtime()` 迁入 harness `on_startup` 钩子。`base/start.py` 顶层与 `init_app`/lifespan 装配层 `base.plugins.<插件>` 导入数=0；剩余 8 处惰性导入已由 W2-3 清除（2026-11-12 晚，见下条）。验证：py_compile 通过、events=10/quota=17/health=3 路由确认注册、`regression_pending.py` 20/20（B1 PASS）、`regression_plugin_assembly.py` 24/24（路由总数 481 与改前一致，零回归）。WS 路由（随 manifest.routes 装配）与 harness 内部路由（internal_routes）此前已声明驱动。 |
-| W2-2 订阅注册表 | 新增 `base/common/events/registry.py` + `plugin_manager.py` 钩子驱动 | manifest `events.subscribe` → enable 注册 / disable 注销，复用 mail 的幂等模式；`start.py:41-77` 审计订阅改为 audit 插件自身声明；清理 `mes/services/event_handlers.py:87-94` 死代码 |
-| W2-3 定时任务注册表 | `base/start.py`（旧 271-589 已删）、`base/common/jobs/`、4 个插件 `jobs/` | **已完成（2026-11-12 晚）**：manifest `jobs` 声明 + 平台统一调度器（6 作业：平台 quota×2 + audit/customer/harness/sales×4）；`enable/disable` 钩子运行期装卸，禁用即 cancel（AC-PLR-15-1 闭环）；`start.py` 插件导入=0（含函数体，AC-PLR-13-1 完全达标）；验证 24/24 + 28/28 全绿。详见 `AgentPanel-W2-3-定时任务注册表设计方案-2026-11-12.md` §9 |
+| W2-2 订阅注册表 | 新增 `base/common/events/registry.py` + `plugin_manager.py` 钩子驱动 | **2026-11-15 修订**：插件 `task/` 目录 `@ap_subscribe` 声明 → 事件中心按 enable/disable 装卸（发现器驱动），复用 mail 的幂等模式；`start.py:41-77` 审计订阅改为 audit 插件自身声明；mes 4 条订阅已按 `task/subscriptions.py` 的 `@ap_subscribe` 改造（2026-11-15 闭环） |
+| W2-3 定时任务注册表 | `base/start.py`（旧 271-589 已删）、`base/common/jobs/`、4 个插件 `jobs/` | **已完成（2026-11-12 晚，当时实现）**：manifest `jobs` 声明 + 平台统一调度器（6 作业：平台 quota×2 + audit/customer/harness/sales×4）；`enable/disable` 钩子运行期装卸，禁用即 cancel（AC-PLR-15-1 闭环）；`start.py` 插件导入=0（含函数体，AC-PLR-13-1 完全达标）；验证 24/24 + 28/28 全绿。详见 `AgentPanel-W2-3-定时任务注册表设计方案-2026-11-12.md` §9（**其 manifest.jobs 契约已于 2026-11-15 废弃，现行见新规范 §3**） |
 | W2-4 前端路由单一来源 | `web/src/router/index.js:6-324,381-422`、`stores/menu.js:266-286`、`MainLayout.vue:113,123` | 静态表只保留框架路由（`/`、`/panel/login`、`/install`、404）；其余全部动态注入；`route.name` 改用稳定标识（path/id）而非中文名；全局订阅组件按启用态挂载（AC-PLR-09、AC-PLR-23-2） |
 | W2-5 包装器分支收窄 | `base/app_wrapper.py:58-101,117-169,29-43` | 抽出单一路径判定函数供 HTTP/WS 共用；SPA fallback 改为已知页面前缀白名单，其余返回 404 JSON；补 `/uploads/`、`/files/` 静态特例；特例清单配置化 |
 | W2-6 插件名特例通用化 | `core/users/api/v1/menu.py:102-123`、`common/setting.py:107-108`、各 `PLUGIN_NAME` 常量 | 专用端点改为「按插件名同步菜单」的通用接口（AC-PLR-13-2） |
@@ -254,7 +271,7 @@
 
 - **观察期**：W1~W3 改动路由注册、启停门控与事件订阅，属运行时装配变更，**排在 2026-11-23 收口之后**；不删旧编排代码、不删 `mode` 开关、不重置计时、不提前勾选 T7.5 准入。
 - **前提风险 PB-01**：v3.0 平台级定义待书面签字。若采用方案 A（平台 = 产品整体），AC-PLR-01/13 的适用范围需重评，但「路径契约冲突」「零路由静默成功」「订阅装卸不对称」仍是事实缺陷。
-- **范围真空 PB-02**：整改涉及插件级 schema（events/subscribes/jobs/component），需同步启动插件级需求，避免又形成「平台文档不承接业务口径」。
+- **范围真空 PB-02**：整改涉及插件级契约（`task/` 目录的 `@broker.task` / `@ap_subscribe` 声明、`component` 路径），需同步启动插件级需求，避免又形成「平台文档不承接业务口径」。2026-11-15 补注：`events` / `jobs` 不再由 manifest 声明，现行契约见 `AgentPanel-声明式任务与事件订阅机制规范-2026-11-15.md`。
 - **凭据**：`config.conf` 含明文真实凭据，本文仅引用行号，不记录取值；任何整改输出不得携带。
 - **部署层未完全核实**：`deploy/nginx/conf.d/agentpanel.conf:5-11` 自述为 legacy 单体栈，P7 正式入口由工作区外的 `aipanel.conf` 挂载；外部 nginx 是否有第二层 `/api` rewrite 无法在本工作区只读确认，W2-5 落地前需核实。
 - **静态核查局限（已部分消除）**：四状态路由可达性、启停对称、3 轮启停压测、订阅装卸已由 `tests/regression_plugin_assembly.py` 实测（24/24，2026-11-12）；作业关闭门控（W2-3 核心）与端到端冒烟（W3-3）已由 `tests/regression_pending.py` 实测（2026-11-12：A 部署建表 3/3、B 作业门控 3/3、C 端到端 12/12 全 PASS）；**W2-1 已完全整改（2026-11-12 晚）**：events/quota 路由集中到 `register_routers`、全部 `try/except ImportError` 兜底删除、嵌入式网关挂载经 manager 读 manifest（不 import 插件实现）、`configure_shared_runtime` 迁入 harness `on_startup`——`base/start.py` 装配层插件实现导入数=0，两份回归重跑 20/20 + 24/24 零回归。**W2-3 已闭环（2026-11-12 晚）**：5 个定时任务函数体内 8 处惰性插件导入与网关对账 gating 已全部改为 manifest `jobs` 声明驱动 + 平台统一调度器，运行期禁用即取消；重跑 `regression_pending.py` 28/28 + `regression_plugin_assembly.py` 24/24 全绿。**遗留 OPEN 项已全部闭环（2026-11-12 晚，见 §0.5）**：AC-PLR-03-1 请求期门控（禁用即 404、重新启用 200）、`event_subscriptions` core 幂等建表 SQL 迁移、`agent` 插件路由自挂载清理、关闭期 RabbitMQ 在途消息竞态（回归日志 Traceback 12 → 0）。最终回归 **24/24 + 42/42** 全绿。AC-PLR-23-1/23-3 保持实测通过。

@@ -2,9 +2,6 @@
 
 分层约束
 --------
-``base.common`` 不得依赖 ``base.core``，所以规则常量与校验实现放在这里，
-由 ``base/core/events/contract.py`` 再导出给事件中心使用。三处同源：
-
 - 后台手动发布 ``event_center.publish``：违反规则直接拒绝（raise ValueError）；
 - 业务直调 ``event_bus.publish``：**不抛异常**打断业务事务，改为脱敏 + 体积保护；
 - worker 记录 handler 返回值：同样脱敏，但用更小的体积上限。

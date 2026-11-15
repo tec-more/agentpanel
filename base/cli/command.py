@@ -12,8 +12,8 @@ from base.common.log import log
 from base.common.setting import settings
 
 app = typer.Typer(
-    name="aipanel",
-    help="AIPanelAdmin 命令行工具",
+    name="panel",
+    help="命令行工具",
     no_args_is_help=True,
 )
 

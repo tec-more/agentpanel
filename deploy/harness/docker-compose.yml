@@ -1,0 +1,6 @@
+
+name: agentpanel
+
+include:
+  - compose.harness.yml
+  # - compose.taskiq.yml

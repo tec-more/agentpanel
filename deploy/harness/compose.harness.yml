@@ -1,0 +1,99 @@
+# L3 服务（支撑 DeepSeek Harness 运行）：gateway（9999 网关/计量）+ orchestration（9100 编排/额度）。
+# 二者同属 harness 支撑层，合并为一个模块便于一起部署/灰度。
+# 共享网络 app_default 外部声明（与 compose.taskiq.yml 共用同一外部网络，名称一致即可合并）。
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: services/gateway/Dockerfile
+    image: agentpanel-gateway:${TAG:-local}
+    container_name: agentpanel-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9999:9999"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      TMPDIR: /tmp
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      GW_HOST: 0.0.0.0
+      GW_PORT: "9999"
+      GW_PUBLIC_BASE_URL: ${GW_PUBLIC_BASE_URL:-http://127.0.0.1:9999}
+      GW_FAIL_CLOSED: "true"
+      GW_PROVIDER_DOMAIN_ALLOWLIST: ${GW_PROVIDER_DOMAIN_ALLOWLIST:-api.deepseek.com}
+    secrets: [db_password, redis_password]
+    networks:
+      - app_default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  orchestration:
+    build:
+      context: ../..
+      dockerfile: services/orchestration/Dockerfile
+    image: agentpanel-orchestration:${TAG:-local}
+    container_name: agentpanel-orchestration
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      TMPDIR: /tmp
+      DB_HOST: host.docker.internal
+      DB_PORT: "15432"
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_ENABLED: "true"
+      REDIS_HOST: agentredis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      ORCH_HOST: 0.0.0.0
+      ORCH_PORT: "9100"
+      ORCH_ALLOW_REMOTE_BIND: "true"
+      ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:9100}
+      ORCH_APP_BASE_URL: http://app:9998
+      ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
+    secrets: [db_password, redis_password, orchestration_service_secret]
+    command:
+      - /bin/sh
+      - -c
+      - 'export ORCHESTRATION_SERVICE_SECRET="$$(cat /run/secrets/orchestration_service_secret)"; exec python services/orchestration/run.py'
+    networks:
+      - app_default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  app_default:
+    external: true
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  redis_password:
+    file: ./secrets/redis_password
+  orchestration_service_secret:
+    file: ./secrets/orchestration_service_secret

@@ -10,7 +10,7 @@
 
 services:
   taskiq-beat:
-    image: agentpanel-app:${TAG:-local}
+    image: agentpanel-app:${TAG:-latest}
     container_name: agentpanel-beat
     restart: unless-stopped
     command:
@@ -27,7 +27,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
@@ -51,7 +51,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   taskiq-worker:
-    image: agentpanel-app:${TAG:-local}
+    image: agentpanel-app:${TAG:-latest}
     container_name: agentpanel-worker
     restart: unless-stopped
     # 单 worker 消费 ap.jobs + ap.events 两队列（单 broker，task_queues 在 broker.py 声明）
@@ -77,7 +77,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url

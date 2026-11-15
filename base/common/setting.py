@@ -201,12 +201,12 @@ class Settings(BaseSettings):
 	maxsize: int = maxsize
 	timeout: int = timeout
 	command_timeout: int = command_timeout
-	# Redis配置
-	REDIS_ENABLED: bool = config.config.getboolean("redis", "enabled", fallback=False)
-	REDIS_HOST: str = config.config.get("redis", "host", fallback="127.0.0.1")
-	REDIS_PORT: int = config.config.getint("redis", "port", fallback=6379)
-	REDIS_PASSWORD: str = config.config.get("redis", "password", fallback="")
-	REDIS_DB: int = config.config.getint("redis", "db", fallback=0)
+	# Redis配置（环境变量优先，回退 config.conf；与 DB 同构，便于容器化部署经 env/secret 覆盖）
+	REDIS_ENABLED: bool = read_env_value("REDIS_ENABLED", "bool", default=_APP_CONFIG.redis_enabled)
+	REDIS_HOST: str = read_env_value("REDIS_HOST", "str", default=_APP_CONFIG.redis_host)
+	REDIS_PORT: int = read_env_value("REDIS_PORT", "int", default=_APP_CONFIG.redis_port)
+	REDIS_PASSWORD: str = read_env_value("REDIS_PASSWORD", "str", secret=True, default=_APP_CONFIG.redis_password)
+	REDIS_DB: int = read_env_value("REDIS_DB", "int", default=_APP_CONFIG.redis_db)
 	# 部署环境与启动自检（上线硬约束 H-1/H-2；环境变量优先于 ini 配置）
 	DEPLOY_ENV: str = os.environ.get("DEPLOY_ENV", config.config.get("deploy", "env", fallback="dev"))
 	STRICT_STARTUP: bool = os.environ.get(

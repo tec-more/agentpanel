@@ -101,7 +101,11 @@ $envContent = @(
     "DB_NAME=$dbName",
     "DB_USER=$dbUser",
     "TAG=latest",
-    "TASKIQ_VHOST=$taskiqVhost"
+    "TASKIQ_VHOST=$taskiqVhost",
+    # worker 运行参数（与 TaskiqSettings 默认值一致；compose worker command 经 env 插值读取，不再硬编码）
+    "TASKIQ_WORKERS=2",
+    "TASKIQ_ACK_TYPE=when_executed",
+    "TASKIQ_MAX_PREFETCH=0"
 ) -join "`n"
 [System.IO.File]::WriteAllText($envFile, $envContent + "`n", (New-Object System.Text.UTF8Encoding($false)))
 

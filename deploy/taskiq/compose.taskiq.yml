@@ -62,12 +62,14 @@ services:
       - base.common.taskiq_app.broker:broker
       - base.common.taskiq_app.jobs
       - base.common.taskiq_app.events
+      # 三个 worker 运行参数改由 env 驱动（不再硬编码），缺省值与 TaskiqSettings 一致：
+      #   TASKIQ_WORKERS=2 / TASKIQ_ACK_TYPE=when_executed / TASKIQ_MAX_PREFETCH=0
       - --workers
-      - "2"
+      - "${TASKIQ_WORKERS:-2}"
       - --ack-type
-      - when_executed
+      - "${TASKIQ_ACK_TYPE:-when_executed}"
       - --max-prefetch
-      - "0"
+      - "${TASKIQ_MAX_PREFETCH:-0}"
     environment:
       DEPLOY_ENV: docker
       RUN_DB_MIGRATIONS: "false"

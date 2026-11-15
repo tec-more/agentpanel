@@ -76,7 +76,7 @@ async def on_worker_startup(state: TaskiqState) -> None:
         from base.common.cache import RedisCache
 
         rc = await RedisCache.get_instance()
-        await rc.set(f"{settings.redis_key_prefix}worker:heartbeat", str(time.time()), ex=30)
+        await rc.set(f"{settings.redis_key_prefix}worker:heartbeat", str(time.time()), expire=30)
         asyncio.create_task(_worker_heartbeat_loop(rc))
     except Exception:  # 心跳缺失不阻断启动
         pass
@@ -90,14 +90,14 @@ async def on_worker_startup(state: TaskiqState) -> None:
 
 
 async def _worker_heartbeat_loop(rc) -> None:
-    """周期刷新 worker 心跳键（约每 10s 一次，ex=30），供 healthcheck 探活。
+    """周期刷新 worker 心跳键（约每 10s 一次，expire=30），供 healthcheck 探活。
 
     worker 是长驻进程，单次写入 30s 后会过期导致误判；故在后台持续刷新。
     该任务由 WORKER_STARTUP 通过 asyncio.create_task 拉起，随 worker 事件循环存活。
     """
     try:
         while True:
-            await rc.set(f"{settings.redis_key_prefix}worker:heartbeat", str(time.time()), ex=30)
+            await rc.set(f"{settings.redis_key_prefix}worker:heartbeat", str(time.time()), expire=30)
             await asyncio.sleep(10)
     except Exception:  # 异常退出静默（不影响 worker 主任务）
         pass

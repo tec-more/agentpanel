@@ -69,6 +69,99 @@ def patch_asyncpg_reset() -> bool:
 patch_asyncpg_reset()
 
 
+def patch_sqlalchemy_for_gaussdb() -> bool:
+    """让 SQLAlchemy 的 PostgreSQL 方言能解析 openGauss 的 ``version()`` 串。
+
+    SQLAlchemy 2.x 首次连接时执行 ``select pg_catalog.version()``，用只认
+    ``PostgreSQL/EnterpriseDB X.Y`` 的正则解析版本号；openGauss 返回的是
+    ``(openGauss 7.0.0-RC3 build ...)``，正则不匹配即抛 AssertionError。
+    taskiq-beat 的 ``SchedulerApp`` 基于 SQLAlchemy 异步引擎，因此在 startup
+    首次连库时直接崩溃（``_get_server_version_info`` 断言失败）。
+
+    这里替换版本解析：标准 PostgreSQL 仍走精确解析；openGauss/GaussDB 返回的
+    「内核版本」并不等价于 PG 版本，固定映射到兼容 PG 14 的安全版本，避免
+    SQLAlchemy 误判版本过低而禁用 identity / serial / jsonb subscripting 等能力；
+    其它未知方言串同样回退到安全版本，保证启动不被版本探测阻断。
+    幂等：重复调用不会叠加补丁。
+    """
+    try:
+        from sqlalchemy.dialects.postgresql.base import PGDialect
+    except Exception:  # pragma: no cover - sqlalchemy 为运行期依赖
+        return False
+
+    if getattr(PGDialect._get_server_version_info, "_agentpanel_patched", False):
+        return True
+
+    import re as _re
+
+    safe_version = (14, 0)
+    version_re = _re.compile(
+        r".*(?:PostgreSQL|EnterpriseDB|openGauss|GaussDB)\s+"
+        r"(\d+)\.?(\d+)?(?:\.(\d+))?(?:\.\d+)?(?:devel|beta)?",
+        _re.IGNORECASE,
+    )
+    gauss_re = _re.compile(r"openGauss|GaussDB", _re.IGNORECASE)
+
+    def _patched(self, connection):
+        raw = connection.exec_driver_sql("select pg_catalog.version()").scalar() or ""
+        raw = str(raw)
+        m = version_re.match(raw)
+        if not m:
+            return safe_version
+        if gauss_re.search(raw):
+            return safe_version
+        return tuple(int(x) for x in m.group(1, 2, 3) if x is not None)
+
+    _patched._agentpanel_patched = True
+    PGDialect._get_server_version_info = _patched
+    return True
+
+
+patch_sqlalchemy_for_gaussdb()
+
+
+def patch_taskiq_beat_json_columns() -> bool:
+    """把 taskiq-beat 模型的 JSON 列改成 JSONB，匹配 scheduler 迁移表定义。
+
+    taskiq-beat 1.4.0 的 ``SchedulerJob`` 用 SQLAlchemy ``JSON`` 类型，编译出的
+     INSERT 把绑定参数 cast 成 ``::JSON``；项目的 ``scheduler_job`` 表按 JSONB
+     建列。标准 PostgreSQL 有 ``json -> jsonb`` 赋值转换所以能写入，openGauss
+     没有，直接报 ``column "trigger_payload" is of type jsonb but expression is
+     of type json``，beat 的 startup 排程（upsert_schedules）失败。
+
+    这里在模型类层面把 ``JSON`` 列类型原地替换为 ``JSONB``（编译成 ``::JSONB``），
+    只影响 beat 进程内已导入的 taskiq-beat 模型，不改表结构、不影响 worker。
+    幂等：已替换过不会重复。
+    """
+    try:
+        from sqlalchemy import JSON as SaJSON
+        from sqlalchemy.dialects.postgresql import JSONB
+        import taskiq_beat.models as beat_models
+    except Exception:  # pragma: no cover - 仅 beat 进程依赖 taskiq-beat
+        return False
+
+    changed = 0
+    for name in dir(beat_models):
+        obj = getattr(beat_models, name)
+        if not (isinstance(obj, type) and hasattr(obj, "__tablename__")):
+            continue
+        table = obj.__table__
+        if table is None:
+            continue
+        for col in table.columns:
+            col_type = col.type
+            # 只替换通用 JSON（及 PG JSON），跳过已是 JSONB 的列
+            if isinstance(col_type, JSONB) or type(col_type).__name__ == "JSONB":
+                continue
+            if isinstance(col_type, SaJSON) or type(col_type).__name__ == "JSON":
+                col.type = JSONB()
+                changed += 1
+    return changed > 0
+
+
+patch_taskiq_beat_json_columns()
+
+
 
 def shared_model_modules() -> List[str]:
     return list(SHARED_MODEL_MODULES)

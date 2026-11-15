@@ -19,7 +19,9 @@ import time
 
 # 让脚本既能被 `python <path>/health.py` 直接运行，也能被包导入：
 # 把项目根加入 sys.path，使 `base.common.taskiq_app.config` 等绝对导入可解析。
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 本文件位于 <root>/base/common/taskiq_app/health.py，需上溯 4 层才是 root
+# （旧代码只上溯 3 层得到 <root>/base，导致 `No module named 'base'`）。
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -48,7 +50,10 @@ async def _check_pg() -> bool:
     try:
         import asyncpg
 
-        conn = await asyncio.wait_for(asyncpg.connect(settings.db_url), timeout=5)
+        # settings.db_url 是 SQLAlchemy 风格 DSN（postgresql+asyncpg://），
+        # asyncpg 只认 postgresql://；剥掉 "+asyncpg" 驱动后缀。
+        dsn = settings.db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        conn = await asyncio.wait_for(asyncpg.connect(dsn), timeout=5)
         await conn.close()
         return True
     except Exception as exc:

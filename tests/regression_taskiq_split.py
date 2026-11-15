@@ -772,3 +772,79 @@ def test_mes_dead_code_now_declarative() -> None:
         event_bus._handler_registry.clear()
         event_bus._handler_registry.update(snapshot)
         eh._registered = False
+
+
+# ---------------------------------------------------------------------------
+# openGauss 兼容回归（2026-11-15）：beat 启动三连击
+#   1) PGDialect._get_server_version_info 解析 "(openGauss 7.0.0-RC3 ...)"
+#   2) taskiq-beat 模型的 JSON 列须为 JSONB（匹配 scheduler 迁移表，避免 ::JSON）
+#   3) 心跳写入必须用 RedisCache.set(expire=...) 而非 ex=，health 脚本能连库
+# ---------------------------------------------------------------------------
+def test_opengauss_version_parse_patch():
+    from sqlalchemy.dialects.postgresql.base import PGDialect
+
+    class _R:
+        def __init__(self, v):
+            self.v = v
+
+        def scalar(self):
+            return self.v
+
+    class _Conn:
+        def __init__(self, v):
+            self.v = v
+
+        def exec_driver_sql(self, *a, **k):
+            return _R(self.v)
+
+    d = PGDialect()
+    # openGauss 串须给安全版本而非抛 AssertionError
+    assert d._get_server_version_info(
+        _Conn("(openGauss 7.0.0-RC3 build 01b7e318) compiled at 2026-03-25")
+    ) == (14, 0)
+    # 标准 PostgreSQL 仍精确解析
+    assert d._get_server_version_info(_Conn("PostgreSQL 14.9 on x86_64")) == (14, 9)
+    assert d._get_server_version_info(_Conn("PostgreSQL 9.6.1")) == (9, 6, 1)
+
+
+def test_taskiq_beat_json_columns_are_jsonb():
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.dialects.postgresql import JSONB
+    from taskiq_beat import SchedulerJob
+
+    for col in SchedulerJob.__table__.columns:
+        if col.name in {"trigger_payload", "task_args", "task_kwargs", "metadata_payload"}:
+            assert isinstance(col.type, JSONB), f"{col.name} 应为 JSONB，实际 {type(col.type)}"
+    sql = str(SchedulerJob.__table__.insert().compile(dialect=postgresql.dialect()))
+    assert "::JSONB" in sql and "::JSON " not in sql, sql
+
+
+def test_heartbeat_uses_expire_kwarg_not_ex():
+    import inspect
+    from pathlib import Path
+
+    from base.common.cache import RedisCache
+
+    sig = inspect.signature(RedisCache.set)
+    assert "expire" in sig.parameters, "RedisCache.set 应用 expire= 传 TTL"
+    beat_src = open(
+        Path(__file__).resolve().parent.parent / "base/common/taskiq_app/reconcile.py",
+        encoding="utf-8",
+    ).read()
+    worker_src = open(
+        Path(__file__).resolve().parent.parent / "base/common/taskiq_app/jobs.py",
+        encoding="utf-8",
+    ).read()
+    assert "heartbeat" in beat_src and "ex=30" not in beat_src
+    assert "heartbeat" in worker_src and "ex=30" not in worker_src
+    assert "expire=30" in beat_src and "expire=30" in worker_src
+
+
+def test_health_script_project_root_on_sys_path():
+    from pathlib import Path
+
+    health = Path(__file__).resolve().parent.parent / "base/common/taskiq_app/health.py"
+    # 以脚本方式运行应能解析 base.common.*（旧版少上溯一层报 No module named 'base'）
+    # 这里只验证 _ROOT 计算，避免真的连库：直接检查文件的上溯层数断言。
+    src = health.read_text(encoding="utf-8")
+    assert src.count("os.path.dirname(") >= 4, "health.py 须上溯 4 层到项目根"

@@ -12,8 +12,23 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from taskiq_beat import SchedulerApp, SchedulerBase, SchedulerConfig
 
-from .broker import broker
-from .config import settings
+# openGauss 兼容（两处，均须在首次连库/编译 SQL 前完成）：
+#  1) PGDialect 用正则解析 version()，只认 "PostgreSQL X.Y"，openGauss 的
+#     "(openGauss 7.0.0-RC3 ...)" 会抛 AssertionError 让 beat 启动即崩；
+#  2) taskiq-beat 模型用通用 JSON 类型，编译成 ::JSON，与 JSONB 表列不匹配，
+#     openGauss 无 json->jsonb 转换会让 startup 排程失败。
+from packages.common.db import (  # noqa: E402
+    patch_sqlalchemy_for_gaussdb,
+    patch_taskiq_beat_json_columns,
+)
+
+patch_sqlalchemy_for_gaussdb()
+
+from .broker import broker  # noqa: E402
+from .config import settings  # noqa: E402
+
+# taskiq_beat 需先导入才有模型类可打补丁；patch 函数内部自行 import。
+patch_taskiq_beat_json_columns()
 
 
 _engine = None

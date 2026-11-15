@@ -44,6 +44,16 @@ async def _sync() -> None:
         logger.warning("[reconciler] scheduler_app 未初始化（缺 DB_URL），跳过同步")
         return
 
+    # beat 进程不经 base.start，插件管理器需在此幂等初始化；否则插件的
+    # ap_interval_ref（如 harness:resolve_interval）内 get_plugin_manager()
+    # 会 fail-fast，导致 interval 无法热重载（沿用 fallback 值）。
+    try:
+        from base.common.plugin_manager import init_plugin_manager
+
+        init_plugin_manager()
+    except Exception as exc:
+        logger.warning(f"[reconciler] 插件管理器初始化失败（不阻断排程）: {exc}")
+
     specs = scheduled_specs(discover())
     # 平台作业是固定模块，恒应被发现。缺失说明发现器/导入整体异常——此时
     # 绝不能执行 diff pause，否则会误停全部既有调度行（fail-safe）。
@@ -91,9 +101,11 @@ async def _sync() -> None:
                 is_enabled=True,
             )
         # 清理（禁用 / 依赖缺失 / 声明被移除）：pause（beat 不再投递，保留运行历史）
+        # job_id 即 scheduler_job.id 的值（字符串），select(id) 的标量本身就是 job_id；
+        # 不能对标量再取 .job_id（会抛 'str' object has no attribute 'job_id'）。
         existing = {
-            row.job_id
-            for row in (await session.execute(select(SchedulerJob.id))).scalars()
+            str(job_id)
+            for job_id in (await session.execute(select(SchedulerJob.id))).scalars()
         }
         for stale in existing - set(targets):
             await scheduler_app.pause(session, stale)
@@ -124,7 +136,7 @@ async def upsert_schedules() -> None:
 
                 rc = await RedisCache.get_instance()
                 await rc.set(
-                    f"{settings.redis_key_prefix}beat:heartbeat", str(time.time()), ex=30
+                    f"{settings.redis_key_prefix}beat:heartbeat", str(time.time()), expire=30
                 )
             except Exception:
                 pass

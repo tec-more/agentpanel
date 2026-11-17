@@ -7,8 +7,10 @@
 from fastapi import APIRouter
 
 from base.plugins.contentops.api.v1 import (
-    compliance, content, export, ledger, media, review, rules,
+    api_keys, compliance, content, export, ledger, llm_providers, media, review, rules,
 )
+# M4 对外只读 OpenAPI 路由（专属 API Key 鉴权，与登录态路由物理隔离）
+from base.plugins.contentops.api.openapi import router as _openapi_router
 
 router = APIRouter()
 router.include_router(content.content_router)
@@ -18,3 +20,7 @@ router.include_router(export.export_router)
 router.include_router(ledger.ledger_router)
 router.include_router(rules.rules_router)
 router.include_router(media.media_router)
+router.include_router(llm_providers.llm_providers_router)
+router.include_router(api_keys.api_keys_router)
+# 对外端点使用独立路径前缀 /openapi/*，鉴权走 require_openapi_scope
+router.include_router(_openapi_router)

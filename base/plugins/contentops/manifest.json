@@ -20,7 +20,8 @@
         "publish_ledger",
         "platform_rule_config",
         "llm_provider_config",
-        "media_asset"
+        "media_asset",
+        "api_key"
     ],
     "schemas": [
         "content_schema"

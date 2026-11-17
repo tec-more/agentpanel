@@ -60,8 +60,35 @@ class ComplianceEngine:
     """确定性合规检测引擎。"""
 
     @staticmethod
+    def _in_rollout(rule: ComplianceRule, owner: Optional[OwnerContext]) -> bool:
+        """灰度放量判定：确定性哈希，保证同一 owner 对同一规则的命中稳定。
+
+        - active / 旧数据（无 status 字段）→ 恒生效；
+        - draft / archived → 不生效；
+        - gray → 按 (owner_id, rule_id) 取模落到 rollout_percent 区间。
+        """
+        status = getattr(rule, "status", "active") or "active"
+        if status == "active":
+            return True
+        if status in ("draft", "archived"):
+            return False
+        if status == "gray":
+            pct = getattr(rule, "rollout_percent", 100)
+            if pct is None:
+                pct = 100
+            if pct <= 0:
+                return False
+            if pct >= 100:
+                return True
+            owner_key = owner.owner_id if owner else 0
+            # 确定性 bucket：同一 (owner, rule) 组合恒定，避免检测抖动
+            bucket = (int(owner_key or 0) * 31 + int(rule.id or 0) * 17) % 100
+            return bucket < pct
+        return True
+
+    @staticmethod
     async def load_rules(owner: Optional[OwnerContext], platform: Optional[str] = None) -> list[ComplianceRule]:
-        """加载可见规则：平台级（owner NULL）+ 当前归属私有规则。"""
+        """加载可见规则：平台级（owner NULL）+ 当前归属私有规则 + 灰度放量过滤。"""
         from tortoise.expressions import Q
 
         q = Q(enabled=True) & (Q(owner_type__isnull=True) | Q(owner_id__isnull=True))
@@ -72,6 +99,8 @@ class ComplianceEngine:
             rules.extend(r for r in owned if r.id not in seen)
         if platform:
             rules = [r for r in rules if not r.platform or r.platform == platform]
+        # M4 灰度：draft/archived 不生效，gray 按确定性 bucket 放量
+        rules = [r for r in rules if ComplianceEngine._in_rollout(r, owner)]
         return rules
 
     @staticmethod

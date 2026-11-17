@@ -1,0 +1,15 @@
+# ContentOps M2/M3 素材链依赖（OCR / ASR / ffmpeg / 图片处理）
+# 由 Dockerfile 在 requirements.txt 之后单独安装；versions 锁定为宿主机实测可用组合。
+#
+# 关键约束：
+# - opencv 必须用 headless 版：普通 opencv-python 在 Debian slim 容器缺 libxcb.so.1 会崩。
+# - pyclipper/shapely 是 rapidocr-onnxruntime 的传递依赖，显式锁定避免拉取不兼容 wheel。
+# - faster-whisper 模型（≈145MB）不打入镜像，运行时优先 /app/models/faster-whisper-base，
+#   缺失则走 hf-mirror 下载兜底（见 media_detection_service.py::_get_asr）。
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.32.0
+opencv-python-headless==4.10.0.84
+imageio-ffmpeg==0.8.1
+faster-whisper==1.2.1
+pyclipper==1.4.0
+shapely==2.2.0

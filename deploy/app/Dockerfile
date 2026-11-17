@@ -36,8 +36,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 # 先装依赖（利用镜像层缓存）
-COPY requirements.txt .
-RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.txt
+COPY requirements.txt requirements-contentops.txt ./
+RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.txt \
+    && pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements-contentops.txt
 
 # 再拷源码（本地 web/dist 已被 .dockerignore 排除）
 COPY . .

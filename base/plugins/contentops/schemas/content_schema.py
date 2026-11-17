@@ -100,6 +100,8 @@ class RuleCreate(BaseModel):
     category: Optional[str] = None
     platform: Optional[str] = None
     enabled: bool = True
+    status: str = Field(default="active", pattern="^(draft|gray|active|archived)$", description="发布状态")
+    rollout_percent: int = Field(default=100, ge=0, le=100, description="灰度放量比例 0-100")
 
 
 class RuleUpdate(BaseModel):
@@ -109,3 +111,50 @@ class RuleUpdate(BaseModel):
     basis: Optional[str] = None
     suggestion: Optional[str] = None
     enabled: Optional[bool] = None
+    status: Optional[str] = Field(None, pattern="^(draft|gray|active|archived)$")
+    rollout_percent: Optional[int] = Field(None, ge=0, le=100)
+
+
+class RuleToggle(BaseModel):
+    enabled: bool = Field(..., description="目标启停状态")
+
+
+class RuleBulkImport(BaseModel):
+    """开源词库批量导入：每行一个词，可带可选配置。"""
+    layer: str = Field(default="L1", pattern="^L[1-4]$")
+    risk_level: str = Field(default="P1", pattern="^P[012]$")
+    action: str = Field(default="warn", description="block/warn/hint")
+    type: str = Field(default="keyword", description="keyword/regex")
+    category: Optional[str] = None
+    platform: Optional[str] = None
+    basis: Optional[str] = None
+    source: str = Field(default="opensource", description="来源标识")
+    dedupe: bool = Field(default=True, description="同归属下去重")
+    words: list[str] = Field(..., min_length=1, description="词/表达式列表")
+
+
+# ---------- LLM 供应商配置 ----------
+class LLMProviderCreate(BaseModel):
+    provider: str = Field(..., min_length=1, description="供应商标识（对应 llm 插件 name_en）")
+    model: str = Field(..., min_length=1, description="模型标识")
+    endpoint: Optional[str] = None
+    enabled: bool = True
+    purpose: str = Field(default="rewrite", pattern="^(rewrite|summarize|topics|semantic)$")
+
+
+class LLMProviderUpdate(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    endpoint: Optional[str] = None
+    enabled: Optional[bool] = None
+    purpose: Optional[str] = Field(None, pattern="^(rewrite|summarize|topics|semantic)$")
+
+
+# ---------- 对外 API Key 管理 ----------
+class ApiKeyCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="Key 名称")
+    scopes: list[str] = Field(default_factory=lambda: ["compliance:check", "rules:read"], description="授权范围")
+    allowed_ips: Optional[list[str]] = Field(None, description="IP 白名单（空=不限）")
+    expires_at: Optional[str] = Field(None, description="过期时间 ISO8601")
+    rate_limit_rpm: int = Field(default=60, ge=0, description="每分钟请求上限（0=不限）")
+    description: Optional[str] = None

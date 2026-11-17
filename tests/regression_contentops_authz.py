@@ -1,234 +1,193 @@
-"""C1 整改回归：contentops 多租户 customer 功能码双轨鉴权。
+"""C1 整改回归：contentops 多租户 customer 功能码双轨鉴权（新文件）。
 
-运行（项目根目录，激活 venv）：
-    .venv/Scripts/python tests/regression_contentops_authz.py
+运行：
+    .venv/Scripts/python tests/test_c1_authz_fix.py
 
-验证分层：
-- A. 结构：路由全部改用 require_action、权限码全集一致、管理端资源类型已扩展
-- B. CUS 分支（真实 DB）：未授权 404 / 授权放行 / org 继承 / 主体禁用 / 跨权限码隔离
-- C. USR 分支：RBAC 403/200/超管通配不回归（mock get_user_permissions_cached，不改真库 RBAC）
-- D. HTTP 端到端：401 / 404 / 200 完整链路（TestClient + 真实 JWT）
-
-测试数据在 finally 中清理（客户/组织/成员/授权），不污染真库。
+分层：
+- A 结构、B CUS 授权（真实 DB）、C USR RBAC 无回归、D HTTP 端到端。
+- 禁用本地不可达 Redis，走 DB 降级，避免 5s 连接超时拖慢。
+- 测试数据 finally 清理。
 """
 import asyncio
+import json
 import sys
 import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# 导入 database 触发 openGauss 补丁（必须在连库前）
-import base.common.database  # noqa: F401
+import base.common.database  # noqa: F401  触发 openGauss 补丁
 
-results = []
+ROOT = Path(__file__).resolve().parent.parent
+R = []
 
 
-def check(name, cond, detail=""):
-    results.append((name, bool(cond)))
+def ck(name, cond, detail=""):
+    R.append((name, bool(cond)))
     print(f"[{'PASS' if cond else 'FAIL'}] {name}" + (f"  -- {detail}" if detail else ""))
 
 
 async def main():
-    import json
+    import httpx
     from fastapi import Depends, FastAPI
-    from fastapi.testclient import TestClient
+    from tortoise import Tortoise
 
+    from base.common.setting import TORTOISE_ORM
     from base.common.security import create_access_token
-    from base.common.authz.constants import CONTENTOPS_ACTION_CODES, ResourceType
+    from base.common.authz import CONTENTOPS_ACTION_CODES, require_action, ResourceType
     from base.common.authz.context import OwnerContext, require_owner
-    from base.common.authz.action_guard import (
-        require_action, _customer_authorize, _rbac_dependency,
-    )
-    from base.common.authz.service import ResourceGrantService
+    from base.common.authz.action_guard import _customer_authorize, _rbac_dependency
+    from base.common.authz.service import ResourceGrantService, invalidate_customer_org_cache
     from base.common.authz.models.resource_grant import ResourceGrant
     from base.common.authz.filter import OwnedResourceNotFound
     from base.plugins.customer.models.customer import Customer
-    from tortoise import Tortoise
+    from base.plugins.customer.models.customer_organization import (
+        CustomerOrganization, CustomerOrganizationMember,
+    )
+
+    # 禁用本地不可达 Redis（宿主机连不到容器 6379），走 DB 降级；
+    # 放在所有 import 之后，避免 base.common.cache 的 configure() 覆盖。
+    import packages.common.cache as cm
+    if cm._config is not None:
+        cm._config.enabled = False
+    cm.RedisCache._instance = None
 
     tag = uuid.uuid4().hex[:8]
-    created = {"customers": [], "orgs": [], "members": [], "grants": []}
-    code_check = "contentops:compliance:check"
-    code_edit = "contentops:content:edit"
-
-    from base.common.setting import TORTOISE_ORM
-    from tortoise import Tortoise
+    made = {"c": [], "o": [], "m": [], "g": []}
+    chk = "contentops:compliance:check"
+    edt = "contentops:content:edit"
 
     await Tortoise.init(config=TORTOISE_ORM)
     try:
-        # ---------- A. 结构 ----------
-        import base.common.authz as authz
-        check("A1 authz 导出 require_action", hasattr(authz, "require_action"))
-        check("A2 ResourceType 含 contentops_action",
-              ResourceType.CONTENTOPS_ACTION.value == "contentops_action")
-        check("A3 权限码全集 12 个", len(CONTENTOPS_ACTION_CODES) == 12)
+        # A 结构
+        ck("A1 require_action 导出", callable(require_action))
+        ck("A2 ResourceType 含 contentops_action", ResourceType.CONTENTOPS_ACTION.value == "contentops_action")
+        ck("A3 权限码 12 个", len(CONTENTOPS_ACTION_CODES) == 12)
+        m = json.loads((ROOT / "base/plugins/contentops/manifest.json").read_text(encoding="utf-8"))
+        ck("A4 与 manifest 一致", {p["code"] for p in m["permissions"]} == set(CONTENTOPS_ACTION_CODES))
+        vd = ROOT / "base/plugins/contentops/api/v1"
+        fs = list(vd.glob("*.py"))
+        ck("A5 无 require_permission 残留", not [f for f in fs if "require_permission" in f.read_text(encoding="utf-8")])
+        # 核心 7 文件须全部用 require_action；M4 新增路由文件也用（>=7 即可，避免写死数量）
+        core7 = ["content", "compliance", "review", "export", "ledger", "rules", "media"]
+        ck("A6 核心7文件用 require_action", all(
+            "require_action(" in (vd / f"{n}.py").read_text(encoding="utf-8") for n in core7
+        ))
+        import ast
+        src = (ROOT / "base/common/authz/action_guard.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        # 只检测实际被引用的名字/属性，忽略 docstring 与注释文字
+        used_names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        used_attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        ck("A7 CUS 分支不碰 get_current_user_id",
+           "get_current_user_id" not in used_names and "get_current_user_id" not in used_attrs)
 
-        manifest = json.loads(
-            (Path(__file__).resolve().parent.parent / "base/plugins/contentops/manifest.json").read_text(encoding="utf-8")
+        # B CUS 授权（真实 DB）
+        c1, c2, c3 = (
+            await Customer.create(username=f"a_{tag}", nickname="授权", is_active=True),
+            await Customer.create(username=f"b_{tag}", nickname="禁用", is_active=True),
+            await Customer.create(username=f"c_{tag}", nickname="成员", is_active=True),
         )
-        manifest_codes = {p["code"] for p in manifest["permissions"]}
-        check("A4 权限码与 manifest 一致", manifest_codes == set(CONTENTOPS_ACTION_CODES),
-              f"manifest={len(manifest_codes)} codes={len(CONTENTOPS_ACTION_CODES)}")
+        made["c"] += [c1, c2, c3]
+        o1, o2, o3 = (OwnerContext(owner_type="cus", owner_id=c.id) for c in (c1, c2, c3))
 
-        vdir = Path(__file__).resolve().parent.parent / "base/plugins/contentops/api/v1"
-        route_files = list(vdir.glob("*.py"))
-        bad = [f.name for f in route_files
-               if "require_permission" in f.read_text(encoding="utf-8")]
-        check("A5 路由无残留 require_permission", not bad, f"残留={bad}")
-        files_with_action = [f.name for f in route_files
-                             if "require_action(" in f.read_text(encoding="utf-8")]
-        check("A6 7 个路由文件均用 require_action", len(files_with_action) == 7,
-              f"{files_with_action}")
-
-        # ---------- B. CUS 分支（真实 DB） ----------
-        c1 = await Customer.create(username=f"c1a_{tag}", nickname="授权客户", is_active=True)
-        c2 = await Customer.create(username=f"c1b_{tag}", nickname="禁用客户", is_active=True)
-        c3 = await Customer.create(username=f"c1c_{tag}", nickname="组织成员客户", is_active=True)
-        created["customers"] += [c1, c2, c3]
-
-        o1_ctx = OwnerContext(owner_type="cus", owner_id=c1.id)
-        o2_ctx = OwnerContext(owner_type="cus", owner_id=c2.id)
-        o3_ctx = OwnerContext(owner_type="cus", owner_id=c3.id)
-
-        # 未授权 → 拒绝
         try:
-            await _customer_authorize(o1_ctx, code_check)
-            check("B1 CUS 未授权被拒", False)
+            await _customer_authorize(o1, chk)
+            ck("B1 未授权拒绝", False)
         except OwnedResourceNotFound:
-            check("B1 CUS 未授权被拒(404)", True)
+            ck("B1 未授权拒绝(404)", True)
 
-        # 授权后放行，返回 customer.id
-        g = await ResourceGrantService.grant(("cus", c1.id), "contentops_action", code_check,
-                                              granted_by="regression")
-        created["grants"].append(g)
-        uid = await _customer_authorize(o1_ctx, code_check)
-        check("B2 CUS 授权后放行且返回 customer.id", uid == c1.id, f"{uid}=={c1.id}")
+        made["g"].append(await ResourceGrantService.grant(("cus", c1.id), "contentops_action", chk, granted_by="reg"))
+        ck("B2 授权放行返回 customer.id", await _customer_authorize(o1, chk) == c1.id)
 
-        # 跨权限码隔离：授权了 check 不等于有 edit
         try:
-            await _customer_authorize(o1_ctx, code_edit)
-            check("B3 跨权限码不串权", False)
+            await _customer_authorize(o1, edt)
+            ck("B3 跨码隔离", False)
         except OwnedResourceNotFound:
-            check("B3 跨权限码不串权(404)", True)
+            ck("B3 跨码隔离(404)", True)
 
-        # 主体禁用 → 不放行
-        g2 = await ResourceGrantService.grant(("cus", c2.id), "contentops_action", code_check,
-                                               granted_by="regression")
-        created["grants"].append(g2)
+        made["g"].append(await ResourceGrantService.grant(("cus", c2.id), "contentops_action", chk, granted_by="reg"))
         c2.is_active = False
         await c2.save()
         try:
-            await _customer_authorize(o2_ctx, code_check)
-            check("B4 禁用主体不放行", False)
+            await _customer_authorize(o2, chk)
+            ck("B4 禁用主体拒绝", False)
         except OwnedResourceNotFound:
-            check("B4 禁用主体不放行(404)", True)
+            ck("B4 禁用主体拒绝(404)", True)
 
-        # org 继承：组织被授权，成员客户无需自身授权即可访问
-        from base.plugins.customer.models.customer_organization import (
-            CustomerOrganization, CustomerOrganizationMember,
-        )
-        org = await CustomerOrganization.create(name=f"c1org_{tag}", owner_customer=c1, status="active")
-        created["orgs"].append(org)
-        member = await CustomerOrganizationMember.create(org=org, customer=c3, role="member", status="active")
-        created["members"].append(member)
-        g3 = await ResourceGrantService.grant(("org", org.id), "contentops_action", code_check,
-                                               granted_by="regression")
-        created["grants"].append(g3)
-        # 清缓存确保继承即时生效
-        from base.common.authz.service import invalidate_customer_org_cache
+        org = await CustomerOrganization.create(name=f"org_{tag}", owner_customer=c1, status="active")
+        made["o"].append(org)
+        made["m"].append(await CustomerOrganizationMember.create(org=org, customer=c3, role="member", status="active"))
+        made["g"].append(await ResourceGrantService.grant(("org", org.id), "contentops_action", chk, granted_by="reg"))
         await invalidate_customer_org_cache(c3.id)
-        uid3 = await _customer_authorize(o3_ctx, code_check)
-        check("B5 CUS 通过 org 继承获得授权", uid3 == c3.id, f"{uid3}=={c3.id}")
+        ck("B5 org 继承授权", await _customer_authorize(o3, chk) == c3.id)
 
-        # ---------- C. USR 分支（mock RBAC，不改库） ----------
-        import base.common.permissions as perms_mod
-        orig_get = perms_mod.get_user_permissions_cached
-        usr_ctx = OwnerContext(owner_type="usr", owner_id=999001)
+        # C USR RBAC 无回归
+        import base.common.permissions as pm
+        orig = pm.get_user_permissions_cached
 
-        async def fake_perms(uid):
-            return {
-                999001: [code_check],          # 有 check 权限
-                999002: ["other:perm"],        # 无目标权限
-                999003: ["*"],                 # 超管通配
-            }.get(uid, [])
+        async def fake(uid):
+            return {1: [chk], 2: ["x:y"], 3: ["*"]}.get(uid, [])
 
-        perms_mod.get_user_permissions_cached = fake_perms
+        pm.get_user_permissions_cached = fake
         try:
-            dep = _rbac_dependency(code_check)
-            uid_ok = await dep(OwnerContext(owner_type="usr", owner_id=999001))
-            check("C1 USR 有权限放行且返回 user.id", uid_ok == 999001)
+            dep = _rbac_dependency(chk)
+            ck("C1 USR 有权限放行", await dep(OwnerContext(owner_type="usr", owner_id=1)) == 1)
             try:
-                await dep(OwnerContext(owner_type="usr", owner_id=999002))
-                check("C2 USR 无权限 403", False)
+                await dep(OwnerContext(owner_type="usr", owner_id=2))
+                ck("C2 USR 无权限403", False)
             except Exception as e:
-                check("C2 USR 无权限 403", getattr(e, "status_code", None) == 403,
-                      f"status={getattr(e,'status_code',None)}")
-            uid_super = await dep(OwnerContext(owner_type="usr", owner_id=999003))
-            check("C3 USR 超管通配放行", uid_super == 999003)
+                ck("C2 USR 无权限403", getattr(e, "status_code", None) == 403)
+            ck("C3 USR 超管通配", await dep(OwnerContext(owner_type="usr", owner_id=3)) == 3)
         finally:
-            perms_mod.get_user_permissions_cached = orig_get
+            pm.get_user_permissions_cached = orig
 
-            # ---------- D. HTTP 端到端 ----------
-            app = FastAPI()
+        # D HTTP 端到端
+        app = FastAPI()
 
-            @app.post("/check")
-            async def check_endpoint(
-                owner=Depends(require_owner),
-                user_id=require_action(code_check),
-            ):
-                return {"user_id": user_id, "owner_type": owner.owner_type}
+        @app.post("/check")
+        async def ep(owner=Depends(require_owner), user_id=require_action(chk)):
+            return {"user_id": user_id, "owner_type": owner.owner_type}
 
-            # 全程异步 ASGI 客户端：避免 TestClient 在 lifespan 异步上下文内
-            # 再起事件循环导致 anyio BlockingPortal 跨 loop 冲突。
-            import httpx
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as cl:
+            t1 = create_access_token({"sub": str(c1.id), "typ": "cus"})
+            r = await cl.post("/check", headers={"Authorization": f"Bearer {t1}"})
+            ck("D1 授权 CUS 200", r.status_code == 200, f"s={r.status_code}")
+            ck("D2 操作人=customer.id", r.status_code == 200 and r.json().get("user_id") == c1.id)
 
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                # 授权客户 token
-                tok_c1 = create_access_token({"sub": str(c1.id), "typ": "cus"})
-                r_ok = await client.post("/check", headers={"Authorization": f"Bearer {tok_c1}"})
-                check("D1 CUS 授权 HTTP 200", r_ok.status_code == 200, f"status={r_ok.status_code}")
-                check("D2 CUS 返回操作人=customer.id",
-                      r_ok.status_code == 200 and r_ok.json().get("user_id") == c1.id)
+            c4 = await Customer.create(username=f"d_{tag}", nickname="无授权", is_active=True)
+            made["c"].append(c4)
+            t4 = create_access_token({"sub": str(c4.id), "typ": "cus"})
+            r = await cl.post("/check", headers={"Authorization": f"Bearer {t4}"})
+            ck("D3 未授权 CUS 404", r.status_code == 404, f"s={r.status_code}")
 
-                # 无授权客户 token（c3 只有 org 的 check 授权 -> 有权限；用新客户 c4 无授权）
-                c4 = await Customer.create(username=f"c1d_{tag}", nickname="无授权客户", is_active=True)
-                created["customers"].append(c4)
-                tok_c4 = create_access_token({"sub": str(c4.id), "typ": "cus"})
-                r_404 = await client.post("/check", headers={"Authorization": f"Bearer {tok_c4}"})
-                check("D3 CUS 未授权 HTTP 404（不暴露功能存在性）", r_404.status_code == 404,
-                      f"status={r_404.status_code}")
+            r = await cl.post("/check")
+            ck("D4 无 token 401", r.status_code == 401, f"s={r.status_code}")
 
-                # 无 token → 401
-                r_401 = await client.post("/check")
-                check("D4 无 token HTTP 401", r_401.status_code == 401, f"status={r_401.status_code}")
-
-                # 非法 typ token → 401（R-04）
-                tok_bad = create_access_token({"sub": str(c1.id), "typ": "ghost"})
-                r_bad = await client.post("/check", headers={"Authorization": f"Bearer {tok_bad}"})
-                check("D5 非法 typ token HTTP 401", r_bad.status_code == 401, f"status={r_bad.status_code}")
+            tb = create_access_token({"sub": str(c1.id), "typ": "ghost"})
+            r = await cl.post("/check", headers={"Authorization": f"Bearer {tb}"})
+            ck("D5 非法 typ 401", r.status_code == 401, f"s={r.status_code}")
 
     finally:
-        # ---------- 清理 ----------
         try:
-            for g in created["grants"]:
+            for g in made["g"]:
                 await ResourceGrant.filter(id=g.id).delete()
-            for m in created["members"]:
+            for m in made["m"]:
                 await CustomerOrganizationMember.filter(id=m.id).delete()
-            for o in created["orgs"]:
+            for o in made["o"]:
                 await CustomerOrganization.filter(id=o.id).delete()
-            for c in created["customers"]:
+            for c in made["c"]:
                 await Customer.filter(id=c.id).delete()
-            print("[cleanup] 测试数据已清理")
+            print("[cleanup] 完成")
         except Exception as e:
-            print(f"[cleanup] 警告：清理未完成 {e}")
+            print(f"[cleanup] 警告 {e}")
+        finally:
+            await Tortoise.close_connections()
 
-    total = len(results)
-    passed = sum(1 for _, ok in results if ok)
-    print(f"\n===== 结果：{passed}/{total} PASS =====")
-    if passed != total:
-        print("失败项：", [n for n, ok in results if not ok])
+    ok = sum(1 for _, v in R if v)
+    print(f"\n===== {ok}/{len(R)} PASS =====")
+    if ok != len(R):
+        print("FAIL:", [n for n, v in R if not v])
         sys.exit(1)
 
 

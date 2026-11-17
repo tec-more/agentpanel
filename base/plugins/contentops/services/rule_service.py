@@ -1,9 +1,9 @@
-"""规则库服务：合规规则 CRUD + 平台适配配置 CRUD。"""
+"""规则库服务：合规规则 CRUD + 灰度 + 词库批量导入 + 平台适配配置 CRUD。"""
 from typing import Optional
 
 from base.common.authz import OwnerContext, get_owned_or_404, owned_queryset
 from base.plugins.contentops.models import ComplianceRule, PlatformRuleConfig
-from base.plugins.contentops.schemas.content_schema import RuleCreate, RuleUpdate
+from base.plugins.contentops.schemas.content_schema import RuleCreate, RuleUpdate, RuleBulkImport
 
 
 class RuleService:
@@ -18,6 +18,8 @@ class RuleService:
             risk_level=data.risk_level, action=data.action, basis=data.basis,
             suggestion=data.suggestion, category=data.category, platform=data.platform,
             enabled=data.enabled, source="tenant", version=version,
+            status=getattr(data, "status", "active") or "active",
+            rollout_percent=getattr(data, "rollout_percent", 100),
             owner_type=owner.owner_type if owner else "usr",
             owner_id=owner.owner_id if owner else None,
         )
@@ -57,6 +59,52 @@ class RuleService:
             raise ValueError("规则不存在或无权删除")
         await rule.delete()
         return True
+
+    @staticmethod
+    async def toggle_rule(rule_id: int, enabled: bool, owner: Optional[OwnerContext]):
+        """规则启停（独立端点，不改变版本）。"""
+        rule = await get_owned_or_404(ComplianceRule, rule_id, owner, for_write=True) if owner else await ComplianceRule.get_or_none(id=rule_id)
+        if not rule:
+            raise ValueError("规则不存在或无权操作")
+        rule.enabled = enabled
+        await rule.save(update_fields=["enabled", "updated_at"])
+        return await rule.to_dict()
+
+    @staticmethod
+    async def bulk_import(data: RuleBulkImport, owner: Optional[OwnerContext]) -> dict:
+        """开源词库批量导入：按归属去重后 bulk_create，返回导入/跳过计数。"""
+        owner_type = owner.owner_type if owner else "usr"
+        owner_id = owner.owner_id if owner else None
+        words = [w.strip() for w in data.words if w and w.strip()]
+        if not words:
+            return {"created": 0, "skipped": 0, "total": 0}
+
+        existing: set[str] = set()
+        if data.dedupe:
+            q = ComplianceRule.filter(pattern__in=words, owner_type=owner_type)
+            if owner_id is not None:
+                q = q.filter(owner_id=owner_id)
+            else:
+                q = q.filter(owner_id__isnull=True)
+            existing = {r.pattern for r in await q}
+
+        to_create = []
+        seen: set[str] = set()
+        for w in words:
+            if w in existing or w in seen:
+                continue
+            seen.add(w)
+            to_create.append(ComplianceRule(
+                layer=data.layer, type=data.type, pattern=w,
+                risk_level=data.risk_level, action=data.action,
+                basis=data.basis, category=data.category, platform=data.platform,
+                source=data.source, version="1", enabled=True,
+                status="active", rollout_percent=100,
+                owner_type=owner_type, owner_id=owner_id,
+            ))
+        if to_create:
+            await ComplianceRule.bulk_create(to_create, batch_size=200)
+        return {"created": len(to_create), "skipped": len(words) - len(to_create), "total": len(words)}
 
     # ---------- 平台适配配置 ----------
     @staticmethod

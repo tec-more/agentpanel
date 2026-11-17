@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, Query
 
 from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
-from base.plugins.contentops.schemas.content_schema import RuleCreate, RuleUpdate
+from base.plugins.contentops.schemas.content_schema import (
+    RuleCreate, RuleUpdate, RuleToggle, RuleBulkImport,
+)
 from base.plugins.contentops.services.rule_service import RuleService
 
 rules_router = APIRouter(prefix="/rules", tags=["规则库"])
@@ -52,6 +54,27 @@ async def delete_rule(
         return success_response(msg="删除成功")
     except ValueError as e:
         return fail_response(msg=str(e), code=404)
+
+
+@rules_router.put("/{rule_id}/toggle", summary="规则启停")
+async def toggle_rule(
+    rule_id: int, data: RuleToggle,
+    owner: OwnerContext = Depends(require_owner),
+    user_id: int = require_action("contentops:rule:manage"),
+):
+    try:
+        return success_response(data=await RuleService.toggle_rule(rule_id, data.enabled, owner))
+    except ValueError as e:
+        return fail_response(msg=str(e), code=404)
+
+
+@rules_router.post("/import", summary="开源词库批量导入")
+async def import_rules(
+    data: RuleBulkImport,
+    owner: OwnerContext = Depends(require_owner),
+    user_id: int = require_action("contentops:rule:manage"),
+):
+    return success_response(data=await RuleService.bulk_import(data, owner))
 
 
 @rules_router.get("/platform/{platform}", summary="平台适配配置列表")

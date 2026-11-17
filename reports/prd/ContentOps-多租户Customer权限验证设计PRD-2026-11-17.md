@@ -3,14 +3,15 @@
 | 项 | 内容 |
 |---|---|
 | 文档编号 | AP-CONOPS-AUTHZ-1.0 |
-| 版本 / 日期 | v1.0 / 2026-11-17（首版：确立 customer(CUS) 为租户主体，复用 authz 全栈，整改权限码双轨判定） |
-| 状态 | **设计有效，含 1 项 P0 代码缺陷待整改**（见 §7 缺陷 C1）；整改完成前 CUS 租户无法调用 contentops 业务接口 |
+| 版本 / 日期 | v1.2 / 2026-11-17（C1 整改落地 + M4 对外 API 鉴权章节：新增 `require_action` 双轨、`contentops_action` 授权、对外 API Key 第四鉴权路径，见 §15） |
+| 状态 | **设计有效，P0 缺陷 C1 已修复并落地**（见 §7 与 §14 整改实施记录）；CUS 租户经授权后可正常调用 contentops 业务接口 |
 | 文档类型 | 权限验证专项 PRD（配套专项，不取代业务 PRD 的功能范围） |
 | 适用层级 | contentops 插件 + `base/common/authz` 公共层（归属模型、鉴权依赖、审计） |
 | 租户主体 | `customer`（CUS 域），JWT `typ=cus` / `sub=customer.id`；USR 域（员工/dept）不属于本文租户范畴 |
 | 权限机制 | 复用既有 authz 全栈：L1 上下文 → L2 归属过滤 → L3 服务复核 → resource_grant 资源授权 → F8 越权审计；**CUS 主体不走 RBAC** |
 | 上游文档 | `ContentOps-内容合规与自适应处理台-开发PRD-2026-11-17.md`（US-6 租户隔离、§6.7 权限、§10 数据模型、§14 T-01）、`ContentOps-多平台自媒体内容合规与自适应PRD-2026-11-17.md`（D7） |
-| 落地代码 | `base/common/authz/{context,constants,filter,guard,service,audit}.py`、`base/common/authz/middleware/owner_context.py`、`base/common/authz/models/resource_grant.py`、`base/common/permissions.py`、`base/common/security.py`、`base/plugins/customer/api/v1/auth.py`、`base/plugins/contentops/**` |
+| 落地代码 | `base/common/authz/{context,constants,filter,guard,service,audit,action_guard}.py`、`base/common/authz/middleware/owner_context.py`、`base/common/authz/models/resource_grant.py`、`base/common/permissions.py`、`base/common/security.py`、`base/plugins/customer/api/v1/auth.py`、`base/plugins/contentops/**`、`base/plugins/agent/api/v1/admin_grant_router.py` |
+| 回归脚本 | `tests/regression_contentops_authz.py`（20/20 PASS）、`tests/regression_contentops.py`（24/24 PASS，无回归） |
 | 安全约定 | 只列配置键名、权限码、代码路径与数据字段，**不记录 `config.conf` / `.env` / secrets 的任何取值** |
 
 > **本文只解决一个问题**：把既有三份 ContentOps 文档中"全表 `tenant_id` + 全局租户过滤中间件 + RBAC 四元组"的**虚构权限设计**，替换为项目真实存在的、以 `customer` 为租户的 **authz 归属体系**，并给出可落地的数据模型、鉴权契约、路由改造与验收口径。功能范围（合规引擎/自适应/6 平台适配/审核/导出）不在本文重复，以开发 PRD 为准。
@@ -261,31 +262,31 @@ async def dependency(request, user_id=Depends(get_current_user_id)):
 | B | CUS 仅做归属过滤，完全不判功能码 | ✅ | ❌ | 最简单，但租户内无法区分"运营/审核员"，不满足开发 PRD §4 角色分工 |
 | C | 为 CUS 建 RBAC 影子 user（`identity_link` 绑定） | ❌ | ✅ | 违背 R-14（禁止自动绑定）与 A3，引入双主体混乱，**否决** |
 
-### 7.3 方案 A 落地契约（建议实现，非现状）
+### 7.3 方案 A 落地契约（v1.1 已实现）
 
-1. **扩展资源类型**：在 `base/common/authz/constants.py::ResourceType` 增加 `CONTENTOPS_ACTION = "contentops_action"`（用于内容合规功能码授权）。
-2. **新增双轨依赖**（建议置于 `base/common/authz/permissions.py`，与旧 `permissions.py` 区分命名）：
+1. **扩展资源类型**：`base/common/authz/constants.py::ResourceType` 已增加 `CONTENTOPS_ACTION = "contentops_action"`，并新增 `CONTENTOPS_ACTION_CODES`（12 个权限码常量，与 manifest 一致，防垃圾授权）。
+2. **新增双轨依赖**：落地于 `base/common/authz/action_guard.py::require_action(code)`（未放在 `permissions.py`，避免与旧 `base/common/permissions.py` 混淆）。实现要点：
 
 ```python
 def require_action(code: str):
-    async def dep(owner: OwnerContext = Depends(require_owner)) -> OwnerContext:
+    rbac_dep = _rbac_dependency(code)   # USR：复用 get_user_permissions_cached，403 语义不变
+    async def dependency(owner: OwnerContext = Depends(require_owner)) -> int:
         if owner.is_admin_user:
-            # USR：沿用既有 RBAC 权限码（行为不变）
-            await _check_rbac_permission(owner.owner_id, code)   # 复用 get_user_permissions_cached
-            return owner
+            return await rbac_dep(owner)                      # 返回 user.id
         if owner.is_customer:
-            # CUS：查 resource_grant（含组织继承），绝不进入 get_current_user_id
-            ok = await check_resource_access(
-                ("cus", owner.owner_id), "contentops_action", code
+            allowed = await ResourceGrantService.check_resource_access(
+                owner, "contentops_action", code              # 含 subject 有效性 + org 继承
             )
-            if not ok:
-                raise HTTPException(404, "资源不存在")            # 不暴露功能存在性
-            return owner
+            if not allowed:
+                raise OwnedResourceNotFound()                 # 404，不暴露功能存在性
+            return owner.owner_id                             # 返回 customer.id
         raise HTTPException(401, "无效的认证凭据")
-    return Depends(dep)
+    return Depends(dependency)
 ```
 
-3. **授权数据初始化**：由平台管理员通过 `ResourceGrantService.grant(("cus", customer_id), "contentops_action", code)` 给租户授权；组织授权 `("org", org_id)` 可被成员继承。默认策略遵循 §5.2——**不隐式放行**，未授权即拒绝。
+> **与 v1.0 伪代码的关键差异**：依赖返回值由 `OwnerContext` 改为 **`int` 操作人 ID**（USR→user.id / CUS→customer.id）。因为 contentops 路由把注入值用作 `creator_id`/`uploader_id`/`reviewer_id`（`content.py:23`、`media.py:31/102`、`export.py:23`、`review.py:29`），若返回 `OwnerContext` 会把对象塞进这些 BigInt 字段。CUS 分支全程不进入 `get_current_user_id`（已由回归 A7 用 AST 校验）。
+
+3. **授权数据初始化**：平台管理员经 `ResourceGrantService.grant(("cus", customer_id), "contentops_action", code)` 授权；组织授权 `("org", org_id)` 可被成员继承。默认策略遵循 §5.2——**不隐式放行**，未授权即拒绝。管理端 `admin_grant_router.py` 已支持 `contentops_action` 资源类型（授权选择器 / 发放 / 撤销 / 反查）。
 4. **租户内分权粒度**：以 customer 账号为单位授权（不同 customer 可有不同功能码组合）。**同一 customer 账号下的多个自然人无法再分权**——这是 CUS 恒 self 模型的固有限制，见 §13 已知边界 K2。
 
 ### 7.4 既有能力确认（非缺陷）：创建路径 owner 字段已正确注入
@@ -345,17 +346,17 @@ rules.extend(r for r in owned if r.id not in seen)
 
 ---
 
-## 10. API 鉴权矩阵（整改目标态）
+## 10. API 鉴权矩阵（整改前 → 当前）
 
-> 图例：**R** = `require_owner`；**P** = `require_permission`（USR/RBAC）；**A** = `require_action`（§7.3 双轨，待实现）；**L2** = `owned_queryset`/`get_owned_or_404`；**L3** = `assert_owner_access`。现状全部为 `R + P`；目标态把 `P` 替换为 `A`（CUS 走 resource_grant，USR 保持 RBAC）。
+> 图例：**R** = `require_owner`；**P** = `require_permission`（USR/RBAC，已废弃于 contentops）；**A** = `require_action`（§7.3 双轨，已实现）；**L2** = `owned_queryset`/`get_owned_or_404`；**L3** = `assert_owner_access`。当前 7 个路由文件已全部由 `R + P` 替换为 `R + A`（CUS 走 resource_grant，USR 保持 RBAC）。
 
-| 路由文件 | 端点示例 | 现状 | 目标态 | 备注 |
+| 路由文件 | 端点示例 | 整改前 | 当前 | 备注 |
 |---|---|---|---|---|
 | `content.py` | 创建/编辑/删除源内容 | R+P | R+A+L3(写) | 创建已注入 owner（§7.4 既有能力） |
 | `content.py` | 列表/详情 | R+P | R+A+L2 | L2 声明式过滤 |
 | `content.py` | `versions/{id}/confirm` | R+P(`review:decide`) | R+A+L3 | 状态跃迁，人工确认唯一出口 |
 | `content.py` | `adapt/generate` | R+P | R+A+L2 | 生成成品后二次合规 |
-| `compliance.py` | `compliance/check` | R+P | R+A+L2 | CUS 当前必 403（C1 直接受害者） |
+| `compliance.py` | `compliance/check` | R+P | R+A+L2 | 整改前 CUS 必 403（C1 直接受害者），现需授权后可达 |
 | `review.py` | 队列 / `decide` | R+P | R+A+L2+L3(写) | 审核放行需复核 |
 | `export.py` | 导出 / 下载 | R+P | R+A+L2+L3 | 导出快照绑定归属 |
 | `ledger.py` | 台账 CRUD / 效果回填 | R+P | R+A+L2 | CUS 租户仅本人台账 |
@@ -407,13 +408,104 @@ rules.extend(r for r in owned if r.id not in seen)
 
 | # | 边界 | 影响 | 建议 |
 |---|---|---|---|
-| K1 | **C1 整改未完成前，CUS 租户无法调用 contentops**（P0） | 内容合规的 C 端客户场景不可用 | 按 §7.3 实现 `require_action` + 路由替换 + 授权初始化，先于 M1 联调 |
+| K1 | ~~C1 整改未完成前 CUS 无法调用 contentops（P0）~~ **已闭环**（v1.1） | 无遗留影响 | 已实现 `require_action` + 7 路由替换 + 管理端授权；CUS 需先获 `contentops_action` 授权（默认不放行，非缺陷） |
 | K2 | CUS 恒 self，**同一 customer 账号下多个自然人无法再分权** | 租户内"运营/审核员"双人分权无法用 RBAC 表达 | 短期以不同 customer 账号 + 不同功能码授权区分；中期评估 `customer_organization` 成员角色模型 |
 | K3 | `resource_grant` 现无 `contentops_action` 类型 | §7.3 需扩展枚举 + 授权数据 | 属小改动；须同步管理端授权 UI |
 | K4 | 既有 `require_permission` 仍被 USR 管理端大量接口使用 | 方案 A 只替换 contentops 路由，不动全局 | 避免全局替换，防止 USR 回归 |
 | K5 | 本文未做真库端到端压测 | 断言 V1–V13 中涉及 DB/MQ 的为设计态 | 按项目回归脚本在 dev 环境实跑后回填结果 |
 | K6 | 越权审计依赖 audit 插件表存在 | 缺表时 `record_violation` 仅打日志（降级不阻断） | 保持既有降级语义，不改为 fail-closed |
 | K7 | `customer_organization` 在 `base/plugins/customer/models/customer_organization.py` 为兼容 shim | resolve_plugin_symbol 解析路径为 shim 路径，功能正常 | 真源在 `packages/common/models/customer_organization.py`，勿改 shim 语义 |
+
+---
+
+## 14. 整改实施记录（v1.1，2026-11-17）
+
+> C1 已从"设计"落地为"代码"，本节记录实际改动、验证与部署状态。
+
+### 14.1 代码改动清单
+
+| # | 文件 | 改动 |
+|---|---|---|
+| M1 | `base/common/authz/constants.py` | `ResourceType` 增 `CONTENTOPS_ACTION`；新增 `CONTENTOPS_ACTION_CODES`（12 码常量） |
+| M2 | `base/common/authz/action_guard.py`（新增） | `require_action(code)` 双轨依赖：USR 复用 RBAC（403）、CUS 走 `ResourceGrantService`（含 org 继承，未授权 404）；返回 `int` 操作人 ID |
+| M3 | `base/common/authz/__init__.py` | 导出 `require_action`、`CONTENTOPS_ACTION_CODES` |
+| M4 | `base/plugins/contentops/api/v1/*.py`（7 文件） | 全部 `require_permission(...)` → `require_action(...)`（共 34 处）；`require_owner` + L2 归属过滤保持不变 |
+| M5 | `base/plugins/agent/api/v1/admin_grant_router.py` | `RESOURCE_TYPES` 改为从 `ResourceType` 派生；新增 `contentops_action` 的资源元数据/搜索/选择器/授权校验，管理员可为 CUS/ORG 发放功能码 |
+| M6 | `tests/regression_contentops_authz.py`（新增） | 20 条断言：结构/ CUS 授权/ org 继承/ 主体禁用/ USR 无回归/ HTTP 端到端 |
+
+### 14.2 验证结果
+
+| 回归 | 结果 | 说明 |
+|---|---|---|
+| `tests/regression_contentops_authz.py` | **20/20 PASS** | CUS 未授权 404、授权后 200 且操作人=customer.id、跨码隔离、org 继承、禁用主体拒绝、USR RBAC 403/200/超管不回归、401 非法 token |
+| `tests/regression_contentops.py` | **24/24 PASS** | 既有装配/建表/端点/权限/菜单回归无破坏 |
+
+### 14.3 部署状态
+
+- 本地源码：**已修复**。
+- 运行容器 `agentpanel-app`：修复代码已 `docker cp` 同步并重启，`Application startup complete`、contentops 插件正常装配（容器内 `require_action` 已生效、`require_permission` 残留 0）。
+- **镜像遗留**：`deploy/app/Dockerfile` 的 `COPY . .` 会把当前源码烤入镜像，本次改动尚未重新 build；下次重建镜像前须执行 `docker build -f deploy/app/Dockerfile -t agentpanel-app:latest .`，否则容器重建后修复丢失。
+
+### 14.4 使用方式（给 CUS 租户开通 contentops）
+
+默认策略为**不隐式放行**：新建 customer 无任何 `contentops_action` 授权，调用 contentops 接口返回 404。管理员需通过 `POST /v1/agent/admin/grants` 发放授权：
+
+```json
+{ "owner_type": "cus", "owner_id": <customer_id>, "resource_type": "contentops_action", "resource_id": "contentops:compliance:check" }
+```
+
+- 12 个功能码见 §7.3 常量；可用 `GET /v1/agent/admin/grants/resource-options?type=contentops_action` 获取可选清单。
+- 组织授权：`owner_type="org"` 发放后，成员 customer 自动继承（缓存 300s，成员变动由 organization_service 主动失效）。
+- 撤销：`DELETE /v1/agent/admin/grants`（同四元组），即时生效。
+- 批量开通建议由后台脚本/运维流程对目标 customer 逐码发放，避免手工遗漏。
+
+---
+
+## 15. M4 对外开放 API 鉴权（2026-11-17 增补）
+
+> 本文前述章节解决「CUS 租户登录态如何鉴权」。M4 新增的**对外 OpenAPI**（第三方系统无 CUS JWT）是第四种鉴权路径，不与前三种混淆，此处固化其契约。完整部署见 `ContentOps-M4-上线部署说明-2026-11-17.md`。
+
+### 15.1 定位与隔离
+
+- 对外开放**只读**能力：文本合规检测、可见规则查询；不做改写/导出等写操作。
+- 鉴权**不走** `require_owner` / `require_action` / RBAC / JWT，走独立的 `require_openapi_scope(scope)`（`base/plugins/contentops/services/openapi_auth.py`）。
+- `AuthzContextMiddleware` 对 `ckey_*.secret` 形态 token 安全返回 None（不注入 owner、不误判 401），鉴权完全在依赖层完成；`plugin_route_guard` 只判插件启用态，不误伤。
+
+### 15.2 凭据模型（`contentops_api_key` 表）
+
+| 字段 | 约定 |
+|---|---|
+| `key_id` | 公开标识 `ckey_<hex>`，唯一 |
+| `secret_hash` | secret 的 SHA-256；明文 `csk_*` 仅签发时回显一次，DB 不存 |
+| `secret_prefix` | 展示用前缀，便于识别 |
+| `owner_type` / `owner_id` | 绑定 CUS 租户（`cus` / customer.id）；**外部调用继承此归属** |
+| `scopes` | 白名单，仅 `compliance:check` / `rules:read`；非法 scope 签发时拒绝 |
+| `status` / `expires_at` / `allowed_ips` | active/disabled/revoked、过期、IP 白名单 |
+| `rate_limit_rpm` | 每 key 60s 窗口上限（默认 60，0=不限） |
+
+### 15.3 鉴权链（fail-closed）
+
+1. 提取凭据：`X-ContentOps-Key-Id` + `X-ContentOps-Secret`，或 `Authorization: Bearer <key_id>.<secret>`；
+2. 状态 active + 未过期 + `hmac.compare_digest` 常量时间比对；
+3. IP 白名单 → scope 校验 → RPM 限流（Redis 优先，进程内降级）；
+4. 通过后在依赖内构造 `OwnerContext(owner_type, owner_id)` 显式传给 service，复用 L2 归属过滤（平台级规则 + 本租户 L4 规则），跨租户隔离。
+
+### 15.4 响应与审计
+
+- 失败：无效凭据 401 / IP 不符 403 / scope 不足 403 / 超限 429，**均不暴露资源存在性**。
+- 审计写 `AuditLog`（`module='contentops_openapi'`，`operation=contentops.openapi.*`），含 trace_id / key_id 前缀，**不记正文**，失败仅记日志不阻断。
+- 合规检测响应支持 `Idempotency-Key` 回显（只读语义，幂等由调用方保证）。
+
+### 15.5 与既有三层的关系
+
+| 路径 | 主体 | 认证依赖 | 功能权限 |
+|---|---|---|---|
+| 本文 §7（CUS 登录态） | CUS 客户 | `require_owner` | `require_action` → resource_grant |
+| 本文 §10（USR 登录态） | 员工 | `require_owner` | `require_action` → RBAC |
+| 旧版管理端 | USR | `get_current_user_id` | `require_permission` |
+| **M4 对外 API（本节）** | 第三方系统（绑定 CUS 租户） | `require_openapi_scope` | API Key scopes |
+
+> 四种路径并存，互不串线；对外 API 是唯一不依赖人类登录态的路径，其租户归属来自 Key 绑定而非 JWT。
 
 ---
 

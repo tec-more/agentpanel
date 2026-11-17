@@ -14,9 +14,13 @@ class ComplianceRule(BaseModel, TimestampMixin):
     suggestion = fields.TextField(null=True, description="替换建议")
     category = fields.CharField(max_length=64, null=True, description="行业/分类（医疗/金融等）")
     version = fields.CharField(max_length=64, default="1", description="规则版本", index=True)
-    enabled = fields.BooleanField(default=True, description="是否启用", index=True)
+    enabled = fields.BooleanField(default=True, description="是否启用（总开关）", index=True)
     source = fields.CharField(max_length=16, default="opensource", description="来源: opensource/self/tenant")
     platform = fields.CharField(max_length=32, null=True, description="平台专属规则（NULL 表示通用）")
+
+    # M4 灰度发布：status=draft/gray/active/archived；gray 时按 rollout_percent 确定性放量
+    status = fields.CharField(max_length=16, default="active", description="发布状态: draft/gray/active/archived", index=True)
+    rollout_percent = fields.IntField(default=100, description="灰度放量比例 0-100（仅 status=gray 生效）")
 
     # L4 品牌规则按归属隔离；L1-L3 平台级规则 owner 为 None（全局可见）
     owner_type = fields.CharField(max_length=3, null=True, description="归属主体类型: cus/usr/org；NULL=平台级")
@@ -25,4 +29,7 @@ class ComplianceRule(BaseModel, TimestampMixin):
     class Meta:
         table = "contentops_compliance_rule"
         ordering = ["-created_at"]
-        indexes = [("layer", "enabled"), ("owner_type", "owner_id"), ("risk_level", "enabled")]
+        indexes = [
+            ("layer", "enabled"), ("owner_type", "owner_id"), ("risk_level", "enabled"),
+            ("status", "rollout_percent"),
+        ]

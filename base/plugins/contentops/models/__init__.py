@@ -9,9 +9,10 @@ from .publish_ledger import PublishLedger, EffectData
 from .platform_rule_config import PlatformRuleConfig
 from .llm_provider_config import LLMProviderConfig
 from .media_asset import MediaAsset
+from .api_key import ContentopsApiKey
 
 __all__ = [
     "ContentItem", "ContentVersion", "ComplianceRule", "ComplianceHit",
     "ReviewTask", "ExportPackage", "PublishLedger", "EffectData",
-    "PlatformRuleConfig", "LLMProviderConfig", "MediaAsset",
+    "PlatformRuleConfig", "LLMProviderConfig", "MediaAsset", "ContentopsApiKey",
 ]

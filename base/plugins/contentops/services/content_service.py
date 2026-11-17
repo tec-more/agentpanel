@@ -43,6 +43,13 @@ class ContentService:
         d = await item.to_dict()
         versions = await ContentVersion.filter(content_id=item.id).order_by("-created_at")
         d["versions"] = [await v.to_dict() for v in versions]
+        # 关联素材（回显/导出用）
+        try:
+            from base.plugins.contentops.models import MediaAsset
+            d["media_assets"] = [await a.to_dict() for a in
+                                 await MediaAsset.filter(content_id=item.id).order_by("-created_at")]
+        except Exception:
+            d["media_assets"] = []
         return d
 
     @staticmethod
@@ -60,6 +67,12 @@ class ContentService:
         item = await get_owned_or_404(ContentItem, item_id, owner, for_write=True) if owner else await ContentItem.get_or_none(id=item_id)
         if not item:
             raise ValueError("内容不存在或无权删除")
+        # 清理该内容下的素材文件（归属内）
+        try:
+            from base.plugins.contentops.services.media_service import MediaService
+            await MediaService.cleanup_content_files(item.id, owner)
+        except Exception:
+            pass  # 文件清理失败不阻断记录删除
         await ContentVersion.filter(content_id=item.id).delete()
         await item.delete()
         return True

@@ -109,6 +109,23 @@ async def confirm_version(
         return fail_response(msg=str(e), code=400)
 
 
+@content_router.post("/{item_id}/media/bind", summary="把上传素材绑定到内容")
+async def bind_media(
+    item_id: int, payload: dict,
+    owner: OwnerContext = Depends(require_owner),
+    user_id: int = require_permission("contentops:content:edit"),
+):
+    try:
+        from base.plugins.contentops.services.media_service import MediaService
+        ids = payload.get("asset_ids") or []
+        # 校验内容归属
+        await content_service.ContentService.get_detail(item_id, owner)
+        count = await MediaService.bind_to_content(ids, item_id, owner)
+        return success_response(data={"bound": count}, msg="素材已绑定")
+    except ValueError as e:
+        return fail_response(msg=str(e), code=404)
+
+
 @content_router.post("/adapt/generate", summary="生成平台自适应成品")
 async def generate_adapt(
     data: AdaptGenerateRequest,

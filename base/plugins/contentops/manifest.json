@@ -19,7 +19,8 @@
         "export_package",
         "publish_ledger",
         "platform_rule_config",
-        "llm_provider_config"
+        "llm_provider_config",
+        "media_asset"
     ],
     "schemas": [
         "content_schema"

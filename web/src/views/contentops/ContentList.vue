@@ -77,8 +77,17 @@
           <el-select v-model="form.topics" multiple filterable allow-create default-first-option
                      placeholder="输入后回车添加话题" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="封面">
+          <MediaUploader v-model="form.cover_assets" kind="cover" :limit="1" button-text="上传封面" />
+        </el-form-item>
+        <el-form-item label="正文图片">
+          <MediaUploader v-model="form.image_assets" kind="image" :limit="18" button-text="上传图片" />
+        </el-form-item>
+        <el-form-item label="成片视频">
+          <MediaUploader v-model="form.video_assets" kind="video" :limit="1" button-text="上传成片" />
+        </el-form-item>
         <el-form-item label="正文" required>
-          <el-input v-model="form.body" type="textarea" :rows="12" placeholder="支持富文本/纯文本" />
+          <RichTextEditor v-model="form.body" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -170,6 +179,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Search, Refresh, View } from '@element-plus/icons-vue'
+import RichTextEditor from '@/components/contentops/RichTextEditor.vue'
+import MediaUploader from '@/components/contentops/MediaUploader.vue'
+import { extractMediaText, adaptMediaCover } from '@/api/contentops'
 import {
   getContentList, getContentDetail, createContent, updateContent, deleteContent,
   generateAdapt, checkCompliance, confirmVersion, rollbackVersion, PLATFORMS
@@ -183,7 +195,7 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const dialogVisible = ref(false)
 const submitting = ref(false)
 const editingId = ref(null)
-const form = reactive({ title: '', summary: '', body: '', topics: [] })
+const form = reactive({ title: '', summary: '', body: '', topics: [], cover_assets: [], image_assets: [], video_assets: [] })
 
 const detailVisible = ref(false)
 const detail = ref(null)
@@ -224,15 +236,24 @@ function resetSearch() {
 
 function handleCreate() {
   editingId.value = null
-  Object.assign(form, { title: '', summary: '', body: '', topics: [] })
+  Object.assign(form, { title: '', summary: '', body: '', topics: [], cover_assets: [], image_assets: [], video_assets: [] })
   dialogVisible.value = true
 }
-function handleEdit(row) {
+async function handleEdit(row) {
   editingId.value = row.id
   Object.assign(form, {
-    title: row.title, summary: row.summary || '', body: row.body, topics: row.topics || []
+    title: row.title, summary: row.summary || '', body: row.body, topics: row.topics || [],
+    cover_assets: [], image_assets: [], video_assets: []
   })
   dialogVisible.value = true
+  // 异步加载已绑定素材，按 kind 归类回显
+  try {
+    const { data } = await getContentDetail(row.id)
+    const assets = data.media_assets || []
+    form.cover_assets = assets.filter(a => a.kind === 'cover')
+    form.image_assets = assets.filter(a => a.kind === 'image')
+    form.video_assets = assets.filter(a => a.kind === 'video')
+  } catch (_) {}
 }
 async function submitForm() {
   if (!form.title || !form.body) {
@@ -241,9 +262,32 @@ async function submitForm() {
   }
   submitting.value = true
   try {
-    const payload = { title: form.title, summary: form.summary, body: form.body, topics: form.topics }
-    if (editingId.value) await updateContent(editingId.value, payload)
-    else await createContent(payload)
+    const allAssets = [...form.cover_assets, ...form.image_assets, ...form.video_assets]
+    const payload = {
+      title: form.title, summary: form.summary, body: form.body, topics: form.topics,
+      media: allAssets.map(a => ({
+        asset_id: a.id, kind: a.kind, url: a.url, content_type: a.content_type,
+        width: a.width, height: a.height, duration: a.duration_sec
+      })),
+      cover: form.cover_assets[0]?.url || null
+    }
+    let saved
+    if (editingId.value) {
+      saved = (await updateContent(editingId.value, payload)).data
+    } else {
+      saved = (await createContent(payload)).data
+    }
+    // 素材绑定 + 触发 OCR/ASR 提取（异步，不阻塞主流程）
+    const cId = saved?.id || editingId.value
+    if (cId && allAssets.length) {
+      const { bindMediaToContent } = await import('@/api/contentops')
+      await bindMediaToContent(cId, allAssets.map(a => a.id))
+      for (const a of allAssets) {
+        if (a.kind === 'image' || a.kind === 'cover' || a.kind === 'video') {
+          extractMediaText(a.id).catch(() => {})
+        }
+      }
+    }
     ElMessage.success(editingId.value ? '已更新' : '已创建')
     dialogVisible.value = false
     fetchList()

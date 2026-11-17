@@ -60,22 +60,54 @@ class ExportService:
                 raise ValueError(f"【{platform}】存在未处置的 P0 高危命中，禁止导出")
             versions.append((platform, ver))
 
-        # 生成 ZIP（内存）
+        # 生成 ZIP（内存）：文案 + 封面 + 正文图 + 成片 + 发布须知
+        from base.plugins.contentops.models import MediaAsset
+        from base.plugins.contentops.services.media_service import MediaService
+
         buf = io.BytesIO()
-        file_keys: dict[str, str] = {}
+        file_keys: dict[str, list[str]] = {}
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for platform, ver in versions:
                 payload = ver.payload
                 base = f"{platform}/"
+                media_dir = base + "素材/"
                 title = payload.get("title", "")
                 body = payload.get("body", "")
-                zf.writestr(base + "文案.md", f"# {title}\n\n{body}\n")
-                zf.writestr(base + "文案.txt", f"{title}\n\n{body}\n")
-                zf.writestr(base + "发布须知.md", _platform_notice(platform, payload))
-                zf.writestr(base + "meta.json", json.dumps(payload, ensure_ascii=False, indent=2))
-                file_keys[platform] = [
-                    f"{base}文案.md", f"{base}文案.txt", f"{base}发布须知.md", f"{base}meta.json",
+                names = [
+                    base + "文案.md", base + "文案.txt",
+                    base + "发布须知.md", base + "meta.json",
                 ]
+                zf.writestr(names[0], f"# {title}\n\n{body}\n")
+                zf.writestr(names[1], f"{title}\n\n{body}\n")
+                zf.writestr(names[2], _platform_notice(platform, payload))
+                zf.writestr(names[3], json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+
+                # 把引用的素材文件真正打进包：封面 / 正文图 / 成片
+                # 引用约定：payload.cover_asset_id / image_asset_ids / video_asset_id / adapted_asset_ids
+                ref_ids: list[int] = []
+                for key in ("cover_asset_id", "video_asset_id"):
+                    v = payload.get(key)
+                    if isinstance(v, int):
+                        ref_ids.append(v)
+                for key in ("image_asset_ids", "adapted_asset_ids"):
+                    v = payload.get(key)
+                    if isinstance(v, list):
+                        ref_ids.extend(x for x in v if isinstance(x, int))
+                seen = set()
+                for aid in ref_ids:
+                    if aid in seen:
+                        continue
+                    seen.add(aid)
+                    asset = await MediaAsset.get_or_none(id=aid)
+                    if not asset:
+                        continue
+                    src = MediaService.file_path(asset)
+                    if not src.exists():
+                        continue
+                    arcname = f"{media_dir}{asset.kind}_{aid}_{asset.filename}"
+                    zf.write(src, arcname)
+                    names.append(arcname)
+                file_keys[platform] = names
         buf.seek(0)
 
         # 落盘

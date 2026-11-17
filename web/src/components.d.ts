@@ -73,6 +73,8 @@ declare module 'vue' {
     FlowNodePanel: typeof import('./components/approval/FlowNodePanel.vue')['default']
     GlobalApproval: typeof import('./components/GlobalApproval.vue')['default']
     MailBell: typeof import('./components/MailBell.vue')['default']
+    MediaUploader: typeof import('./components/contentops/MediaUploader.vue')['default']
+    RichTextEditor: typeof import('./components/contentops/RichTextEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

@@ -12,6 +12,15 @@ export const confirmVersion = (versionId, confirm = true) =>
   request.post(`/v1/contentops/contents/versions/${versionId}/confirm`, { confirm })
 export const generateAdapt = (data) => request.post('/v1/contentops/contents/adapt/generate', data)
 
+// ============ 素材库 ============
+export const getMediaList = (params) => request.get('/v1/contentops/media', { params })
+export const bindMediaToContent = (contentId, assetIds) =>
+  request.post(`/v1/contentops/contents/${contentId}/media/bind`, { asset_ids: assetIds })
+export const deleteMedia = (id) => request.delete(`/v1/contentops/media/${id}`)
+export const extractMediaText = (id) => request.post(`/v1/contentops/media/${id}/extract`)
+export const adaptMediaCover = (id, params) =>
+  request.post(`/v1/contentops/media/${id}/adapt-cover`, null, { params })
+
 // ============ 合规检测 ============
 export const checkCompliance = (data) => request.post('/v1/contentops/compliance/check', data)
 

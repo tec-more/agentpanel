@@ -6,7 +6,9 @@
 """
 from fastapi import APIRouter
 
-from base.plugins.contentops.api.v1 import compliance, content, export, ledger, review, rules
+from base.plugins.contentops.api.v1 import (
+    compliance, content, export, ledger, media, review, rules,
+)
 
 router = APIRouter()
 router.include_router(content.content_router)
@@ -15,3 +17,4 @@ router.include_router(review.review_router)
 router.include_router(export.export_router)
 router.include_router(ledger.ledger_router)
 router.include_router(rules.rules_router)
+router.include_router(media.media_router)

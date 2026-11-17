@@ -125,3 +125,5 @@ dshw/dist-exe/
 dshw/**/.desktop-build/
 dshw/**/coverage/
 dshw/**/.pytest_cache/
+# ContentOps 运行产物（上传素材/导出包）
+storage/contentops/

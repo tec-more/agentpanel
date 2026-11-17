@@ -8,9 +8,10 @@ from .export_package import ExportPackage
 from .publish_ledger import PublishLedger, EffectData
 from .platform_rule_config import PlatformRuleConfig
 from .llm_provider_config import LLMProviderConfig
+from .media_asset import MediaAsset
 
 __all__ = [
     "ContentItem", "ContentVersion", "ComplianceRule", "ComplianceHit",
     "ReviewTask", "ExportPackage", "PublishLedger", "EffectData",
-    "PlatformRuleConfig", "LLMProviderConfig",
+    "PlatformRuleConfig", "LLMProviderConfig", "MediaAsset",
 ]

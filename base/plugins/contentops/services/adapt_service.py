@@ -44,6 +44,26 @@ class AdaptService:
             cover_ratio = (cfg.get("cover_ratio") or {}).get("value", "16:9")
 
             payload: dict[str, Any] = {"title": item.title, "body": item.body, "topics": item.topics}
+            # 带上该内容的素材引用，供导出打包成片/图片/封面（M1 素材链）
+            try:
+                from base.plugins.contentops.models import MediaAsset
+                assets = await MediaAsset.filter(content_id=item.id).all()
+                cover_assets = [a for a in assets if a.kind == "cover" and a.extra.get("platform") in (None, platform)]
+                adapted = [a for a in assets if a.kind == "adapted" and a.extra.get("platform") == platform]
+                images = [a for a in assets if a.kind == "image"]
+                videos = [a for a in assets if a.kind == "video"]
+                # 优先用该平台的适配封面，否则用通用封面
+                cover_pick = (adapted or cover_assets)
+                if cover_pick:
+                    payload["cover_asset_id"] = cover_pick[0].id
+                if adapted:
+                    payload["adapted_asset_ids"] = [a.id for a in adapted]
+                if images:
+                    payload["image_asset_ids"] = [a.id for a in images]
+                if videos:
+                    payload["video_asset_id"] = videos[0].id
+            except Exception:
+                pass
             diff: list[dict] = []
             meta: dict = {}
 

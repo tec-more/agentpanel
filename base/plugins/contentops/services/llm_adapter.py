@@ -71,7 +71,9 @@ class LLMAdapter:
         if not provider:
             raise RuntimeError("LLM 供应商不存在")
 
-        api_key_obj = await LLMApiKey.filter(model_id=model.model_id).first()
+        # LLMApiKey.model 是外键，其过滤列 model_id 存 LLMModel 主键（int），
+        # 不是业务标识 model.model_id（字符串）；传字符串会 ValueError。
+        api_key_obj = await LLMApiKey.filter(model_id=model.id).first()
         if not api_key_obj:
             raise RuntimeError("LLM 无可用 API 密钥")
 

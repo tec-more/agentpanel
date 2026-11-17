@@ -63,7 +63,8 @@ class VisionAdapter:
         if not provider:
             raise RuntimeError("视觉模型供应商不存在")
 
-        api_key_obj = await LLMApiKey.filter(model_id=model.model_id).first()
+        # LLMApiKey.model 是外键，过滤列 model_id 存 LLMModel 主键（int），非业务标识字符串。
+        api_key_obj = await LLMApiKey.filter(model_id=model.id).first()
         if not api_key_obj:
             raise RuntimeError("视觉模型无可用 API 密钥")
 

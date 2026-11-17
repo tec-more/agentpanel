@@ -35,19 +35,30 @@ def _get_asr():
         return None
     try:
         import os
+        from pathlib import Path
         # 境内网络：默认走 hf-mirror 镜像下载模型；已缓存时无需网络。
         os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         from faster_whisper import WhisperModel
-        try:
-            _asr_model = WhisperModel("base", device="cpu", compute_type="int8")
-        except Exception:
-            # 缓存损坏时显式快照下载（带镜像），再加载本地快照路径
+
+        # 1) 优先用部署内置模型目录（容器内 /app/models/faster-whisper-base，离线可用）
+        local_model = Path(__file__).resolve().parents[4] / "models" / "faster-whisper-base"
+        candidates = [str(local_model), "base"]
+        model = None
+        for cand in candidates:
+            try:
+                model = WhisperModel(cand, device="cpu", compute_type="int8")
+                break
+            except Exception:
+                continue
+        # 2) 本地都没有，尝试镜像下载（有网时）
+        if model is None:
             from huggingface_hub import snapshot_download
             snapshot = snapshot_download(
                 "Systran/faster-whisper-base",
                 allow_patterns=["*.bin", "*.json", "*.txt"],
             )
-            _asr_model = WhisperModel(snapshot, device="cpu", compute_type="int8")
+            model = WhisperModel(snapshot, device="cpu", compute_type="int8")
+        _asr_model = model
         _asr_status = "ready"
         return _asr_model
     except Exception as e:

@@ -116,6 +116,18 @@ async def main():
             ck("C2 返回判定字段", "verdict" in cbody and "hits" in cbody)
             ck("C3 正常文本判定 pass", cbody.get("verdict") in ("pass", "pass_hint"))
 
+            # --- M6 可解释轨迹 ---
+            ck("C2a 管道版本", cbody.get("pipeline_version") == "2.0-trace")
+            trace = cbody.get("trace") or []
+            ck("C2b 六步轨迹完整", len(trace) == 6, f"steps={len(trace)}")
+            ck("C2c 步骤顺序正确", [s["step"] for s in trace] == [1, 2, 3, 4, 5, 6])
+            ck("C2d 每步含过程方法字段", all(
+                {"code", "name", "method", "status", "elapsed_ms", "detail"}.issubset(s)
+                and s["method"] and s["detail"] for s in trace
+            ))
+            ck("C2e 语义层诚实标注跳过", trace[4]["code"] == "semantic" and trace[4]["status"] == "skipped")
+            ck("C2f 聚合步给出判定原因", trace[5]["code"] == "aggregate" and cbody["verdict"] in trace[5]["detail"])
+
             # --- 幂等键回显 ---
             r = await cl.post(
                 "/v1/customer/workspace/compliance/check",

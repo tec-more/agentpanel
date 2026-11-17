@@ -31,16 +31,19 @@ async def workspace_compliance_check(
     owner: OwnerContext = Depends(require_customer),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
-    """客户自助合规检测：平台规则 + 本租户规则，只读不落库。"""
+    """客户自助合规检测：平台规则 + 本租户规则，只读不落库。
+
+    M6 起改用可解释检测管道 check_with_trace：返回逐步执行轨迹（归一化/关键词/
+    正则/消歧/语义/聚合），让客户看到"过程、步骤、方法"，而非仅一个结论。
+    """
     from base.plugins.contentops.services.compliance_service import ComplianceEngine
 
     rules = await ComplianceEngine.load_rules(owner, data.platform)
-    hits = ComplianceEngine.detect_text(data.text, rules, channel=data.channel)
-    summary = ComplianceEngine.aggregate(hits)
+    summary = await ComplianceEngine.check_with_trace(
+        data.text, rules, channel=data.channel, platform=data.platform,
+    )
     return success_response(data={
         **summary,
-        "hits": [h.to_dict() for h in hits],
-        "platform": data.platform,
         "idempotency_key": idempotency_key,
     })
 

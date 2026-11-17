@@ -1,0 +1,96 @@
+{
+    "name": "contentops",
+    "display_name": "内容合规与自适应处理台",
+    "version": "0.0.2",
+    "description": "一次创作，自动合规、自动适配，各平台成品导出后人工发布。系统不连接任何平台，不做自动发布。",
+    "author": "agentpanel",
+    "is_installed": false,
+    "is_enabled": false,
+    "route_prefix": "/v1/contentops",
+    "routes": [
+        "api/aggregate"
+    ],
+    "models": [
+        "content_item",
+        "content_version",
+        "compliance_rule",
+        "compliance_hit",
+        "review_task",
+        "export_package",
+        "publish_ledger",
+        "platform_rule_config",
+        "llm_provider_config"
+    ],
+    "schemas": [
+        "content_schema"
+    ],
+    "menus": [
+        {
+            "name": "内容工作台",
+            "path": "/contentops",
+            "icon": "EditPen",
+            "component": "",
+            "redirect": "/contentops/contents",
+            "sort": 30,
+            "children": [
+                {
+                    "name": "内容中心",
+                    "path": "/contentops/contents",
+                    "icon": "Document",
+                    "component": "contentops/ContentList",
+                    "sort": 1,
+                    "permission_code": "contentops:content:view"
+                },
+                {
+                    "name": "合规审核",
+                    "path": "/contentops/reviews",
+                    "icon": "CircleCheck",
+                    "component": "contentops/ReviewList",
+                    "sort": 2,
+                    "permission_code": "contentops:review:view"
+                },
+                {
+                    "name": "成品导出",
+                    "path": "/contentops/exports",
+                    "icon": "Download",
+                    "component": "contentops/ExportList",
+                    "sort": 3,
+                    "permission_code": "contentops:export:view"
+                },
+                {
+                    "name": "发布台账",
+                    "path": "/contentops/ledger",
+                    "icon": "List",
+                    "component": "contentops/LedgerList",
+                    "sort": 4,
+                    "permission_code": "contentops:ledger:view"
+                },
+                {
+                    "name": "规则库",
+                    "path": "/contentops/rules",
+                    "icon": "Setting",
+                    "component": "contentops/RuleList",
+                    "sort": 5,
+                    "permission_code": "contentops:rule:view"
+                }
+            ]
+        }
+    ],
+    "permissions": [
+        {"name": "内容中心查看", "code": "contentops:content:view", "module": "contentops", "description": "查看源内容与成品版本"},
+        {"name": "内容编辑", "code": "contentops:content:edit", "module": "contentops", "description": "创建/编辑/删除源内容"},
+        {"name": "合规检测", "code": "contentops:compliance:check", "module": "contentops", "description": "触发合规检测"},
+        {"name": "自适应生成", "code": "contentops:adapt:generate", "module": "contentops", "description": "生成平台自适应成品"},
+        {"name": "合规审核查看", "code": "contentops:review:view", "module": "contentops", "description": "查看待复核队列"},
+        {"name": "审核判定", "code": "contentops:review:decide", "module": "contentops", "description": "放行/驳回中危内容"},
+        {"name": "成品导出查看", "code": "contentops:export:view", "module": "contentops", "description": "查看导出快照"},
+        {"name": "打包导出", "code": "contentops:export:create", "module": "contentops", "description": "打包导出成品"},
+        {"name": "发布台账查看", "code": "contentops:ledger:view", "module": "contentops", "description": "查看发布台账"},
+        {"name": "发布台账编辑", "code": "contentops:ledger:edit", "module": "contentops", "description": "标记发布状态、回填效果数据"},
+        {"name": "规则库查看", "code": "contentops:rule:view", "module": "contentops", "description": "查看合规规则与平台配置"},
+        {"name": "规则库管理", "code": "contentops:rule:manage", "module": "contentops", "description": "增删改查合规规则与平台配置"}
+    ],
+    "dependencies": ["llm"],
+    "hooks": {},
+    "config": {}
+}

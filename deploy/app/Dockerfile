@@ -26,6 +26,15 @@ RUN npm config set registry ${NPM_REGISTRY} && npm ci
 COPY web/ ./
 RUN npm run build
 
+# ===== 阶段1b：客户门户前端构建（customer-portal → /build/portal-dist）=====
+FROM ${NODE_IMAGE} AS portal-builder
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /build
+COPY customer-portal/package.json customer-portal/package-lock.json ./
+RUN npm config set registry ${NPM_REGISTRY} && npm ci
+COPY customer-portal/ ./
+RUN npm run build
+
 # ===== 阶段2：后端运行时 =====
 FROM ${BASE_IMAGE}
 
@@ -45,6 +54,8 @@ COPY . .
 
 # 用阶段1新编译的管理后台产物覆盖 web/dist（供 app_wrapper 托管 /panel）
 COPY --from=web-builder /build/dist /app/web/dist
+# 用阶段1b新编译的客户门户产物放入 customer-portal/dist（供 app_wrapper 托管 /portal）
+COPY --from=portal-builder /build/dist /app/customer-portal/dist
 
 # 数据目录（容器内日志/存储，生产以卷挂载覆盖）
 RUN mkdir -p /app/logs /app/storage

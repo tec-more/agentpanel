@@ -3,6 +3,8 @@
 应用包装器 - 添加 /api 前缀
 使用 ProxyFix 模式的 ASGI 中间件
 """
+import os
+
 from base.start import init_app
 
 # 创建实际应用
@@ -19,7 +21,13 @@ PASSTHROUGH_PREFIXES = (
     "/uploads/", "/files/",
 )
 SPA_EXACT_PATHS = {"/", "/index.html", "/favicon.ico"}
-SPA_PREFIXES = ("/panel", "/install", "/login", "/assets/")
+SPA_PREFIXES = ("/panel", "/install", "/login", "/assets/", "/portal")
+# 客户门户（完全独立前端）：路径前缀与静态产物目录，与管理后台 web/dist 物理隔离。
+# Vite 构建 base=/portal/，故资源引用形如 /portal/assets/*，由下方分支从门户 dist 提供。
+PORTAL_PATH_PREFIX = "/portal"
+PORTAL_DIST_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "customer-portal", "dist"
+)
 
 
 def apply_api_prefix(scope: dict, original_path: str, prefix: str) -> dict:
@@ -155,6 +163,30 @@ class ASGIAppWithPrefix:
             import os
 
             static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "dist")
+
+            # 客户门户（独立前端）：/portal/* 全部从 customer-portal/dist 提供，
+            # 与管理后台 web/dist 隔离；不受「未安装→/install」跳转影响（静态外壳可直接展示，
+            # API 调用仍走 /api/v1/customer/* 的正常鉴权与安装校验）。
+            if original_path == PORTAL_PATH_PREFIX or original_path.startswith(PORTAL_PATH_PREFIX + "/"):
+                portal_index = os.path.join(PORTAL_DIST_DIR, "index.html")
+                # 门户构建产物：/portal/assets/* → customer-portal/dist/assets/*
+                if original_path.startswith(PORTAL_PATH_PREFIX + "/assets/"):
+                    rel = original_path[len(PORTAL_PATH_PREFIX) + 1:]  # assets/xxx
+                    asset_path = os.path.join(PORTAL_DIST_DIR, rel)
+                    if os.path.exists(asset_path) and os.path.isfile(asset_path):
+                        await FileResponse(asset_path)(scope, receive, send)
+                    else:
+                        await HTMLResponse(status_code=404, content="Not Found")(scope, receive, send)
+                    return
+                # 门户内部路由一律回 index.html（history 模式 SPA）
+                if os.path.exists(portal_index):
+                    await FileResponse(portal_index)(scope, receive, send)
+                else:
+                    await PlainTextResponse(
+                        status_code=503,
+                        content="客户门户前端未构建。请执行：cd customer-portal && npm install && npm run build",
+                    )(scope, receive, send)
+                return
 
             # 前端静态资源（/assets/*）必须优先于「未安装→跳转」处理：
             # 否则未安装时，install.html 引用的 JS/CSS 会被误判为「非安装路径」而 302 到 /install，

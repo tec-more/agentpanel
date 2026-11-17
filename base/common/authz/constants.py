@@ -36,6 +36,28 @@ class ResourceType(str, Enum):
     TOOL = "tool"          # 工具
     AGENT = "agent"        # 子 Agent
     NODE_TYPE = "node_type"  # 节点类型
+    # C1 整改（2026-11-17）：CUS 租户的功能码授权载体。contentops 12 个权限码
+    # 作为 resource_id 存入 resource_grant，使 CUS 能复用 authz 资源授权（含 org 继承）
+    # 而不误入 USR/RBAC 的 get_current_user_id 齿轮。
+    CONTENTOPS_ACTION = "contentops_action"  # 内容合规功能码
+
+
+# contentops 功能码全集（与 base/plugins/contentops/manifest.json permissions[].code 一致）。
+# 用于管理端授权校验 resource_id 合法性，避免写入任意字符串形成垃圾授权。
+CONTENTOPS_ACTION_CODES = (
+    "contentops:content:view",
+    "contentops:content:edit",
+    "contentops:compliance:check",
+    "contentops:adapt:generate",
+    "contentops:review:view",
+    "contentops:review:decide",
+    "contentops:export:view",
+    "contentops:export:create",
+    "contentops:ledger:view",
+    "contentops:ledger:edit",
+    "contentops:rule:view",
+    "contentops:rule:manage",
+)
 
 
 # node_type 受限类型的中文名（与 schema-validator nodeRegistry 对齐；

@@ -4,8 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
-from base.common.authz import OwnerContext, require_owner
-from base.common.permissions import require_permission
+from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
 from base.plugins.contentops.services.media_service import MediaService
 from base.plugins.contentops.services.media_detection_service import MediaDetectionService
@@ -20,7 +19,7 @@ async def upload_media(
     kind: str = Form("image", description="image/cover/video"),
     content_id: Optional[int] = Form(None),
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     if kind not in ("image", "cover", "video"):
         return fail_response(msg="kind 只能是 image/cover/video", code=400)
@@ -39,7 +38,7 @@ async def upload_media(
 async def list_media(
     content_id: Optional[int] = None, kind: Optional[str] = None,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:view"),
+    user_id: int = require_action("contentops:content:view"),
 ):
     return success_response(data={"items": await MediaService.list_assets(owner, content_id, kind)})
 
@@ -48,7 +47,7 @@ async def list_media(
 async def get_media_file(
     asset_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:view"),
+    user_id: int = require_action("contentops:content:view"),
 ):
     try:
         asset = await MediaService.get_file_asset(asset_id, owner)
@@ -64,7 +63,7 @@ async def get_media_file(
 async def delete_media(
     asset_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         await MediaService.delete_asset(asset_id, owner)
@@ -77,7 +76,7 @@ async def delete_media(
 async def extract_text(
     asset_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:compliance:check"),
+    user_id: int = require_action("contentops:compliance:check"),
 ):
     try:
         asset = await MediaService.get_file_asset(asset_id, owner)
@@ -95,7 +94,7 @@ async def adapt_cover(
     mode: str = Query("crop", description="crop 裁剪 / contain 留白"),
     watermark: Optional[str] = Query(None, description="水印文字"),
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:adapt:generate"),
+    user_id: int = require_action("contentops:adapt:generate"),
 ):
     try:
         results = await ImageAdaptService.adapt_cover(

@@ -3,8 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from base.common.authz import OwnerContext, require_owner
-from base.common.permissions import require_permission
+from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
 from base.plugins.contentops.schemas.content_schema import (
     ContentCreate, ContentUpdate, ContentListQuery, AdaptGenerateRequest, VersionConfirmRequest,
@@ -18,7 +17,7 @@ content_router = APIRouter(prefix="/contents", tags=["内容中心"])
 async def create_content(
     data: ContentCreate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     result = await content_service.ContentService.create(data, owner, creator_id=user_id)
     return success_response(data=result, msg="内容创建成功")
@@ -29,7 +28,7 @@ async def list_content(
     page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=200),
     status: Optional[str] = None, keyword: Optional[str] = None,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:view"),
+    user_id: int = require_action("contentops:content:view"),
 ):
     q = ContentListQuery(page=page, page_size=page_size, status=status, keyword=keyword)
     return success_response(data=await content_service.ContentService.get_list(q, owner))
@@ -39,7 +38,7 @@ async def list_content(
 async def get_content(
     item_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:view"),
+    user_id: int = require_action("contentops:content:view"),
 ):
     try:
         return success_response(data=await content_service.ContentService.get_detail(item_id, owner))
@@ -51,7 +50,7 @@ async def get_content(
 async def update_content(
     item_id: int, data: ContentUpdate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         return success_response(data=await content_service.ContentService.update(item_id, data, owner))
@@ -63,7 +62,7 @@ async def update_content(
 async def delete_content(
     item_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         await content_service.ContentService.delete(item_id, owner)
@@ -76,7 +75,7 @@ async def delete_content(
 async def update_version(
     version_id: int, payload: dict,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         return success_response(data=await content_service.ContentService.update_version(version_id, payload, owner))
@@ -88,7 +87,7 @@ async def update_version(
 async def rollback_version(
     version_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         return success_response(data=await content_service.ContentService.rollback_version(version_id, owner))
@@ -100,7 +99,7 @@ async def rollback_version(
 async def confirm_version(
     version_id: int, data: VersionConfirmRequest,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:review:decide"),
+    user_id: int = require_action("contentops:review:decide"),
 ):
     try:
         from base.plugins.contentops.services.review_service import ReviewService
@@ -113,7 +112,7 @@ async def confirm_version(
 async def bind_media(
     item_id: int, payload: dict,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:content:edit"),
+    user_id: int = require_action("contentops:content:edit"),
 ):
     try:
         from base.plugins.contentops.services.media_service import MediaService
@@ -130,7 +129,7 @@ async def bind_media(
 async def generate_adapt(
     data: AdaptGenerateRequest,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:adapt:generate"),
+    user_id: int = require_action("contentops:adapt:generate"),
 ):
     try:
         results = await adapt_service.AdaptService.generate(data, owner)

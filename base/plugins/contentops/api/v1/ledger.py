@@ -3,8 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from base.common.authz import OwnerContext, require_owner
-from base.common.permissions import require_permission
+from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
 from base.plugins.contentops.schemas.content_schema import (
     LedgerCreate, LedgerUpdate, EffectCreate, EffectCSVImport,
@@ -18,7 +17,7 @@ ledger_router = APIRouter(prefix="/ledger", tags=["发布台账"])
 async def create_ledger(
     data: LedgerCreate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:edit"),
+    user_id: int = require_action("contentops:ledger:edit"),
 ):
     return success_response(data=await LedgerService.create(data, owner))
 
@@ -27,7 +26,7 @@ async def create_ledger(
 async def list_ledger(
     status: Optional[str] = None,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:view"),
+    user_id: int = require_action("contentops:ledger:view"),
 ):
     return success_response(data={"items": await LedgerService.get_list(status, owner)})
 
@@ -36,7 +35,7 @@ async def list_ledger(
 async def update_ledger(
     ledger_id: int, data: LedgerUpdate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:edit"),
+    user_id: int = require_action("contentops:ledger:edit"),
 ):
     try:
         return success_response(data=await LedgerService.update(ledger_id, data, owner))
@@ -48,7 +47,7 @@ async def update_ledger(
 async def add_effect(
     ledger_id: int, data: EffectCreate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:edit"),
+    user_id: int = require_action("contentops:ledger:edit"),
 ):
     try:
         return success_response(data=await LedgerService.add_effect(ledger_id, data, owner))
@@ -60,7 +59,7 @@ async def add_effect(
 async def import_effect(
     ledger_id: int, data: EffectCSVImport,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:edit"),
+    user_id: int = require_action("contentops:ledger:edit"),
 ):
     try:
         return success_response(data=await LedgerService.import_effect_csv(ledger_id, data, owner))
@@ -72,6 +71,6 @@ async def import_effect(
 async def get_effect(
     ledger_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:ledger:view"),
+    user_id: int = require_action("contentops:ledger:view"),
 ):
     return success_response(data={"items": await LedgerService.get_effect(ledger_id, owner)})

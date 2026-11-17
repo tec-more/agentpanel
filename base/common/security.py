@@ -217,22 +217,15 @@ async def get_current_actor(
 ) -> dict:
     token = credentials.credentials
     _reject_gateway_virtual_key(token)
-    print(f"[AUTH DEBUG] Token received (first 50 chars): {token[:50]}...")
-    
     payload = decode_access_token(token)
-    print(f"[AUTH DEBUG] Decoded payload: {payload}")
-    
+
     if not payload:
-        print("[AUTH DEBUG] Token decode failed! Check SECRET_KEY or token format.")
         raise HTTPException(status_code=401)
 
-    # 现在这两个都有值了！
     user_id = payload.get("sub")
     user_type = payload.get("typ")
-    print(f"[AUTH DEBUG] user_id: {user_id}, user_type: {user_type}")
 
     if not user_id or not user_type:
-        print(f"[AUTH DEBUG] Missing user_id or user_type! user_id={user_id}, user_type={user_type}")
         raise HTTPException(status_code=401, detail="请重新登录")
 
     return {

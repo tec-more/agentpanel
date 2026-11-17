@@ -3,8 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from base.common.authz import OwnerContext, require_owner
-from base.common.permissions import require_permission
+from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
 from base.plugins.contentops.schemas.content_schema import RuleCreate, RuleUpdate
 from base.plugins.contentops.services.rule_service import RuleService
@@ -16,7 +15,7 @@ rules_router = APIRouter(prefix="/rules", tags=["规则库"])
 async def create_rule(
     data: RuleCreate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:manage"),
+    user_id: int = require_action("contentops:rule:manage"),
 ):
     return success_response(data=await RuleService.create_rule(data, owner))
 
@@ -25,7 +24,7 @@ async def create_rule(
 async def list_rules(
     layer: Optional[str] = None,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:view"),
+    user_id: int = require_action("contentops:rule:view"),
 ):
     return success_response(data={"items": await RuleService.list_rules(layer, owner)})
 
@@ -34,7 +33,7 @@ async def list_rules(
 async def update_rule(
     rule_id: int, data: RuleUpdate,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:manage"),
+    user_id: int = require_action("contentops:rule:manage"),
 ):
     try:
         return success_response(data=await RuleService.update_rule(rule_id, data, owner))
@@ -46,7 +45,7 @@ async def update_rule(
 async def delete_rule(
     rule_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:manage"),
+    user_id: int = require_action("contentops:rule:manage"),
 ):
     try:
         await RuleService.delete_rule(rule_id, owner)
@@ -59,7 +58,7 @@ async def delete_rule(
 async def list_platform_rules(
     platform: str,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:view"),
+    user_id: int = require_action("contentops:rule:view"),
 ):
     return success_response(data={"items": await RuleService.list_platform_rules(platform, owner)})
 
@@ -68,6 +67,6 @@ async def list_platform_rules(
 async def set_platform_rule(
     platform: str, key: str, value: dict,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:rule:manage"),
+    user_id: int = require_action("contentops:rule:manage"),
 ):
     return success_response(data=await RuleService.set_platform_rule(platform, key, value, owner))

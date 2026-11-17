@@ -17,7 +17,9 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from tortoise.expressions import Q
 
-from base.common.authz.constants import NODE_TYPE_LABELS
+from base.common.authz.constants import (
+    NODE_TYPE_LABELS, CONTENTOPS_ACTION_CODES, ResourceType,
+)
 from base.common.authz.models.resource_grant import ResourceGrant
 from base.common.authz.service import ResourceGrantService, is_subject_active
 from base.common.permissions import require_superuser
@@ -25,12 +27,28 @@ from base.common.response import fail_response, success_response
 
 router = APIRouter(prefix="/admin/grants", tags=["资源授权管理"])
 
-RESOURCE_TYPES = ("model", "kb", "tool", "agent", "node_type")
+RESOURCE_TYPES = tuple(t.value for t in ResourceType)
 OWNER_TYPES = ("cus", "usr", "org")
 
 _OWNER_TYPE_LABELS = {"cus": "客户", "usr": "后台用户", "org": "客户组织"}
 _RESOURCE_TYPE_LABELS = {
     "model": "模型", "kb": "知识库", "tool": "工具", "agent": "智能体", "node_type": "节点类型",
+    "contentops_action": "内容合规功能码",
+}
+# contentops 功能码中文名（管理端授权选择器展示用；code→label）
+_CONTENTOPS_ACTION_LABELS = {
+    "contentops:content:view": "内容中心-查看",
+    "contentops:content:edit": "内容中心-编辑",
+    "contentops:compliance:check": "合规检测",
+    "contentops:adapt:generate": "自适应生成",
+    "contentops:review:view": "合规审核-查看",
+    "contentops:review:decide": "审核判定",
+    "contentops:export:view": "成品导出-查看",
+    "contentops:export:create": "打包导出",
+    "contentops:ledger:view": "发布台账-查看",
+    "contentops:ledger:edit": "发布台账-编辑",
+    "contentops:rule:view": "规则库-查看",
+    "contentops:rule:manage": "规则库-管理",
 }
 # 选择器数据源单页上限（资源/主体选项不设翻页，关键词搜索）
 _OPTIONS_LIMIT = 50
@@ -125,6 +143,17 @@ async def _load_resource_meta_all(resource_type: str, resource_ids: List[str]) -
         for rid in resource_ids:
             if rid in NODE_TYPE_LABELS:
                 result[rid] = {"label": NODE_TYPE_LABELS[rid], "inactive": False}
+        return result
+
+    if resource_type == ResourceType.CONTENTOPS_ACTION.value:
+        # 静态功能码，无表；仅 manifest 声明的 12 个权限码为有效资源（C1 整改）
+        for rid in resource_ids:
+            if rid in CONTENTOPS_ACTION_CODES:
+                result[rid] = {
+                    "label": _CONTENTOPS_ACTION_LABELS.get(rid, rid),
+                    "inactive": False,
+                    "extra": {"code": rid},
+                }
         return result
 
     if not int_ids:
@@ -241,6 +270,13 @@ async def _search_resource_ids(resource_type: Optional[str], keyword: str) -> Se
         if rtype == "node_type":
             matched |= {code for code, label in NODE_TYPE_LABELS.items()
                         if keyword.lower() in code.lower() or keyword in label}
+            continue
+        if rtype == ResourceType.CONTENTOPS_ACTION.value:
+            matched |= {
+                code for code in CONTENTOPS_ACTION_CODES
+                if keyword.lower() in code.lower()
+                or keyword in _CONTENTOPS_ACTION_LABELS.get(code, "")
+            }
             continue
         try:
             if rtype == "model":
@@ -491,7 +527,7 @@ async def list_subject_options(
 
 @router.get("/resource-options", summary="资源选择器数据源（仅可授权资源，FR-05）")
 async def list_resource_options(
-    type: str = Query(..., description="资源类型: model/kb/tool/agent/node_type"),
+    type: str = Query(..., description="资源类型: model/kb/tool/agent/node_type/contentops_action"),
     keyword: Optional[str] = Query(None),
     admin_id: int = require_superuser(),
 ):
@@ -502,6 +538,12 @@ async def list_resource_options(
 
     if type == "node_type":
         for code, label in NODE_TYPE_LABELS.items():
+            if keyword and keyword.lower() not in code.lower() and keyword not in label:
+                continue
+            items.append({"id": code, "label": label, "extra": {"code": code}})
+    elif type == ResourceType.CONTENTOPS_ACTION.value:
+        for code in CONTENTOPS_ACTION_CODES:
+            label = _CONTENTOPS_ACTION_LABELS.get(code, code)
             if keyword and keyword.lower() not in code.lower() and keyword not in label:
                 continue
             items.append({"id": code, "label": label, "extra": {"code": code}})

@@ -3,8 +3,7 @@ from fastapi import APIRouter, Depends
 
 from fastapi.responses import FileResponse
 
-from base.common.authz import OwnerContext, require_owner
-from base.common.permissions import require_permission
+from base.common.authz import OwnerContext, require_owner, require_action
 from base.common.response import success_response, fail_response
 from base.plugins.contentops.schemas.content_schema import ExportRequest
 from base.plugins.contentops.services.export_service import ExportService
@@ -16,7 +15,7 @@ export_router = APIRouter(prefix="/exports", tags=["成品导出"])
 async def create_export(
     data: ExportRequest,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:export:create"),
+    user_id: int = require_action("contentops:export:create"),
 ):
     try:
         result = await ExportService.create_export(
@@ -30,7 +29,7 @@ async def create_export(
 @export_router.get("", summary="导出记录列表")
 async def list_exports(
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:export:view"),
+    user_id: int = require_action("contentops:export:view"),
 ):
     return success_response(data={"items": await ExportService.list_exports(owner)})
 
@@ -39,7 +38,7 @@ async def list_exports(
 async def download(
     package_id: int,
     owner: OwnerContext = Depends(require_owner),
-    user_id: int = require_permission("contentops:export:view"),
+    user_id: int = require_action("contentops:export:view"),
 ):
     try:
         path = await ExportService.get_download_path(package_id, owner)

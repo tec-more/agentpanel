@@ -9,7 +9,7 @@ M8 权限与归属公共模块（base/common 非插件，模型经 get_model_lis
 - 数据范围：scope.resolve_scope(owner) -> {data_scope, org_ids}（04-§6）
 - 越权处置：audit 越权审计(warn) + 高频限流(alert)（F8）
 """
-from .constants import OwnerType, DataScope, ResourceType
+from .constants import OwnerType, DataScope, ResourceType, CONTENTOPS_ACTION_CODES
 from .context import (
     OwnerContext,
     get_current_owner,
@@ -25,11 +25,14 @@ from .filter import (
     OwnedResourceNotFound,
 )
 from .guard import assert_owner_access, recheck_owner
+from .action_guard import require_action
 
 __all__ = [
     "OwnerType",
     "DataScope",
     "ResourceType",
+    "CONTENTOPS_ACTION_CODES",
+    "require_action",
     "OwnerContext",
     "get_current_owner",
     "require_owner",

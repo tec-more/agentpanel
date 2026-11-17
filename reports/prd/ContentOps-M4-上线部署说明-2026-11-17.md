@@ -2,10 +2,21 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.0 / 2026-11-17 |
+| 版本 | v1.1 / 2026-11-17（M7 修订：移除本地模型依赖，OCR/ASR/语义改走线上 llm 模块） |
 | 范围 | M4 收尾：规则后台增强 + 对外开放 API + 压测与上线 |
-| 前置 | M1/M2/M3 已上线（内容中心/合规/自适应/审核/导出/台账/素材 OCR+ASR） |
+| 前置 | M1/M2/M3 已上线（内容中心/合规/自适应/审核/导出/台账/素材识别） |
 | 配套 | `ContentOps-多租户Customer权限验证设计PRD-2026-11-17.md`（CUS 鉴权基线） |
+
+---
+
+> **M7 修订（2026-11-17 晚）· 覆盖本文 §依赖固化相关描述**
+> 已**删除** `requirements-contentops.txt` 及 Dockerfile 中的安装引用，镜像不再包含
+> rapidocr-onnxruntime / onnxruntime / opencv / imageio-ffmpeg / faster-whisper / pyclipper / shapely。
+> 素材文字提取改走 `VisionAdapter`（llm 模块线上视觉模型），语义合规判定改走 `LLMAdapter.compliance_check`
+> （线上大模型），本地不再加载任何模型。本文下方 §2/§3 关于"固化本地依赖、cp 模型进容器"的描述
+> **已作废**，以《Customer-客户内容工作台前端-M5部署说明》§9「线上模型配置」为准。
+> 未配置线上模型时：文本合规（关键词/正则/归一化/消歧）照常工作，素材识别与语义层明确降级为
+> `unavailable/skipped`，不阻塞上传与检测。
 
 ---
 

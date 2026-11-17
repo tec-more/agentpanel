@@ -41,6 +41,7 @@ async def workspace_compliance_check(
     rules = await ComplianceEngine.load_rules(owner, data.platform)
     summary = await ComplianceEngine.check_with_trace(
         data.text, rules, channel=data.channel, platform=data.platform,
+        enable_semantic=True,  # M7：配置了 purpose=semantic 的线上模型即自动参与判定，未配置则降级跳过
     )
     return success_response(data={
         **summary,

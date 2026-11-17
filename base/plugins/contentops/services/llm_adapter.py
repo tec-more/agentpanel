@@ -125,3 +125,20 @@ class LLMAdapter:
     async def topics(text: str, platform: str, limit: int = 5) -> tuple[str, dict]:
         instruction = f"根据下文为【{platform}】平台推荐 {limit} 个话题标签，用逗号分隔输出，不要解释。"
         return await LLMAdapter._call(text, instruction, purpose="topics")
+
+    @staticmethod
+    async def compliance_check(text: str, rules_hint: str = "") -> tuple[str, dict]:
+        """线上语义合规判定：返回模型输出文本与调用元数据。
+
+        输出约定：先给判定标签（VIOLATION / CLEAN / UNCERTAIN），再给简短理由。
+        结构化解析由合规引擎负责，这里只取模型原始输出，保持适配层职责单一。
+        """
+        instruction = (
+            "你是内容合规审核助手。判断下文是否含违法违规或平台禁止内容"
+            "（含涉政、色情、暴力、诈骗、违禁品、绝对化广告用语、虚假宣传等）。"
+            "第一行只输出一个标签：VIOLATION（违规）/ CLEAN（合规）/ UNCERTAIN（不确定）；"
+            "第二行起用一句话说明理由。不要输出其他内容。"
+        )
+        if rules_hint:
+            instruction += f"\n需额外关注：{rules_hint}"
+        return await LLMAdapter._call(text, instruction, purpose="semantic")

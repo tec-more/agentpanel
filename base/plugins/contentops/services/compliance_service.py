@@ -380,29 +380,55 @@ class ComplianceEngine:
              if suppressed else "本次无命中落入消歧白名单，无需降噪"),
         ))
 
-        # ---- S5 语义 / LLM 层（诚实标注启用状态）----
+        # ---- S5 语义 / LLM 层（配置线上模型则真正调用，否则诚实跳过）----
         t = time.perf_counter()
-        if semantic_rules and enable_semantic:
-            status, detail = "skipped", (
-                f"已发现 {len(semantic_rules)} 条语义规则，但当前管道未接入语义模型（需平台侧 "
-                "LLMProviderConfig purpose=semantic 并经适配层调用）；本次未做语义判定"
-            )
-        elif semantic_rules:
-            status, detail = "skipped", (
-                f"发现 {len(semantic_rules)} 条语义规则但未启用语义层（enable_semantic=false），"
-                "本次判定仅基于确定性规则"
-            )
+        semantic_hits: list[Hit] = []
+        semantic_meta: dict[str, Any] = {}
+        status, detail = "skipped", ""
+        rules_hint = "；".join(getattr(r, "pattern", "") or "" for r in semantic_rules)[:500]
+        if not enable_semantic:
+            detail = "本次请求未启用语义层（enable_semantic=false），判定仅基于确定性规则"
+        elif not semantic_rules:
+            detail = "本租户无语义规则（type=semantic），无需调用线上模型"
         else:
-            status, detail = "skipped", "本租户无语义规则，无需调用语义/LLM 层"
+            try:
+                from base.plugins.contentops.services.llm_adapter import LLMAdapter
+                raw, meta = await LLMAdapter.compliance_check(text, rules_hint)
+                semantic_meta = meta
+                first_line = (raw.strip().splitlines() or [""])[0].strip().upper()
+                reason = " ".join(raw.strip().splitlines()[1:]).strip()[:200]
+                if first_line.startswith("VIOLATION"):
+                    # 语义命中：等级 P1（需复核），由模型判定 + 理由，规则归属 L4
+                    semantic_hits.append(Hit(
+                        matched_text="语义判定", position=0, level="P1", action="review",
+                        basis=f"线上模型语义判定：{reason or '模型判定违规'}",
+                        suggestion="请人工复核后放行或修改", confidence=0.8,
+                        channel=channel, rule_id=None, rule_version="llm-semantic",
+                        layer="L4", source="L4-线上语义",
+                    ))
+                    status = "applied"
+                    detail = f"线上语义模型判定 VIOLATION：{reason or '（无理由）'}（provider={meta.get('provider')}, model={meta.get('model')}）"
+                elif first_line.startswith("CLEAN"):
+                    status = "applied"
+                    detail = f"线上语义模型判定 CLEAN：{reason or '（无理由）'}（provider={meta.get('provider')}, model={meta.get('model')}）"
+                else:
+                    status = "skipped"
+                    detail = f"线上语义模型判定 UNCERTAIN，未据此拦截：{reason or '（无理由）'}"
+            except Exception as e:
+                status = "skipped"
+                detail = (
+                    f"线上语义模型调用失败，已降级为确定性规则判定："
+                    f"{type(e).__name__}: {str(e)[:120]}"
+                )
         trace.append(ComplianceEngine._trace(
             5, "semantic", "语义/LLM 判定",
-            "语义相似度/LLM 上下文判定（需平台配置语义模型，当前未接入）",
-            len(semantic_rules), 0, t, status, detail,
+            "线上大模型语义审核（LLMAdapter → llm 模块，VIOLATION/CLEAN/UNCERTAIN + 理由）",
+            len(semantic_rules), len(semantic_hits), t, status, detail,
         ))
 
         # ---- S6 聚合判定 ----
         t = time.perf_counter()
-        hits = kw_hits + re_hits
+        hits = kw_hits + re_hits + semantic_hits
         summary = ComplianceEngine.aggregate(hits)
         summary["needs_review"] = summary["verdict"] == "review"
         trace.append(ComplianceEngine._trace(
@@ -421,5 +447,6 @@ class ComplianceEngine:
             "elapsed_ms": round((time.perf_counter() - pipeline_started) * 1000, 3),
             "platform": platform,
             "channel": channel,
+            "semantic_meta": semantic_meta or None,
         })
         return summary

@@ -82,11 +82,20 @@ async def main():
     r0 = await ComplianceEngine.check_with_trace("普通正常内容", rules)
     ck("P12 无命中 pass", r0["verdict"] == "pass" and r0["hit_count"] == 0)
 
-    # 5. 向后兼容：旧方法不受影响
+    # 5. 语义层：配置了 semantic 规则但无线上模型 → 诚实降级、不崩、不误判
+    sem_rules = rules + [FakeRule(9, "semantic", "涉政敏感话题", "P1", "L4")]
+    sr = await ComplianceEngine.check_with_trace("这是一段含涉政敏感话题的内容", sem_rules, enable_semantic=True)
+    sem_step = sr["trace"][4]
+    ck("P13 语义层未配置时降级", sem_step["status"] == "skipped" and "降级" in sem_step["detail"] or "未配置" in sem_step["detail"],
+       f"status={sem_step['status']}, detail={sem_step['detail'][:60]}")
+    ck("P14 语义层降级不误拦截", sr["verdict"] in ("pass", "pass_hint") and sr["hit_count"] == 0)
+    ck("P15 语义规则进入 rules_hint", sem_step["rules_scanned"] == 1)
+
+    # 6. 向后兼容：旧方法不受影响
     plain = ComplianceEngine.detect_text("这是一段最佳内容", rules)
     agg = ComplianceEngine.aggregate(plain)
-    ck("P13 旧 detect_text 行为不变", len(plain) == 1 and agg["verdict"] == "block")
-    ck("P14 归一化不影响原文", ComplianceEngine.normalize_text("普通内容") == "普通内容")
+    ck("P16 旧 detect_text 行为不变", len(plain) == 1 and agg["verdict"] == "block")
+    ck("P17 归一化不影响原文", ComplianceEngine.normalize_text("普通内容") == "普通内容")
 
     ok = sum(1 for _, v in R if v)
     print(f"\n===== {ok}/{len(R)} PASS =====")

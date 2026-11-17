@@ -1,143 +1,103 @@
-"""多媒体检测服务：图片 OCR / 视频抽帧 OCR / 视频 ASR。
+"""多媒体检测服务：图片/视频文字提取（M7 起全部走线上多模态，无本地模型依赖）。
 
-依赖降级策略（不静默跳过）：
-- RapidOCR：包内自带模型，缺失/异常 → ocr_status=failed 并抛可读错误
-- faster-whisper：首次加载需下载模型（base ≈145MB），懒加载；失败 → ASR 部分跳过并在结果里标注 asr_status=failed，
-  抽帧 OCR 仍执行，整体不阻塞上传与合规检测。
+变更（M7）：删除 rapidocr-onnxruntime / faster-whisper / imageio-ffmpeg 等本地模型依赖，
+统一改走 llm 模块的线上视觉模型（VisionAdapter）。设计原则：
+- 未配置视觉模型（llm 模块四表空）→ 明确返回 ocr_status='unavailable'，不抛异常、不阻塞上传；
+- 配置后 → 图片直接送视觉模型提取文字；视频抽帧后逐帧识别（帧提取用可选 ffmpeg，见下）；
+- PII 脱敏在 VisionAdapter 完成，素材检测只消费文本。
+
+视频抽帧说明：不强制 imageio-ffmpeg。若运行环境有系统 ffmpeg（PATH 中）则抽帧识别画面文字；
+否则跳过抽帧、仅返回 asr_status='unavailable'（去掉本地 ASR 模型），由文本合规链继续工作。
 """
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from base.plugins.contentops.services.media_service import MediaService
 from base.plugins.contentops.models import MediaAsset
+from base.plugins.contentops.services.vision_adapter import VisionAdapter
 
-# 单例惰性加载
-_ocr_engine = None
-_asr_model = None
-_asr_status = "idle"  # idle/ready/failed
-
-
-def _get_ocr():
-    global _ocr_engine
-    if _ocr_engine is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _ocr_engine = RapidOCR()
-    return _ocr_engine
+# 视频抽帧最大帧数（防长视频爆炸）
+MAX_FRAMES = 30
 
 
-def _get_asr():
-    """懒加载 faster-whisper base 模型；失败返回 None 并标记状态。"""
-    global _asr_model, _asr_status
-    if _asr_model is not None:
-        return _asr_model
-    if _asr_status == "failed":
-        return None
-    try:
-        import os
-        from pathlib import Path
-        # 境内网络：默认走 hf-mirror 镜像下载模型；已缓存时无需网络。
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        from faster_whisper import WhisperModel
-
-        # 1) 优先用部署内置模型目录（容器内 /app/models/faster-whisper-base，离线可用）
-        local_model = Path(__file__).resolve().parents[4] / "models" / "faster-whisper-base"
-        candidates = [str(local_model), "base"]
-        model = None
-        for cand in candidates:
-            try:
-                model = WhisperModel(cand, device="cpu", compute_type="int8")
-                break
-            except Exception:
-                continue
-        # 2) 本地都没有，尝试镜像下载（有网时）
-        if model is None:
-            from huggingface_hub import snapshot_download
-            snapshot = snapshot_download(
-                "Systran/faster-whisper-base",
-                allow_patterns=["*.bin", "*.json", "*.txt"],
-            )
-            model = WhisperModel(snapshot, device="cpu", compute_type="int8")
-        _asr_model = model
-        _asr_status = "ready"
-        return _asr_model
-    except Exception as e:
-        _asr_status = "failed"
-        return None
+def _ffmpeg_exe() -> Optional[str]:
+    """优先系统 ffmpeg（PATH）。不再依赖 imageio-ffmpeg 包。"""
+    return shutil.which("ffmpeg")
 
 
-def ocr_image(path: Path) -> str:
-    """单图 OCR，返回拼接文本。失败抛 ValueError。"""
-    try:
-        result, _ = _get_ocr()(str(path))
-    except Exception as e:
-        raise ValueError(f"OCR 引擎失败: {type(e).__name__}: {str(e)[:120]}")
-    if not result:
-        return ""
-    # result: [[box, text, score], ...]
-    return "\n".join(line[1] for line in result if len(line) >= 2)
+async def _recognize(path: Path) -> str:
+    """线上视觉模型识别单图文字；未配置/失败抛可读异常由调用方降级。"""
+    text, _meta = await VisionAdapter.recognize_image(path)
+    return text
 
 
 class MediaDetectionService:
-    """素材文字提取（供合规引擎消费）。"""
+    """素材文字提取（供合规引擎消费），全部走线上多模态。"""
 
     @staticmethod
     async def extract_text(asset: MediaAsset) -> dict:
-        """按素材类型提取文字。返回 {text, ocr_status, asr_status, frames}。"""
+        """按素材类型提取文字。返回 {text, ocr_status, asr_status, frames, mode}。"""
         path = MediaService.file_path(asset)
         if not path.exists():
             raise ValueError(f"素材文件不存在: {asset.id}")
 
+        # 快速探测：未配置线上视觉模型直接降级，不发无效请求
+        if not await VisionAdapter.is_configured("vision"):
+            return {
+                "text": "", "ocr_status": "unavailable", "asr_status": "unavailable",
+                "frames": 0, "mode": "online-vision",
+                "note": "未配置线上视觉模型（llm 模块 purpose=vision），素材文字提取未启用",
+            }
+
         if asset.kind == "video":
-            return MediaDetectionService._extract_video(path)
-        # image / cover / adapted 都按图 OCR
-        text = ocr_image(path)
-        return {"text": text, "ocr_status": "done", "asr_status": "n/a", "frames": 1}
+            return await MediaDetectionService._extract_video(path)
+        # image / cover / adapted 都按图识别
+        try:
+            text = await _recognize(path)
+            return {"text": text, "ocr_status": "done", "asr_status": "n/a", "frames": 1, "mode": "online-vision"}
+        except Exception as e:
+            return {
+                "text": "", "ocr_status": "failed", "asr_status": "n/a", "frames": 0,
+                "mode": "online-vision", "note": f"线上视觉识别失败: {type(e).__name__}: {str(e)[:120]}",
+            }
 
     @staticmethod
-    def _extract_video(path: Path) -> dict:
-        """抽帧 OCR + ASR。抽帧失败不掩盖 ASR，反之亦然。"""
-        import imageio_ffmpeg
-        import subprocess
-
+    async def _extract_video(path: Path) -> dict:
+        """视频：系统 ffmpeg 抽帧 → 逐帧线上识别。无 ffmpeg → 明确降级。"""
         texts: list[str] = []
-        frame_status = "done"
-        asr_status = "n/a"
+        asr_status = "unavailable"
+        exe = _ffmpeg_exe()
+        if not exe:
+            return {
+                "text": "", "ocr_status": "unavailable", "asr_status": "unavailable", "frames": 0,
+                "mode": "online-vision",
+                "note": "运行环境无 ffmpeg，视频抽帧未启用；本地 ASR 模型已移除",
+            }
 
-        # 1) 每 2 秒抽一帧，OCR 提取画面文字（最多 30 帧，防长视频爆炸）
         try:
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
             with tempfile.TemporaryDirectory() as td:
                 pattern = str(Path(td) / "frame_%04d.jpg")
                 subprocess.run(
-                    [exe, "-y", "-i", str(path), "-vf", "fps=0.5", "-frames:v", "30",
+                    [exe, "-y", "-i", str(path), "-vf", "fps=0.5", "-frames:v", str(MAX_FRAMES),
                      "-q:v", "5", pattern],
                     capture_output=True, timeout=180,
                 )
                 frames = sorted(Path(td).glob("frame_*.jpg"))
                 for f in frames:
                     try:
-                        texts.append(ocr_image(f))
+                        texts.append(await _recognize(f))
                     except Exception:
-                        frame_status = "failed"
+                        continue
         except Exception:
-            frame_status = "failed"
-
-        # 2) ASR 语音转文字（懒加载，失败降级）
-        model = _get_asr()
-        if model is not None:
-            try:
-                segments, _ = model.transcribe(str(path), beam_size=5, language="zh")
-                texts.append(" ".join(seg.text for seg in segments))
-                asr_status = "done"
-            except Exception:
-                asr_status = "failed"
-        else:
-            asr_status = "failed"
+            pass
 
         combined = "\n".join(t for t in texts if t)
-        overall = "done" if (frame_status == "done" or asr_status == "done") else "failed"
+        status = "done" if texts else "failed"
         return {
-            "text": combined, "ocr_status": overall,
-            "asr_status": asr_status, "frames": len(texts),
+            "text": combined, "ocr_status": status, "asr_status": asr_status,
+            "frames": len(texts), "mode": "online-vision",
+            "note": "视频语音 ASR 已改为线上（当前未配置语音模型）" if not texts else "",
         }

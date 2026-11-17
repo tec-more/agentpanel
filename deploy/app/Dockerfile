@@ -45,9 +45,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 # 先装依赖（利用镜像层缓存）
-COPY requirements.txt requirements-contentops.txt ./
-RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements.txt \
-    && pip install --no-cache-dir -i ${PIP_INDEX_URL} -r requirements-contentops.txt
+# M7：移除 requirements-contentops.txt（OCR/ASR/ffmpeg 等本地模型依赖），
+# 素材识别与语义判定统一改走 llm 模块的线上模型，镜像不再携带本地模型。
+COPY requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip pip install -i ${PIP_INDEX_URL} -r requirements.txt
 
 # 再拷源码（本地 web/dist 已被 .dockerignore 排除）
 COPY . .

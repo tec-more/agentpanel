@@ -89,13 +89,18 @@ class MediaService:
 
     @staticmethod
     def probe_video(path: Path) -> dict:
-        """用 imageio-ffmpeg 自带的 ffmpeg 探测宽高/时长。失败返回空值不抛异常。"""
+        """用系统 ffmpeg（PATH）探测宽高/时长；无 ffmpeg 时返回空值不抛异常。
+
+        M7：移除 imageio-ffmpeg 本地依赖；探测属元信息增强，缺失不影响上传。
+        """
         result = {"width": None, "height": None, "duration": None}
         try:
-            import imageio_ffmpeg
+            import shutil
+            exe = shutil.which("ffmpeg")
+            if not exe:
+                return result
             import subprocess
             import re
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
             proc = subprocess.run([exe, "-i", str(path)], capture_output=True, text=True, timeout=20)
             info = proc.stderr
             m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", info)

@@ -62,7 +62,8 @@ const PLUGIN_ROUTE_PREFIX = {
   agent: 'agent',
   joke: 'agent',
   finance: 'finance',
-  inventory: 'inventory'
+  inventory: 'inventory',
+  contentops: 'contentops'
 }
 
 const router = createRouter({

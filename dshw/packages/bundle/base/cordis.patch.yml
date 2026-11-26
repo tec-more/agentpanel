@@ -130,6 +130,12 @@
         clientId: !!js process.env.DSH_AGENTPANEL_CLIENT_ID || ''
         clientSecret: !!js process.env.DSH_AGENTPANEL_CLIENT_SECRET || ''
         customerUrl: !!js process.env.DSH_AGENTPANEL_CUSTOMER_URL || 'http://127.0.0.1:9998/v1/customer'
+        # Discover-app catalog moved to the harness plugin on 2026-11-26. Override
+        # the default ${customerUrl}/discover-apps (now gone) with the harness route.
+        appsEndpoint: !!js process.env.DSH_AGENTPANEL_APPS_ENDPOINT || 'http://127.0.0.1:9998/v1/harness/discover-apps'
+        # Customer portal base URL (Web route). Enables the account-UI portal
+        # links and the one-time web-ticket sign-in; empty hides the entries.
+        panelUrl: !!js process.env.DSH_AGENTPANEL_PANEL_URL || ''
         storageDir: !!js process.env.DSH_AGENTPANEL_ACCOUNT_STORE || ''
         # Deployment brand for account copy (Web + Desktop). Desktop exports the
         # backend project name as DSH_AGENTPANEL_PROJECT_NAME before starting the

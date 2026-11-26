@@ -46,6 +46,8 @@ export interface AgentpanelAccountConfig {
   storageDir?: string | undefined
   usageUrl?: string | undefined
   topUpUrl?: string | undefined
+  /** AgentPanel customer portal base URL; empty hides the portal links. */
+  panelUrl?: string | undefined
   renewRatio?: number | undefined
   renewCheckMs?: number | undefined
 }
@@ -101,11 +103,15 @@ function customerBase(config: AgentpanelAccountConfig): string {
   return base(config.customerUrl ?? 'http://127.0.0.1:9998/v1/customer')
 }
 
-function linksOf(config: AgentpanelAccountConfig): { usageUrl: string; topUpUrl: string } {
-  const b = customerBase(config)
+function linksOf(config: AgentpanelAccountConfig): { usageUrl: string; topUpUrl: string; panelUrl?: string } {
+  const portal = (config.panelUrl ?? '').replace(/\/+$/, '')
+  const membership = portal === '' ? '' : `${portal}/portal/membership`
   return {
-    usageUrl: config.usageUrl ?? `${b}/account/usage`,
-    topUpUrl: config.topUpUrl ?? `${b}/account/top-up`,
+    // Never fall back to API paths: the account UI renders these as browser
+    // links, and /v1/customer/account/* does not exist. Empty strings hide rows.
+    usageUrl: config.usageUrl ?? membership,
+    topUpUrl: config.topUpUrl ?? membership,
+    ...(portal === '' ? {} : { panelUrl: portal }),
   }
 }
 

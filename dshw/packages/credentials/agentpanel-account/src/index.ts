@@ -14,7 +14,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { platform, release } from 'node:os'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, ImportedLeaseSession } from './types.ts'
+import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, DiscoverAppView, DiscoverAppsOutcome, ImportedLeaseSession, WebTicketOutcome } from './types.ts'
 import type {
   AccountBonusBatch,
   AccountBonusOrderId,
@@ -26,7 +26,7 @@ import type {
   SignInAttemptView,
 } from '@deepseek-ai/dsh-deepseek-account/types'
 
-export type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, ImportedLeaseSession } from './types.ts'
+export type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, DiscoverAppView, DiscoverAppsOutcome, ImportedLeaseSession, WebTicketOutcome } from './types.ts'
 
 /** Deployment options for the agentpanel account backend. */
 export interface Config {
@@ -48,6 +48,16 @@ export interface Config {
   usageUrl?: string | undefined
   /** Top-up page URL shown in the account UI. */
   topUpUrl?: string | undefined
+  /**
+   * AgentPanel customer portal base URL (Web route). Enables the portal links
+   * in the account UI and the one-time web-ticket sign-in. Empty (the default)
+   * hides the portal entries.
+   */
+  panelUrl?: string | undefined
+  /** Customer web-ticket endpoint; defaults to `${customerUrl}/auth/web-ticket`. */
+  ticketEndpoint?: string | undefined
+  /** Discover-app catalog endpoint; defaults to `${customerUrl}/discover-apps`. */
+  appsEndpoint?: string | undefined
   /**
    * Deployment display brand for account copy (for example the agentpanel
    * project name). Empty keeps the built-in DeepSeek product name.
@@ -82,6 +92,9 @@ interface ResolvedConfig {
   renewalRatio: number
   usageUrl: string
   topUpUrl: string
+  panelUrl: string
+  ticketEndpoint: string
+  appsEndpoint: string
   brandName: string
   gatewayApiKey: string
   customerUrl: string
@@ -151,6 +164,43 @@ function validEmail(email: string): string | null {
 /** @returns a short user-facing message for an arbitrary failure. */
 function messageOf(error: unknown): string {
   return error instanceof Error && error.message !== '' ? error.message.slice(0, 200) : '操作失败，请重试'
+}
+
+/** Hosts a browser may reach over plain http: loopback only. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * Validate one backend catalog row into a display-safe view, or reject it.
+ * A misconfigured row must never turn into an arbitrary URL being opened or a
+ * credential being forwarded, so every field is re-checked here.
+ */
+function normalizeDiscoverApp(value: unknown): DiscoverAppView | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  const id = Number(raw.id)
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 64) : ''
+  const openMode = raw.open_mode === 'portal' || raw.open_mode === 'link' ? raw.open_mode : undefined
+  const target = typeof raw.target === 'string' ? raw.target : ''
+  if (!Number.isSafeInteger(id) || id <= 0 || name === '' || openMode === undefined || target === '') return undefined
+  if (openMode === 'portal') {
+    if (!target.startsWith('/') || target.startsWith('//') || target.includes('\\')) return undefined
+  } else {
+    let url: URL
+    try { url = new URL(target) } catch { return undefined }
+    if (url.username || url.password
+      || !(url.protocol === 'https:' || (LOOPBACK_HOSTS.has(url.hostname) && url.protocol === 'http:'))) return undefined
+  }
+  return {
+    id,
+    name,
+    description: typeof raw.description === 'string' ? raw.description.slice(0, 160) : '',
+    iconText: typeof raw.icon_text === 'string' ? raw.icon_text.slice(0, 4) : '',
+    iconColor: typeof raw.icon_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.icon_color) ? raw.icon_color : null,
+    openMode,
+    target,
+    sort: typeof raw.sort === 'number' && Number.isFinite(raw.sort) ? raw.sort : 0,
+    isActive: raw.is_active === true,
+  }
 }
 
 /**
@@ -229,6 +279,8 @@ export class AgentPanelAccount extends Service {
   /** @param ctx - Host context. @param config - deployment options. */
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentpanelAccount')
+    const customerUrl = config.customerUrl || ''
+    const panelUrl = (config.panelUrl ?? '').replace(/\/+$/, '')
     this.config = {
       gatewayUrl: config.gatewayUrl || 'http://127.0.0.1:9999',
       controlPlaneUrl: config.controlPlaneUrl || 'http://127.0.0.1:9998/v1/harness',
@@ -239,9 +291,12 @@ export class AgentPanelAccount extends Service {
       renewalRatio: config.renewalRatio ?? 0.8,
       usageUrl: config.usageUrl ?? '',
       topUpUrl: config.topUpUrl ?? '',
+      panelUrl,
+      ticketEndpoint: config.ticketEndpoint ?? (customerUrl === '' ? '' : `${customerUrl.replace(/\/+$/, '')}/auth/web-ticket`),
+      appsEndpoint: config.appsEndpoint ?? (customerUrl === '' ? '' : `${customerUrl.replace(/\/+$/, '')}/discover-apps`),
       brandName: (config.brandName ?? '').trim(),
       gatewayApiKey: config.gatewayApiKey ?? '',
-      customerUrl: config.customerUrl || '',
+      customerUrl,
       storageFile: resolveStorageFile(config.storageDir),
       renewCheckMs: config.renewCheckMs ?? 30_000,
     }
@@ -259,9 +314,15 @@ export class AgentPanelAccount extends Service {
     const brandName = this.config.brandName
     return Promise.resolve({
       status: this.lease === undefined ? 'signed-out' : 'credential-stored',
-      links: { usageUrl: this.config.usageUrl, topUpUrl: this.config.topUpUrl },
+      links: {
+        usageUrl: this.config.usageUrl,
+        topUpUrl: this.config.topUpUrl,
+        ...(this.config.panelUrl === '' ? {} : { panelUrl: this.config.panelUrl }),
+      },
       attempt: this.attempt?.view ?? null,
       ...(brandName === '' ? {} : { brandName }),
+      ...(this.customer?.customerName === undefined || this.customer.customerName === ''
+        ? {} : { displayName: this.customer.customerName }),
     })
   }
 
@@ -472,6 +533,86 @@ export class AgentPanelAccount extends Service {
   /** @returns which sign-in surface the client should offer: the agentpanel customer form or the browser flow. */
   getAuthMode(): Promise<'customer' | 'browser'> {
     return Promise.resolve(this.config.customerUrl === '' ? 'browser' : 'customer')
+  }
+
+  /**
+   * Request a one-time portal login ticket using the customer JWT (never the
+   * gateway virtual key). The ticket is a short-lived, single-use token that
+   * the portal exchanges for its own Web session.
+   * @param redirectTo - in-site path the portal should open after exchange.
+   * @returns the ticket outcome, or a failed outcome when signed out or misconfigured.
+   */
+  async webTicket(redirectTo: string = '/dashboard'): Promise<WebTicketOutcome> {
+    if (this.closed || this.config.ticketEndpoint === '') return { ok: false, message: 'Web 登录入口未配置' }
+    const account = this.customer
+    if (account === undefined || expiredIso(account.tokenExpiresAt)) return { ok: false, message: '请先登录客户账号' }
+    try {
+      const destination = new URL(this.config.ticketEndpoint)
+      if (destination.username || destination.password
+        || !(destination.protocol === 'https:' || (LOOPBACK_HOSTS.has(destination.hostname) && destination.protocol === 'http:'))) {
+        return { ok: false, message: 'Web 登录入口地址无效' }
+      }
+      const safeRedirect = redirectTo.startsWith('/') && !redirectTo.startsWith('//') && !redirectTo.includes('\\')
+        ? redirectTo.slice(0, 512)
+        : '/dashboard'
+      const res = await fetch(this.config.ticketEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${account.accessToken}` },
+        body: JSON.stringify({ redirect_to: safeRedirect }),
+      })
+      const data = await this.readEnvelope(res)
+      const ticket = typeof data.ticket === 'string' ? data.ticket : ''
+      if (ticket.length < 32) return { ok: false, message: 'Web 登录票据无效' }
+      return { ok: true, ticket, expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 60 }
+    } catch (error) {
+      return { ok: false, message: messageOf(error) }
+    }
+  }
+
+  /**
+   * Read the operator-configured discover-app catalog with the customer JWT.
+   * The backend list is validated again here: a misconfigured row must never
+   * turn into an arbitrary URL being opened or a credential being forwarded.
+   * @returns the catalog outcome, or a failed outcome when signed out or misconfigured.
+   */
+  async discoverApps(): Promise<DiscoverAppsOutcome> {
+    if (this.closed || this.config.appsEndpoint === '') return { ok: false, apps: [], message: '应用目录未配置' }
+    const account = this.customer
+    if (account === undefined || expiredIso(account.tokenExpiresAt)) return { ok: false, apps: [], message: '请先登录客户账号' }
+    try {
+      const res = await fetch(this.config.appsEndpoint, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${account.accessToken}` },
+      })
+      const raw = (await this.readEnvelope(res)).items
+      if (!Array.isArray(raw)) return { ok: false, apps: [], message: '应用目录响应无效' }
+      const apps: DiscoverAppView[] = []
+      for (const value of raw) {
+        const app = normalizeDiscoverApp(value)
+        if (app !== undefined) apps.push(app)
+      }
+      return { ok: true, apps }
+    } catch (error) {
+      return { ok: false, apps: [], message: messageOf(error) }
+    }
+  }
+
+  /** Unwrap a customer-control-plane envelope without trusting arbitrary response shapes. */
+  private async readEnvelope(res: Response): Promise<Record<string, unknown>> {
+    let body: unknown
+    try { body = await res.json() } catch { throw new Error('agentpanel account: 票据响应无效') }
+    const envelope = body !== null && typeof body === 'object' && !Array.isArray(body)
+      ? body as Record<string, unknown>
+      : undefined
+    if (envelope === undefined) throw new Error('agentpanel account: 票据响应无效')
+    if (!res.ok || envelope.success === false) {
+      const detail = typeof envelope.msg === 'string' && envelope.msg !== '' ? envelope.msg : `请求失败 (${res.status})`
+      throw new Error(detail)
+    }
+    const source = 'data' in envelope ? envelope.data : envelope
+    if (source === null) return {}
+    if (typeof source !== 'object' || Array.isArray(source)) throw new Error('agentpanel account: 票据响应无效')
+    return source as Record<string, unknown>
   }
 
   /**

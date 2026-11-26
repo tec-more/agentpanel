@@ -225,7 +225,9 @@ def init_app() -> FastAPI:
         from pathlib import Path
         from fastapi.staticfiles import StaticFiles
 
-        upload_root = Path(settings.base_path) / "uploads"
+        # 上传文件写入 storage/uploads（已持久化挂载），裸 /uploads 也指向同一目录，
+        # 避免容器重建后后台上传的图片全部 404。
+        upload_root = Path(settings.base_path) / "storage" / "uploads"
         upload_root.mkdir(parents=True, exist_ok=True)
         app.mount("/uploads", StaticFiles(directory=str(upload_root)), name="uploads")
         print("[静态资源] /uploads 已挂载")

@@ -36,7 +36,8 @@ router.beforeEach((to, _from, next) => {
     next({ path: '/login', query: { redirect: to.fullPath } })
     return
   }
-  if (to.path === '/login' && auth.isLogged) {
+  // 携带一次性票据的 dsh 入口：即使已有旧登录态也要进入登录页完成票据交换。
+  if (to.path === '/login' && auth.isLogged && !to.query.ticket) {
     next('/dashboard')
     return
   }

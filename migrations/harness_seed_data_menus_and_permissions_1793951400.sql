@@ -1,10 +1,11 @@
 -- Harness 管理端 - 菜单与权限种子数据（幂等）
 
 -- 权限（按 code 幂等重建，避免重复插入）
+-- 2026-11-26：发现应用配置从 customer 插件迁入，权限码改为 harness:discover_app。
 DELETE FROM permission WHERE code IN (
     'harness:client:manage', 'harness:identity:manage', 'harness:run:view',
     'harness:usage:view', 'harness:audit:view', 'harness:policy:manage',
-    'harness:price:manage'
+    'harness:price:manage', 'harness:discover_app'
 );
 
 INSERT INTO permission (name, code, module, description, is_active) VALUES
@@ -27,6 +28,9 @@ INSERT INTO permission (name, code, module, description, is_active) VALUES
 
 INSERT INTO permission (name, code, module, description, is_active) VALUES
 ('Harness 模型价格管理', 'harness:price:manage', 'harness', '管理模型价格版本', true);
+
+INSERT INTO permission (name, code, module, description, is_active) VALUES
+('应用配置', 'harness:discover_app', 'harness', '管理 dsh 发现应用面板的应用目录', true);
 
 -- 菜单（按 path 幂等重建）
 DELETE FROM menu WHERE path LIKE '/harness%';
@@ -56,4 +60,9 @@ FROM menu WHERE name = 'Harness 管控' AND path = '/harness';
 
 INSERT INTO menu (name, path, icon, component, parent_id, sort, is_visible, menu_type, permission, is_active)
 SELECT '策略配置', '/harness/policies', 'Lock', 'harness/Policy', id, 6, true, 'menu', 'harness:policy:manage', true
+FROM menu WHERE name = 'Harness 管控' AND path = '/harness';
+
+-- 应用配置（2026-11-26 从 customer 插件迁入 harness）
+INSERT INTO menu (name, path, icon, component, parent_id, sort, is_visible, menu_type, permission, is_active)
+SELECT '应用配置', '/harness/discover-apps', 'Grid', 'harness/discover-apps/index', id, 7, true, 'menu', 'harness:discover_app', true
 FROM menu WHERE name = 'Harness 管控' AND path = '/harness';

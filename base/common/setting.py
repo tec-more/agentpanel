@@ -232,6 +232,8 @@ class Settings(BaseSettings):
 		'http://127.0.0.1:9999',
 		'http://127.0.0.1:9998',
 		'http://localhost:9998',
+		'http://127.0.0.1:3080',
+		'http://localhost:3080',
 	]   # 允许的域名列表
 	ALLOW_METHODS: List[str] = ["*"]   # 允许的HTTP方法
 	ALLOW_HEADERS: List[str] = ["*"]   # 允许的请求头

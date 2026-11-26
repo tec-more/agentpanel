@@ -5,6 +5,8 @@
 > 本文解决其遗留问题：独立服务 仍以 `base/plugins/harness`、`base/common/gateway` 的形式寄生在业务仓库，无法独立构建/发布。
 >
 > **路径同步说明（2026-11-09）**：本文写作时的规划路径为 `packages/agentpanel_common/gateway/*`（当时包名，保留原字面量）；同日目录整理先把该包整包迁入 `services/gateway/gateway/`，随后又二次改名为 `services/gateway/common/`（导入名 `services.gateway.common.*`），服务目录也去掉 `l3` 前缀；同日 18:26 共享包再由 `packages/agentpanel_common/` 改名为 `packages/common/`，导入名 `packages.agentpanel_common.*` → `packages.common.*`。文中除本行历史包名外的路径表述已机械同步为当前布局，但「（新）」「已存在」等时态描述仍属于当时的规划语境；**实际落地位置与依赖方向以 `reports/architecture/as-built-architecture-2026-11-09.md` 和代码为准**。
+>
+> **来源白名单修订（2026-11-24，现行基线）**：§7 的「来源 IP 校验 / `ORCH_INTERNAL_ALLOWED_IPS` / 固定网段 `172.28.0.0/16`」已废止。内部服务鉴权仍为 `x-service-id` + HMAC 签名，但来源白名单改为校验**已验签的 service_id（服务名）**：配置项 `internal_allowed_services` / `ORCH_INTERNAL_ALLOWED_SERVICES`（默认 `["svc_orchestration"]`），拒绝错误码 `service_auth_service_not_allowed`。这样容器重建 IP 漂移不影响授权，且身份由签名保证不可伪造。涉及 `services/orchestration/app/{config,auth}.py`、`base/plugins/harness/services/{orchestration_config,service_auth}.py`、`services/orchestration/manifest.json`、`deploy/gateway/compose.harness.yml`、`deploy/app/docker-compose.yml`。另：compose 中 Redis 主机名统一为网络别名 `agentpanel-redis`（旧字面量 `agentredis` 不存在）。§7 表格与 D5 条目保留原文以存档，与现行实现冲突时以本修订块和代码为准。
 
 ## 0. 目标与非目标
 

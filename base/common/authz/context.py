@@ -152,3 +152,17 @@ async def require_owner(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return await resolve_full_owner(owner)
+
+
+async def require_customer(owner: OwnerContext = Depends(require_owner)) -> OwnerContext:
+    """要求 CUS 主体；USR token 一律 403。
+
+    底座级守卫（2026-11-26 下沉）：任何插件的 C 端只读接口都可直接依赖它，
+    无需 import customer 插件内部服务，避免插件间静态耦合。
+    """
+    if not owner.is_customer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该接口仅面向客户主体（cus），后台账号无权访问",
+        )
+    return owner

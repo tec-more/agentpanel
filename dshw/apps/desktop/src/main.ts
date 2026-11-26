@@ -400,6 +400,10 @@ async function main(): Promise<void> {
     // 不注入，Host 维持内置 "DeepSeek Account"，界面照旧显示本地化标签。
     const projectName = await resolveAgentPanelProjectName()
     if (projectName !== undefined) hostEnvironment = { ...hostEnvironment, DSH_AGENTPANEL_PROJECT_NAME: projectName }
+    // Forward the portal base URL so the Host account service can offer the
+    // one-time web-ticket sign-in and portal links.
+    const panelUrl = process.env.AGENTPANEL_PANEL_URL
+    if (panelUrl !== undefined && panelUrl !== '') hostEnvironment = { ...hostEnvironment, DSH_AGENTPANEL_PANEL_URL: panelUrl }
   }
   let quitting = false
   let startup: Promise<void> | undefined

@@ -115,6 +115,22 @@ deploy/harness-win-verify/source-web/
 !dshw/.gitlab-ci.yml
 !dshw/.github/
 !dshw/.github/**
+# 放行 dshw 主程序所需的点号开头配置/示例文件（源码级配置，非产物）：
+!dshw/.oxlintrc.json
+!dshw/.oxlintrc.staged.json
+!dshw/.jscpd.json
+!dshw/.rgignore
+!dshw/apps/web/.npmignore
+!dshw/apps/desktop/.env.macos.example
+!dshw/apps/desktop/.env.windows.example
+# 放行 dshw 文档站源码（VitePress 的配置与主题全部在点号目录内）
+!dshw/website/.vitepress/
+!dshw/website/.vitepress/**
+# 有意继续忽略（不属主程序文件）：
+#   dshw/.env.windows        -> 本机凭据（dshw/.gitignore 已忽略）
+#   dshw/.claude/ .agents/   -> 上游开发期 AI 工具配置/技能，非运行所需
+#   dshw/.verify/ .desktop-cache/ -> 本地验证截图与桌面端缓存
+#   dshw/.artifacts/ .dsh-build/ .artifacts 等构建产物由 dshw/.gitignore 处理
 # 兜底忽略大文件/构建产物（与 dshw/.gitignore 互补，双重保险）
 dshw/**/node_modules/
 dshw/**/dist/
@@ -125,5 +141,9 @@ dshw/dist-exe/
 dshw/**/.desktop-build/
 dshw/**/coverage/
 dshw/**/.pytest_cache/
+# 运行期持久化数据与一次性构建目录（不入库）
+storage/
+uploads/
+web/dist_*/
 # ContentOps 运行产物（上传素材/导出包）
 storage/contentops/

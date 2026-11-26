@@ -206,6 +206,9 @@ function mount(
   const setPinned = vi.fn<(id: string, pinned: boolean) => void>()
   const renderSlot = ((key: string, owner: object, opts?: { only?: string; fallback?: ReactNode; children?: ReactNode }) => {
     slotCalls.push(key)
+    if (key === 'conversation.hero.headline' || key === 'conversation.hero.preview') {
+      return opts?.fallback ?? null
+    }
     if (key === 'conversation.input.model' || key === 'conversation.input.plan') {
       seatOwners.push({ key, owner })
     }
@@ -421,11 +424,13 @@ function mount(
 
 describe('Hero chrome', () => {
   it('renders the English preview badge through the hero locale seat', () => {
-    const renderSlot = vi.fn<(key: string, owner: object, opts?: { fallback?: ReactNode }) => ReactNode>(() => null)
+    const renderSlot = vi.fn<(key: string, owner: object, opts?: { fallback?: ReactNode }) => ReactNode>(
+      (_key, _owner, opts) => opts?.fallback ?? null,
+    )
     const view = render(<HeroShell t={makeTranslate(en, commonEn)} renderSlot={renderSlot as never} />)
     expect(view.getByText('Into the Unknown')).toBeTruthy()
     expect(view.getByText('Preview')).toBeTruthy()
-    expect(renderSlot).toHaveBeenCalledOnce()
+    expect(renderSlot).toHaveBeenCalledTimes(3)
     expect(renderSlot.mock.calls[0]?.[0]).toBe('conversation.hero.brand.mark')
     const brandMarkOwner = renderSlot.mock.calls[0]?.[1]
     if (brandMarkOwner === undefined || !('size' in brandMarkOwner) || !('className' in brandMarkOwner)) {

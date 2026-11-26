@@ -20,7 +20,7 @@ from packages.common.gateway_constants import is_gateway_virtual_key, looks_like
 from packages.common.security import build_signature, signature_payload
 from base.plugins.harness.services.orchestration_config import (
     auth_timestamp_window_seconds,
-    internal_allowed_ips,
+    internal_allowed_services,
     orchestration_config,
     write_enabled,
 )
@@ -34,7 +34,7 @@ ERROR_JWT = "service_auth_jwt_rejected"
 ERROR_LEASE_KEY = "service_auth_lease_key_rejected"
 ERROR_INVALID = "service_auth_invalid_credential"
 ERROR_TIMESTAMP = "service_auth_timestamp_skew"
-ERROR_IP = "service_auth_ip_not_allowed"
+ERROR_SERVICE = "service_auth_service_not_allowed"
 ERROR_SCOPE = "service_auth_scope_denied"
 ERROR_WRITE_DISABLED = "orchestration_write_disabled"
 ERROR_NOT_PRIMARY = "orchestration_not_primary"
@@ -89,17 +89,6 @@ def _parse_scopes(raw: Any) -> List[str]:
         if isinstance(parsed, list):
             return [str(item) for item in parsed]
     return []
-
-
-def _normalize_ip(value: Any) -> str:
-    text = str(value or "").strip()
-    if text.lower().startswith("::ffff:"):
-        return text[7:]
-    return text
-
-
-def _client_ip(request: Request) -> str:
-    return _normalize_ip(request.client.host if request.client else "")
 
 
 def _timestamp_ok(request: Request) -> Tuple[bool, str]:
@@ -223,10 +212,14 @@ async def authenticate(request: Request, required_scopes: Tuple[str, ...] = ()) 
         await _write_reject_audit(request, error, "service")
         raise error
 
-    allowed_ips = internal_allowed_ips()
-    client_ip = _client_ip(request)
-    if allowed_ips and client_ip not in allowed_ips:
-        error = ServiceAuthError(ERROR_IP, f"来源 IP 不允许访问内部接口: {client_ip}", 403)
+    # 身份白名单基于已验签的 service_id（服务名），不再依赖会漂移的容器 IP。
+    # 走到这里签名已通过，service_id 来自凭据本身而非客户端声明，无法伪造。
+    allowed_services = internal_allowed_services()
+    service_id = credential["service_id"]
+    if allowed_services and service_id not in allowed_services:
+        error = ServiceAuthError(
+            ERROR_SERVICE, f"服务身份不允许访问内部接口: {service_id}", 403
+        )
         await _write_reject_audit(request, error, "service")
         raise error
 

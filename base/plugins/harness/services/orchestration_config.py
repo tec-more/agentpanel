@@ -30,7 +30,9 @@ DEFAULTS: Dict[str, Any] = {
     "write_enabled": True,
     "app_internal_base_url": "http://127.0.0.1:9998",
     "internal_timeout_seconds": 5,
-    "internal_allowed_ips": ["127.0.0.1", "::1"],
+    # 来源白名单按已验签的 service_id（服务名）匹配，不再写死容器 IP。
+    # 容器重建后 IP 会漂移，而 service_id 由 HMAC 签名保证，稳定且不可伪造。
+    "internal_allowed_services": ["svc_orchestration"],
     "allow_remote_bind": False,
     "policy_in_orchestration": False,
     "reconcile_in_orchestration": False,
@@ -50,7 +52,7 @@ ORCH_ENV_OVERRIDES: tuple[EnvOverride, ...] = (
     EnvOverride("internal_timeout_seconds", "ORCH_INTERNAL_TIMEOUT_SECONDS", "int"),
     EnvOverride("write_enabled", "ORCH_WRITE_ENABLED", "bool"),
     EnvOverride("auth_timestamp_window_seconds", "ORCH_AUTH_TIMESTAMP_WINDOW_SECONDS", "int"),
-    EnvOverride("internal_allowed_ips", "ORCH_INTERNAL_ALLOWED_IPS", "list"),
+    EnvOverride("internal_allowed_services", "ORCH_INTERNAL_ALLOWED_SERVICES", "list"),
     EnvOverride("allow_remote_bind", "ORCH_ALLOW_REMOTE_BIND", "bool"),
     EnvOverride("schema_min_version", "ORCH_SCHEMA_MIN_VERSION", "str"),
 )
@@ -79,8 +81,9 @@ def is_loopback(host: str) -> bool:
     return str(host or "").strip().lower() in LOOPBACK_HOSTS
 
 
-def internal_allowed_ips() -> List[str]:
-    raw = orchestration_config().get("internal_allowed_ips") or []
+def internal_allowed_services() -> List[str]:
+    """允许调用内部接口的 service_id（服务名）白名单，来自已验签身份。"""
+    raw = orchestration_config().get("internal_allowed_services") or []
     if isinstance(raw, str):
         raw = [raw]
     return [str(item).strip() for item in raw if str(item).strip()]
@@ -135,9 +138,9 @@ def validate_orchestration_config() -> Dict[str, Any]:
         if not url.startswith(("http://", "https://")):
             raise OrchestrationConfigError(f"orchestration.{key} 必须显式配置为 http(s) 地址")
 
-    allowed = internal_allowed_ips()
+    allowed = internal_allowed_services()
     if not allowed:
-        raise OrchestrationConfigError("orchestration.internal_allowed_ips 不能为空")
+        raise OrchestrationConfigError("orchestration.internal_allowed_services 不能为空")
 
     timeout = cfg.get("internal_timeout_seconds")
     try:

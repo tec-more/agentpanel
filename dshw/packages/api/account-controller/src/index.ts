@@ -5,7 +5,7 @@ import { isRunningAccountTask } from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
 import type { AgentPanelAccount } from '@deepseek-ai/dsh-agentpanel-account'
-import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose } from '@deepseek-ai/dsh-agentpanel-account/types'
+import type { CustomerAuthOutcome, CustomerCodeOutcome, CustomerCodePurpose, DiscoverAppsOutcome, WebTicketOutcome } from '@deepseek-ai/dsh-agentpanel-account/types'
 import type { AccountView, ImportedLeaseSession, SignInAttemptId } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -128,6 +128,24 @@ export class AccountController extends TypertRemoteService {
    */
   @Remote
   getAuthMode(): Promise<'customer' | 'browser'> { return this.ctx.agentpanelAccount.getAuthMode() }
+  /**
+   * Request a one-time portal login ticket with the stored customer credential.
+   * The ticket lets the customer portal open a Web session without ever seeing
+   * the customer JWT or the gateway virtual key.
+   * @param redirectTo - in-site path the portal should open after exchange.
+   * @returns the ticket outcome, or a failed outcome when signed out or misconfigured.
+   */
+  @Remote
+  webTicket(redirectTo: string): Promise<WebTicketOutcome> {
+    return this.ctx.agentpanelAccount.webTicket(redirectTo)
+  }
+  /**
+   * Read the operator-configured discover-app catalog. The Host always uses its
+   * own customer JWT; clients never see credentials or control-plane URLs.
+   * @returns the catalog outcome.
+   */
+  @Remote
+  discoverApps(): Promise<DiscoverAppsOutcome> { return this.ctx.agentpanelAccount.discoverApps() }
   /**
    * Request a customer verification mail.
    * @param email - customer mailbox.

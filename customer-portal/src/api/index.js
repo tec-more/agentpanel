@@ -4,6 +4,7 @@ import request from '@/utils/request'
 export const apiLogin = (data) => request.post('/v1/customer/auth/login', data)
 export const apiSendCode = (data) => request.post('/v1/customer/auth/send-code', data)
 export const apiLoginByCode = (data) => request.post('/v1/customer/auth/login-code', data)
+export const apiExchangeWebTicket = (ticket) => request.post('/v1/customer/auth/web-ticket/exchange', { ticket })
 export const apiAuthMe = () => request.get('/v1/customer/auth/me')
 
 // ---------- 自助 ----------

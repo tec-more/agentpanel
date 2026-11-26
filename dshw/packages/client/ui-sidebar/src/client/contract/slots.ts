@@ -73,6 +73,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * package's 'sidebar' entry; each action receives only the column state.
      */
     'sidebar.footer.action': { kind: 'list'; scope: 'root'; owner: SidebarFooterActionOwnerProps }
+    /**
+     * Optional actions in the sidebar header's trailing row, beside the
+     * expand/collapse toggle. Declared by this package's 'sidebar' entry;
+     * each action receives only the column state.
+     */
+    'sidebar.header.action': { kind: 'list'; scope: 'root'; owner: SidebarHeaderActionOwnerProps }
   }
 }
 
@@ -189,6 +195,12 @@ export interface SidebarFooterActionOwnerProps {
   wide: boolean
 }
 
+/** Owner share of an action rendered in the header's trailing row. */
+export interface SidebarHeaderActionOwnerProps {
+  /** Whether the sidebar renders wide content (false = 56px rail). */
+  wide: boolean
+}
+
 /**
  * Registrant-private injected share (arrives via the register inject
  * factory). The renderer binds the panel metadata source to usePanels.
@@ -238,5 +250,6 @@ export type SidebarRootComponentProps =
     | 'sidebar.workspaces'
     | 'sidebar.settings'
     | 'sidebar.footer.action'
+    | 'sidebar.header.action'
   >
   & PropsRenderFactories & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>

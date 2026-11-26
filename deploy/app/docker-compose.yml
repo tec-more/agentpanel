@@ -43,6 +43,9 @@ services:
       # M3 发布端：与 taskiq 两服务共用专用 vhost 的 broker 连接串（同一 secret 文件）
       TASKIQ_BROKER_URL_FILE: /run/secrets/taskiq_broker_url
       TASKIQ_VHOST: ${TASKIQ_VHOST:-agentpanel}
+      # L3 编排：app 在 proxy 模式下把 Harness 业务请求转发到独立编排服务。
+      # 用 compose 服务名解析，不写容器 IP（容器重建后 IP 会漂移）。
+      ORCH_PUBLIC_BASE_URL: http://orchestration:9100
     secrets:
       - taskiq_broker_url
     volumes:

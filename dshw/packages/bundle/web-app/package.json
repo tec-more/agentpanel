@@ -75,6 +75,7 @@
     "@deepseek-ai/dsh-client-product-analytics": "workspace:*",
     "@deepseek-ai/dsh-client-resources": "workspace:*",
     "@deepseek-ai/dsh-client-shortcuts": "workspace:*",
+    "@deepseek-ai/dsh-client-ui-agentpanel-entry": "workspace:*",
     "@deepseek-ai/dsh-client-ui-agent-preset": "workspace:*",
     "@deepseek-ai/dsh-client-ui-agent-team": "workspace:*",
     "@deepseek-ai/dsh-client-ui-approval": "workspace:*",

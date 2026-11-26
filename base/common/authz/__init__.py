@@ -14,6 +14,7 @@ from .context import (
     OwnerContext,
     get_current_owner,
     require_owner,
+    require_customer,
     current_owner,
 )
 from .scope import resolve_scope
@@ -36,6 +37,7 @@ __all__ = [
     "OwnerContext",
     "get_current_owner",
     "require_owner",
+    "require_customer",
     "current_owner",
     "resolve_scope",
     "ResourceGrantService",

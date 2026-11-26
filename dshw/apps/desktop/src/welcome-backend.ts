@@ -80,6 +80,7 @@ export function connectDesktopWelcome(
     storageDir: process.env.AGENTPANEL_ACCOUNT_STORE_DIR,
     usageUrl: process.env.AGENTPANEL_USAGE_URL,
     topUpUrl: process.env.AGENTPANEL_TOPUP_URL,
+    panelUrl: process.env.AGENTPANEL_PANEL_URL,
     renewRatio: process.env.AGENTPANEL_RENEW_RATIO ? Number(process.env.AGENTPANEL_RENEW_RATIO) : undefined,
     renewCheckMs: process.env.AGENTPANEL_RENEW_CHECK_MS ? Number(process.env.AGENTPANEL_RENEW_CHECK_MS) : undefined,
   })

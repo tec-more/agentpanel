@@ -44,7 +44,7 @@ COPY web/ ./
 RUN npm run build
 
 # ===== 阶段2：L2 运行时 =====
-FROM aipanel-app@sha256:6871145edd9003bfbdd6d9e3fa043441d5961e32dc61396488dd9e794ced8ea4
+FROM agentpanel-app@sha256:6871145edd9003bfbdd6d9e3fa043441d5961e32dc61396488dd9e794ced8ea4
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \

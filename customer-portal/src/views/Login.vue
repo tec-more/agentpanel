@@ -46,12 +46,12 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Message, Lock } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
-import { apiSendCode } from '@/api'
+import { apiSendCode, apiExchangeWebTicket } from '@/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -63,6 +63,36 @@ const loading = ref(false)
 const sending = ref(false)
 const countdown = ref(0)
 let timer = null
+
+/** 站内相对路径才允许作为票据登录后的落点，避免开放重定向。 */
+function safeRedirect(value) {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.includes('\\')
+    ? value
+    : '/dashboard'
+}
+
+/** dsh 免登入口：一次性票据换标准 Web 登录态，随后从 URL 清除票据。 */
+async function consumeWebTicket() {
+  const ticket = route.query.ticket
+  if (typeof ticket !== 'string' || ticket.length < 32) return false
+  loading.value = true
+  try {
+    const res = await apiExchangeWebTicket(ticket)
+    auth._persist(res.data.access_token, res.data.customer)
+    const redirect = safeRedirect(res.data.redirect_to || route.query.redirect)
+    // replace 清除票据，避免浏览器历史 / Referer 泄漏。
+    await router.replace({ path: redirect })
+    ElMessage.success('登录成功')
+    return true
+  } catch (e) {
+    await router.replace({ path: '/login' })
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => { void consumeWebTicket() })
 
 async function sendCode() {
   if (!form.value.email) { ElMessage.warning('请先填写邮箱'); return }

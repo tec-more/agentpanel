@@ -13,11 +13,32 @@
     "internal_routes": [
         "api/app_internal"
     ],
-    "models": [],
-    "schemas": [
-        "harness"
+    "models": [
+        "discover_app"
     ],
-    "menus": [],
+    "schemas": [
+        "harness",
+        "discover_app"
+    ],
+    "menus": [
+        {
+            "name": "Harness 管控",
+            "path": "/harness",
+            "icon": "Connection",
+            "component": "",
+            "sort": 16,
+            "children": [
+                {
+                    "name": "应用配置",
+                    "path": "/harness/discover-apps",
+                    "icon": "Grid",
+                    "component": "harness/discover-apps/index",
+                    "sort": 1,
+                    "permission_code": "harness:discover_app"
+                }
+            ]
+        }
+    ],
     "permissions": [
         {
             "name": "Harness 客户端管理",
@@ -54,6 +75,12 @@
             "code": "harness:price:manage",
             "module": "harness",
             "description": "管理模型价格版本"
+        },
+        {
+            "name": "应用配置",
+            "code": "harness:discover_app",
+            "module": "harness",
+            "description": "管理 dsh 发现应用面板的应用目录"
         }
     ],
     "dependencies": [],

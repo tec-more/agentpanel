@@ -23,7 +23,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       GW_HOST: 0.0.0.0
@@ -62,7 +62,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_ENABLED: "true"
-      REDIS_HOST: agentredis
+      REDIS_HOST: agentpanel-redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
       ORCH_HOST: 0.0.0.0
@@ -70,7 +70,9 @@ services:
       ORCH_ALLOW_REMOTE_BIND: "true"
       ORCH_PUBLIC_BASE_URL: ${ORCH_PUBLIC_BASE_URL:-http://127.0.0.1:9100}
       ORCH_APP_BASE_URL: http://app:9998
-      ORCH_INTERNAL_ALLOWED_IPS: "172.28.0.10,127.0.0.1,::1"
+      # 来源白名单按已验签的 service_id（服务名），不写死容器 IP：
+      # 编排进程以 svc_orchestration 身份调用 app 内部额度接口。
+      ORCH_INTERNAL_ALLOWED_SERVICES: "svc_orchestration"
     secrets: [db_password, redis_password, orchestration_service_secret]
     command:
       - /bin/sh

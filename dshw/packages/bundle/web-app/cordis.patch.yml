@@ -143,6 +143,11 @@
     - id: account-controller
       name: '@deepseek-ai/dsh-api-account-controller'
 
+    # AgentPanel discover entry: sidebar header button + dropdown of customer
+    # apps. Reads account state through the account-controller Remote above.
+    - id: ui-agentpanel-entry
+      name: '@deepseek-ai/dsh-client-ui-agentpanel-entry'
+
     - id: settings-controller
       name: '@deepseek-ai/dsh-api-settings-controller'
 

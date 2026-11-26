@@ -1,7 +1,7 @@
 /** Sidebar account launcher and locally authoritative sign-out action. */
 import { useEffect, useRef, useState } from 'react'
 import {
-  Toast, Menu, IconEllipsisOutlineMedium, IconPaperPlaneOutlineMedium, IconSettingsOutlineMedium, IconUserOutlineMedium,
+  Toast, Menu, IconPaperPlaneOutlineMedium, IconSettingsOutlineMedium, IconUserOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AccountSectionInjected } from './AccountSection.tsx'
@@ -41,8 +41,14 @@ export function AccountMenu({
   const [expiryNotice, setExpiryNotice] = useState(false)
   useEffect(() => subscribeSessionExpired?.(() => { setExpiryNotice(true) }), [subscribeSessionExpired])
   const profile = account.details?.profile
-  const label = profile === undefined ? null : profile.status === 'ready'
-    ? profile.value.name ?? profile.value.contact ?? t('signedIn') : t('signedIn')
+  // Prefer the real customer identity. The agentpanel credential keeps the
+  // nickname/username on the account view, so it stays visible even when the
+  // Platform profile request fails (the default account copy is only a fallback).
+  const displayName = account.view?.displayName
+  const label = displayName !== undefined && displayName !== ''
+    ? displayName
+    : profile === undefined ? null : profile.status === 'ready'
+      ? profile.value.name ?? profile.value.contact ?? t('signedIn') : t('signedIn')
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const [busy, setBusy] = useState(false)
@@ -62,30 +68,32 @@ export function AccountMenu({
       notices={account.notices}
       anchor={anchor} title={t('bonusNoticeTitle')} closeLabel={t('close')}
       onShown={bonusNoticeShown} onDismiss={bonusNoticeDismissed} />}
-    <Menu open={open} side="top" portal autoFocus className={css.anchor} listClassName={signedIn ? undefined : css.signedOutMenu}
-      anchor={<button ref={trigger} type="button" className={css.trigger} data-collapsed={!wide} data-signed-out={!signedIn} aria-label={t('menu')}
-        aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(value => !value) }}>
-        {signedIn
-          ? <span className={css.avatar} data-avatar-status={account.avatar?.status}>
+    {signedIn
+      ? <Menu open={open} side="top" portal autoFocus className={css.anchor}
+        anchor={<button ref={trigger} type="button" className={css.trigger} data-collapsed={!wide} data-signed-out="false" aria-label={t('menu')}
+          aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen(value => !value) }}>
+          <span className={css.avatar} data-avatar-status={account.avatar?.status}>
             <AccountAvatar avatar={account.avatar} avatarFailed={avatarFailed} />
           </span>
-          : <IconEllipsisOutlineMedium size={14} />}
-        {wide && <span className={css.label}>{signedIn ? label : t('more')}</span>}
+          {wide && <span className={css.label}>{label}</span>}
+        </button>}
+        items={[
+          { id: 'settings', label: t('settings'), icon: <IconSettingsOutlineMedium size={16} />,
+            ...(settingsShortcut === undefined ? {} : { shortcut: settingsShortcut }) },
+          { id: 'contact', label: t('contactUs'), icon: <IconPaperPlaneOutlineMedium size={16} /> },
+          { id: 'signout', label: t('signOut'), icon: <LogoutIcon />, disabled: busy },
+        ]}
+        onClose={() => { setOpen(false) }}
+        onSelect={(id) => {
+          if (id === 'settings') { setOpen(false); trigger.current?.focus(); openSettings() }
+          else if (id === 'contact') { setOpen(false); contactUs() }
+          else void requestSignOut()
+        }} />
+      : <button ref={trigger} type="button" className={css.trigger} data-collapsed={!wide} data-signed-out="true"
+        aria-label={t('signIn')} onClick={beginSignIn}>
+        <IconUserOutlineMedium size={14} />
+        {wide && <span className={css.label}>{t('signIn')}</span>}
       </button>}
-      items={[
-        { id: 'settings', label: t('settings'), icon: <IconSettingsOutlineMedium size={16} />,
-          ...(settingsShortcut === undefined ? {} : { shortcut: settingsShortcut }) },
-        { id: 'contact', label: t('contactUs'), icon: <IconPaperPlaneOutlineMedium size={16} /> },
-        ...(signedIn ? [{ id: 'signout', label: t('signOut'), icon: <LogoutIcon />, disabled: busy }]
-          : [{ id: 'signin', label: t('signIn'), icon: <IconUserOutlineMedium size={16} /> }]),
-      ]}
-      onClose={() => { setOpen(false) }}
-      onSelect={(id) => {
-        if (id === 'settings') { setOpen(false); trigger.current?.focus(); openSettings() }
-        else if (id === 'contact') { setOpen(false); contactUs() }
-        else if (id === 'signin') beginSignIn()
-        else void requestSignOut()
-      }} />
     {account.loginVisible && !account.onboarding && (account.customerAuth === undefined ? null : account.customerAuth
       ? sendCode !== undefined && login !== undefined && register !== undefined
         && <EmailSignInDialog account={account} sendCode={sendCode} login={login} register={register} resetPassword={resetPassword} t={t}

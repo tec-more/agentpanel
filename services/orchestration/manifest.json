@@ -14,9 +14,8 @@
             "write_enabled": true,
             "app_internal_base_url": "http://127.0.0.1:9998",
             "internal_timeout_seconds": 5,
-            "internal_allowed_ips": [
-                "127.0.0.1",
-                "::1"
+            "internal_allowed_services": [
+                "svc_orchestration"
             ],
             "allow_remote_bind": false,
             "policy_in_orchestration": false,

@@ -49,6 +49,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface GlobalStandardProps {
     /** Subscribe to the selected main panel independently of parent renders. */
     usePanelInfo: UsePanelInfo
+    /** Operator-provided browser product title; overrides the build/localized default. */
+    useProductTitle?: SnapshotSelectorHook<string | undefined>
   }
 
   interface SlotMap {

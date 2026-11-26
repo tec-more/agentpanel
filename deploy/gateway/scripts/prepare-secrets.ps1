@@ -4,7 +4,9 @@
 #   powershell -ExecutionPolicy Bypass -File deploy/gateway/scripts/prepare-secrets.ps1
 #
 # 输入：
-#   - 根目录 config.conf 的 [db] / [redis]（密码来源）
+#   - 根目录 config.conf 的 [db]（密码来源）
+#   - deploy/app/config.conf 的 [redis]（容器网络内 Redis 的实际密码；根配置的
+#     redis 密码供宿主直连使用，两者可能不同，harness 连的是 agentpanel-redis）
 #   - 环境变量 ORCHESTRATION_SERVICE_SECRET（必须与 L2 DB 中
 #     service_credential.svc_orchestration 的凭据一致，不能随机生成）
 #
@@ -101,7 +103,16 @@ $dbName = Read-IniValue $confLines 'db' 'db_name' -Required
 $dbUser = Read-IniValue $confLines 'db' 'db_user' -Required
 $dbPassword = Read-IniValue $confLines 'db' 'db_password' -Required
 $dbPort = Read-IniValue $confLines 'db' 'db_port' -Required
-$redisPassword = Read-IniValue $confLines 'redis' 'password' -Required
+# harness 容器连的是 app_default 网络内的 agentpanel-redis，其密码由 app 容器
+# 挂载的 deploy/app/config.conf 定义；根 config.conf 的 redis 密码是宿主直连口径，
+# 二者可能不同。优先取 app 侧配置，缺省时回退根配置。
+$appConfPath = Join-Path $repoRoot 'deploy/app/config.conf'
+if (Test-Path $appConfPath) {
+    $appConfLines = [System.IO.File]::ReadAllLines($appConfPath, [System.Text.Encoding]::UTF8)
+    $redisPassword = Read-IniValue $appConfLines 'redis' 'password' -Required
+} else {
+    $redisPassword = Read-IniValue $confLines 'redis' 'password' -Required
+}
 
 # taskiq 专用连接串（容器内经 host.docker.internal 访问宿主 RabbitMQ / PG）。
 # vhost / 账号 优先用 [rabbitmq] 的 taskiq_* 专用键；缺省时回退到应用共用键，
@@ -142,7 +153,7 @@ $appLines = $confLines
 $appLines = Set-IniValue $appLines 'db' 'db_host' 'host.docker.internal'
 $appLines = Set-IniValue $appLines 'storage' 'path' '/app/storage'
 $appLines = Set-IniValue $appLines 'log' 'path' '/app/logs'
-$appLines = Set-IniValue $appLines 'redis' 'host' 'agentredis'
+$appLines = Set-IniValue $appLines 'redis' 'host' 'agentpanel-redis'
 $appLines = Set-IniValue $appLines 'qdrant' 'host' 'http://host.docker.internal:6333'
 $appLines = Set-IniValue $appLines 'rabbitmq' 'host' 'host.docker.internal'
 $appLines = Ensure-IniSection $appLines 'deploy'

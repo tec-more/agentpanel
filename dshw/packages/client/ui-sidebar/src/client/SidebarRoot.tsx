@@ -375,7 +375,12 @@ export function SidebarRoot({
               </button>
             )
         })()}
-        {!darwinDesktop && toggle}
+        {!darwinDesktop && (
+          <span className={css.headerTrailing}>
+            {wide && renderSlot('sidebar.header.action', { wide })}
+            {toggle}
+          </span>
+        )}
       </div>
 
       {/* The label fades before the hover/focus shortcut, including on translucent backgrounds. */}

@@ -35,3 +35,33 @@ export interface CustomerAuthOutcome {
   readonly message: string
   readonly state: AccountView | null
 }
+
+/** Display-safe projection of one operator-configured discover-app row. */
+export interface DiscoverAppView {
+  readonly id: number
+  readonly name: string
+  readonly description: string
+  readonly iconText: string
+  readonly iconColor: string | null
+  /** `portal` opens the customer portal route; `link` opens an external https/loopback URL. */
+  readonly openMode: 'portal' | 'link'
+  /** In-site path for `portal`, full URL for `link`. Never a credential. */
+  readonly target: string
+  readonly sort: number
+  readonly isActive: boolean
+}
+
+/** Outcome of reading the discover-app catalog; `message` is a user-facing failure reason. */
+export interface DiscoverAppsOutcome {
+  readonly ok: boolean
+  readonly apps: readonly DiscoverAppView[]
+  readonly message?: string
+}
+
+/** Outcome of a portal web-ticket request; `ticket` is present only while `ok` is true. */
+export interface WebTicketOutcome {
+  readonly ok: boolean
+  readonly ticket?: string
+  readonly expiresIn?: number
+  readonly message?: string
+}

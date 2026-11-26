@@ -5,13 +5,14 @@
 注意：客户管理功能（CRUD、列表等）已迁移到 customer.py
 """
 from datetime import timedelta
-from fastapi import APIRouter, Query, Depends, Request
+from fastapi import APIRouter, Query, Depends, Request, HTTPException
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional
 
 from base.common.security import (
     create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    get_current_actor,
     get_current_user_id,
 )
 from base.common.response import success_response, fail_response
@@ -298,6 +299,88 @@ async def customer_login_with_code(login_data: VerifyCodeSchema):
     }
 
     return success_response(data=token_data, msg="登录成功")
+
+
+class WebTicketIssueSchema(BaseModel):
+    """签发一次性 Web 登录票据的可选参数；主体一律由 cus JWT 决定。"""
+
+    redirect_to: Optional[str] = Field(default=None, max_length=512, description="登录后站内跳转路径")
+
+
+class WebTicketExchangeSchema(BaseModel):
+    """消费一次性 Web 登录票据。"""
+
+    ticket: str = Field(..., min_length=32, max_length=256, description="一次性票据明文")
+
+
+@auth_router.post("/web-ticket", summary="签发一次性 Web 登录票据（dsh 入口免登）")
+async def issue_web_ticket(
+    payload: WebTicketIssueSchema,
+    request: Request,
+    actor: dict = Depends(get_current_actor),
+):
+    """CUS JWT 换一次性票据（60s、单次）。dgw.* 虚拟 key 与 USR JWT 均被拒绝。"""
+    from base.plugins.customer.services.web_ticket_service import WebTicketService
+
+    if actor.get("type") != "cus":
+        raise HTTPException(status_code=403, detail="仅客户账号可签发 Web 登录票据")
+    try:
+        customer_id = int(actor["id"])
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="无效的认证凭据")
+
+    from base.plugins.customer.models.customer import Customer
+
+    customer = await Customer.get_or_none(id=customer_id)
+    if customer is None or not customer.is_active:
+        raise HTTPException(status_code=403, detail="客户账号不存在或已停用")
+
+    ticket, expires_in = await WebTicketService.issue(
+        customer_id=customer_id,
+        email=customer.email,
+        redirect_to=payload.redirect_to,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    await WebTicketService.audit(
+        "customer.web_ticket.issue", customer_id, request,
+        {"redirect_to": payload.redirect_to, "expires_in": expires_in},
+    )
+    return success_response(data={"ticket": ticket, "expires_in": expires_in}, msg="票据已签发")
+
+
+@auth_router.post("/web-ticket/exchange", summary="消费一次性票据换 Web 登录态")
+async def exchange_web_ticket(payload: WebTicketExchangeSchema, request: Request):
+    """票据换标准 cus JWT；明文票据不写日志，消费后即失效。"""
+    from base.plugins.customer.services.web_ticket_service import WebTicketError, WebTicketService
+
+    try:
+        record = await WebTicketService.exchange(payload.ticket)
+    except WebTicketError:
+        await WebTicketService.audit("customer.web_ticket.rejected", None, request, {"reason": "invalid_ticket"})
+        return fail_response(msg="登录票据无效或已过期，请重新打开入口")
+
+    from base.plugins.customer.models.customer import Customer
+
+    customer = await Customer.get_or_none(id=record.customer_id)
+    if customer is None or not customer.is_active:
+        return fail_response(msg="客户账号不存在或已停用")
+
+    access_token = create_access_token(
+        data={"sub": str(customer.id), "typ": "cus", "email": customer.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    customer_dict = await customer.to_dict()
+    await WebTicketService.audit(
+        "customer.web_ticket.exchange", customer.id, request,
+        {"redirect_to": record.redirect_to, "ticket_hash": record.token_hash},
+    )
+    return success_response(data={
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "customer": customer_dict,
+        "redirect_to": record.redirect_to,
+    }, msg="登录成功")
 
 
 @auth_router.post("/verify-code", summary="验证客户验证码")

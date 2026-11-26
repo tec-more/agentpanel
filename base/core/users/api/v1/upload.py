@@ -14,9 +14,11 @@ from base.common.setting import settings
 
 router = APIRouter(prefix="/v1/upload", tags=["文件上传"])
 
-# 确保上传目录存在
-UPLOAD_DIR = Path(settings.base_path) / "uploads" / "images"
+# 确保上传目录存在。放到已持久化的 storage 挂载下，容器重建后图片不丢失。
+UPLOAD_DIR = Path(settings.base_path) / "storage" / "uploads" / "images"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# 兼容旧版本写入 /app/uploads/images 的历史文件（容器重建前上传的图片）。
+LEGACY_UPLOAD_DIR = Path(settings.base_path) / "uploads" / "images"
 
 # 允许的图片格式
 ALLOWED_IMAGE_TYPES = {
@@ -108,7 +110,11 @@ async def get_uploaded_image(year: str, month: str, day: str, filename: str):
     访问上传的图片
     """
     file_path = UPLOAD_DIR / year / month / day / filename
-    
+    if not file_path.exists():
+        # 回退到旧上传目录，避免升级前上传的图片突然 404。
+        legacy_path = LEGACY_UPLOAD_DIR / year / month / day / filename
+        if legacy_path.exists():
+            file_path = legacy_path
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="图片不存在")
     

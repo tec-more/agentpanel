@@ -351,6 +351,8 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       'conversation.input.dock': { kind: 'list', scope: 'session' },
       'conversation.hero.frame': { kind: 'hoc', scope: 'root' },
       'conversation.hero.brand.mark': { kind: 'single', scope: 'root' },
+      'conversation.hero.headline': { kind: 'single', scope: 'root' },
+      'conversation.hero.preview': { kind: 'single', scope: 'root' },
       'conversation.hero.workspace': { kind: 'single', scope: 'root' },
       'conversation.hero.agentPreset': { kind: 'single', scope: 'session-maybe' },
       'conversation.hero.options': { kind: 'list', scope: 'session' },

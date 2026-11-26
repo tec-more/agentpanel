@@ -16,7 +16,8 @@
         "customer_membership",
         "payment_transaction",
         "identity_link",
-        "customer_organization"
+        "customer_organization",
+        "web_ticket"
     ],
     "schemas": [
         "customer_schema",

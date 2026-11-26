@@ -33,6 +33,8 @@ export interface SignInAttemptView {
 export interface AccountLinks {
   readonly usageUrl: string
   readonly topUpUrl: string
+  /** AgentPanel customer portal base URL; absent for deployments without a portal. Never carries a token. */
+  readonly panelUrl?: string
 }
 /** Stored-account presence is not a claim that the server has validated its token. */
 export interface AccountView {
@@ -44,6 +46,11 @@ export interface AccountView {
    * built-in DeepSeek name; absent keeps the built-in product name.
    */
   readonly brandName?: string
+  /**
+   * Deployment-supplied account display name (for example the AgentPanel customer's
+   * nickname). Shown by the launcher even when the Platform profile read fails.
+   */
+  readonly displayName?: string
 }
 
 /** Platform account identifier supplied by the current-user endpoint. */

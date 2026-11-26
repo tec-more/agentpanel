@@ -101,6 +101,7 @@ export function apply(ctx: ClientContext): void {
         'sidebar.workspaces': { kind: 'single', scope: 'root', inject: SIDEBAR_SECTION_INJECT },
         'sidebar.settings': { kind: 'single', scope: 'root' },
         'sidebar.footer.action': { kind: 'list', scope: 'root' },
+        'sidebar.header.action': { kind: 'list', scope: 'root' },
       },
       inject: injectProps,
     }, SidebarRoot)

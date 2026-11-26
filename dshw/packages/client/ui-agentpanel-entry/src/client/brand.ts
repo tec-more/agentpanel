@@ -14,6 +14,9 @@ export interface BrandView {
   /** Light/dark favicon URLs; fall back to the brand logo. */
   readonly faviconLight: string | undefined
   readonly faviconDark: string | undefined
+  /** Home decoration: enabled flag and an optional operator image replacing the built-in whale. */
+  readonly homeWhaleEnabled: boolean
+  readonly homeWhaleImage: string | undefined
 }
 
 /** Shared store plus lifecycle used by both brand slot occupants. */
@@ -43,6 +46,7 @@ export function createBrandStore(ctx: Context): BrandStore {
   let snapshot: BrandView = {
     name: 'AgentPanel', logo: undefined, heroHeadline: undefined, heroBeta: undefined, heroLogo: undefined,
     productTitle: undefined, faviconLight: undefined, faviconDark: undefined,
+    homeWhaleEnabled: true, homeWhaleImage: undefined,
   }
   let lastFetch = 0
   let inFlight: Promise<void> | undefined
@@ -52,7 +56,8 @@ export function createBrandStore(ctx: Context): BrandStore {
     if (next.name === snapshot.name && next.logo === snapshot.logo
       && next.heroHeadline === snapshot.heroHeadline && next.heroBeta === snapshot.heroBeta
       && next.heroLogo === snapshot.heroLogo && next.productTitle === snapshot.productTitle
-      && next.faviconLight === snapshot.faviconLight && next.faviconDark === snapshot.faviconDark) return
+      && next.faviconLight === snapshot.faviconLight && next.faviconDark === snapshot.faviconDark
+      && next.homeWhaleEnabled === snapshot.homeWhaleEnabled && next.homeWhaleImage === snapshot.homeWhaleImage) return
     snapshot = next
     for (const listener of listeners) listener()
   }
@@ -67,6 +72,7 @@ export function createBrandStore(ctx: Context): BrandStore {
       publish({
         name: fallbackName, logo: undefined, heroHeadline: undefined, heroBeta: undefined, heroLogo: undefined,
         productTitle: fallbackName, faviconLight: undefined, faviconDark: undefined,
+        homeWhaleEnabled: true, homeWhaleImage: undefined,
       })
       return
     }
@@ -84,6 +90,15 @@ export function createBrandStore(ctx: Context): BrandStore {
       const raw = data[key]
       return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : undefined
     }
+    // The admin stores booleans as TextField strings ('true'/'false'); keep the
+    // built-in decoration visible when the setting is missing or malformed.
+    const flag = (key: string): boolean => {
+      const raw = data[key]
+      if (typeof raw === 'boolean') return raw
+      if (typeof raw !== 'string') return true
+      const normalized = raw.trim().toLowerCase()
+      return normalized !== 'false' && normalized !== '0'
+    }
     // `hero_beta` has a different empty-value contract from other text settings:
     // clearing it in the admin panel means "hide the badge", not "use the default".
     const rawBeta = data['hero_beta']
@@ -100,6 +115,8 @@ export function createBrandStore(ctx: Context): BrandStore {
       productTitle: text('browser_title') ?? name,
       faviconLight,
       faviconDark,
+      homeWhaleEnabled: flag('home_whale_enabled'),
+      homeWhaleImage: resolveLogo(data['home_whale_image'], base),
     })
   }
 

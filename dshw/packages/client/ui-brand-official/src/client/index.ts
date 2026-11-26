@@ -1,10 +1,18 @@
 /** Official DeepSeek Harness occupants: the profile-gated sidebar brand slots and the home whale frame layer. */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { PixelWhale } from './home-whale/PixelWhale.tsx'
 import { OfficialBrandMark, OfficialBrandName } from './Brand.tsx'
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface GlobalStandardProps {
+    /** Operator-controlled home decoration: hide the whale or replace it with an image. */
+    useHomeWhale?: SnapshotSelectorHook<{ enabled: boolean; image: string | undefined }>
+  }
+}
 
 /** Required service: the UI slot registry. */
 export const inject = ['slots']

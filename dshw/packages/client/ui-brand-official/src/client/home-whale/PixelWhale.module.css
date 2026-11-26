@@ -18,3 +18,15 @@
   filter: grayscale(1);
   font-family: var(--ds-font-family-code);
 }
+
+/* Operator-supplied home artwork replaces the canvas; it stays a decoration layer. */
+.custom {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.5;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}

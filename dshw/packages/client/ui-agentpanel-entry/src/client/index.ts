@@ -36,7 +36,22 @@ export function apply(ctx: Context): void {
     getSnapshot: () => brand.getSnapshot().productTitle,
     subscribe: listener => brand.subscribe(listener),
   }
-  ctx.effect(() => ctx.slots.provideRoot({ hooks: { productTitle } }), 'agentpanel-entry: product title')
+  // The home decoration config is a stable object: useSyncExternalStore callers
+  // require a cached snapshot, so rebuild it only when the brand store changes.
+  let homeWhale = { enabled: true, image: undefined as string | undefined }
+  const syncHomeWhale = (): void => {
+    const view = brand.getSnapshot()
+    if (homeWhale.enabled === view.homeWhaleEnabled && homeWhale.image === view.homeWhaleImage) return
+    homeWhale = { enabled: view.homeWhaleEnabled, image: view.homeWhaleImage }
+  }
+  syncHomeWhale()
+  const disposeHomeWhale = brand.subscribe(syncHomeWhale)
+  ctx.effect(() => () => { disposeHomeWhale() }, 'agentpanel-entry: home whale config')
+  const useHomeWhale: HostObservable<{ enabled: boolean; image: string | undefined }> = {
+    getSnapshot: () => homeWhale,
+    subscribe: listener => brand.subscribe(listener),
+  }
+  ctx.effect(() => ctx.slots.provideRoot({ hooks: { productTitle, homeWhale: useHomeWhale } }), 'agentpanel-entry: browser chrome')
   const iconLinks = typeof document === 'undefined' ? []
     : [...document.querySelectorAll<HTMLLinkElement>('link[rel="icon"][type="image/svg+xml"]')]
   const originalIcons = new Map(iconLinks.map(link => [link, {

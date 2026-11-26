@@ -313,6 +313,22 @@ class SystemSettingService:
                 "setting_type": "image",
                 "sort": 11,
             },
+            {
+                "key": "home_whale_enabled",
+                "value": "true",
+                "name": "首页鲸鱼动画",
+                "description": "dsh Web UI 首页背景鲸鱼动画开关；关闭后首页不显示背景装饰",
+                "setting_type": "boolean",
+                "sort": 12,
+            },
+            {
+                "key": "home_whale_image",
+                "value": "",
+                "name": "首页背景图片",
+                "description": "替换首页鲸鱼动画的自定义背景图片URL，支持后台上传；留空使用内置鲸鱼动画",
+                "setting_type": "image",
+                "sort": 13,
+            },
         ]
 
         for setting_data in default_settings:
